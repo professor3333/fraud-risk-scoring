@@ -164,3 +164,22 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   (e.g. longer windows, distinct-merchant counts) be proposed later. Current
   best remains E006.
 
+
+## E008 — Hyperparameter search with expanding-window CV
+
+- **Hypothesis:** the E003/E006 parameters were a reasonable guess, not a
+  tuned point. A 16-trial random search over depth, learning rate, tree
+  count, child weight, subsampling and regularisation, scored by
+  expanding-window CV inside the training window (folds: days 1–62 → 63–92
+  and 1–92 → 93–122), finds a configuration that transfers to the validation
+  window. The untuned parameters are scored on the same folds as a
+  reference.
+- **Config:** `configs/tuning/xgboost.yaml`; then the best trial refit on the
+  full training window as `configs/model/xgboost_v2_tuned.yaml` and compared
+  with E006 on validation. Feature set `v2_freq` throughout.
+- **Expected:** best CV PR-AUC above the reference by 0.01 – 0.03; validation
+  gain smaller than the CV gain (the search sees the folds, validation is
+  untouched). Accepted if validation PR-AUC ≥ E006 + 0.01. The train/val gap
+  is reported: a tuned model that only widens the gap is not an improvement.
+- **Result:** _pending_
+- **Interpretation:** _pending_

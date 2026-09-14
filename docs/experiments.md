@@ -109,3 +109,26 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   is the mechanism for future row-local features); `baseline_raw` remains
   the feature set of the current best (E003).
 
+
+## E006 — Frequency encoding of twelve high-cardinality columns (ADR 0005)
+
+- **Hypothesis:** "how common is this card / address / device / e-mail
+  domain in the training population" separates rare-entity fraud from
+  routine traffic in a way raw identifier values cannot. Encoded as
+  training-window shares fit inside the pipeline; the raw numeric columns
+  stay, so the delta measures the added value of frequency alone.
+- **Config:** `configs/model/xgboost_v2_freq.yaml` = E003 + feature set
+  `v2_freq`. One change: the feature set.
+- **Expected:** validation PR-AUC +0.02 – 0.05 over E003 (0.570). Accepted if
+  ≥ +0.01.
+- **Result** (run `cf66ea02`): validation PR-AUC **0.5778** (+0.0077), ROC-AUC
+  0.9186 (+0.007), recall at P ≥ 0.90 0.294. Band re-run: seed 1 0.5797
+  (+0.0079), seed 2 0.5814 (+0.0123). Mean paired delta **+0.0093**, positive
+  on every seed.
+- **Interpretation:** **accepted** — smaller than hoped but consistent, and
+  ROC-AUC moves too, so it is not a tail artefact. Frequency adds a notion
+  the raw identifiers lack. The modest size suggests the provider's `C*`
+  counts already encode much of "how established is this card"; a per-column
+  ablation in Stage 5 will say which of the twelve earn their place. Current
+  best: E006, feature set `v2_freq`.
+

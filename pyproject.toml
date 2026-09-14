@@ -55,3 +55,4 @@ addopts = "-m 'not slow'"
 
 [tool.ruff.lint.per-file-ignores]
 "src/fraud/pipeline/*" = ["N803"]  # sklearn's fit(X, y) signature
+"src/fraud/features/derive.py" = ["N803"]

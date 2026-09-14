@@ -32,6 +32,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBClassifier
 
 from fraud.features.columns import FeatureSpec
+from fraud.features.derive import Derive
 
 MISSING_LEVEL = "<missing>"
 PREPROCESSING_FOR_MODEL: dict[str, str] = {
@@ -121,6 +122,7 @@ def build_pipeline(spec: FeatureSpec, model_cfg: dict[str, Any], seed: int) -> P
     kind = PREPROCESSING_FOR_MODEL[model_cfg["type"]]
     return Pipeline(
         [
+            ("derive", Derive(spec.derived)),
             ("features", build_preprocessor(spec, kind)),
             ("model", build_model(model_cfg, seed)),
         ]

@@ -25,6 +25,7 @@ something we can verify from the anonymised data.
 | `M1` – `M9` | 9 | assumed | provider-computed | one-hot incl. `<missing>` (train) | **in** | Match flags (e.g. name on card vs address). Missingness is informative and kept as a level. |
 | `V1` – `V339` | 339 | assumed | provider-computed | median + scale + missing indicator (train) | **in** | Vesta-engineered features with 15 structured null blocks (`docs/eda.md` §4). Accepted as point-in-time on the host's statement. The imputer keeps all-null columns as zeros so serving-time shape is stable. |
 | `id_01` – `id_38`, `DeviceType`, `DeviceInfo` | 40 | yes (when the identity record exists) | no | numeric: median + scale (train); low-card strings: one-hot (train) | **in** except `DeviceInfo`, `id_23`, `id_27`, `id_30`, `id_31`, `id_33`, `id_34` | Device / network attributes captured at the transaction. High-cardinality strings (browser, OS, screen, device model) wait for the Stage 3 encoding ADR. |
+| `hour`, `weekday` (derived) | 2 | yes | no | none (pure function of the row's `TransactionDT`) | **in** (legitimate; not in the current best — E005 showed no gain) | `DT mod 86400` and `DT // 86400 mod 7` in the provider's clock. Row-local, computable at authorization, tested to depend on no other row (`tests/test_features.py`). They encode *time of day / week*, not *position in the dataset*: the values repeat every day / week, so no window is identifiable from them. |
 | `has_identity` | 1 | yes | no | none (derived from the join) | **in** | Whether an identity record accompanies the transaction. Coverage moves with time and product (`docs/eda.md` §3); legitimate because the serving contract makes the identity record part of the request, and the temporal split measures whether the signal transfers. |
 | `isFraud` | 1 | — | — | — | **target** | Never an input; `fraud.features.columns.load_feature_spec` raises if a spec lists it. |
 
@@ -42,4 +43,3 @@ something we can verify from the anonymised data.
 
 - ADR 0004: entity reconstruction from `D1` and per-entity rolling aggregates.
 - Stage 3 encoding ADR: `card1`, `addr1`, email domains, `DeviceInfo`, `id_30/31/33` — frequency vs target vs grouped one-hot, and on which rows the encoding is fit.
-- Hour-of-day from `TransactionDT`: legitimate in principle (the clock is known at authorization); needs its own row and an experiment.

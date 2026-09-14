@@ -33,6 +33,7 @@ from xgboost import XGBClassifier
 
 from fraud.features.columns import FeatureSpec
 from fraud.features.derive import Derive
+from fraud.features.encoders import FrequencyEncoder
 
 MISSING_LEVEL = "<missing>"
 PREPROCESSING_FOR_MODEL: dict[str, str] = {
@@ -96,14 +97,13 @@ def build_preprocessor(spec: FeatureSpec, kind: str) -> ColumnTransformer:
             ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
         ]
     )
-    return ColumnTransformer(
-        [
-            ("num", numeric, list(spec.numeric)),
-            ("cat", categorical, list(spec.categorical)),
-        ],
-        remainder="drop",
-        verbose_feature_names_out=True,
-    )
+    transformers = [
+        ("num", numeric, list(spec.numeric)),
+        ("cat", categorical, list(spec.categorical)),
+    ]
+    if spec.frequency:
+        transformers.append(("freq", FrequencyEncoder(), list(spec.frequency)))
+    return ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True)
 
 
 def build_model(model_cfg: dict[str, Any], seed: int) -> BaseEstimator:

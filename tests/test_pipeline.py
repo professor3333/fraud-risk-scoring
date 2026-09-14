@@ -118,3 +118,32 @@ def test_tree_preprocessing_keeps_nan_and_xgboost_scores(
     )
     p = pipe.predict_proba(parts["test"])[:, 1]
     assert p.min() >= 0.0 and p.max() <= 1.0
+
+
+def test_v2_freq_pipeline_fits_tables_on_train_only(parts: dict[str, pd.DataFrame]) -> None:
+    spec2 = load_feature_spec(ROOT / "configs" / "features" / "v2_freq.yaml")
+    assert spec2.frequency == (
+        "card1",
+        "card2",
+        "card3",
+        "card5",
+        "addr1",
+        "addr2",
+        "P_emaildomain",
+        "R_emaildomain",
+        "DeviceInfo",
+        "id_30",
+        "id_31",
+        "id_33",
+    )
+    xgb = {"type": "xgboost", "params": {"n_estimators": 10, "max_depth": 2}}
+    pipe = build_pipeline(spec2, xgb, seed=0)
+    train = parts["train"]
+    pipe.fit(train, train[spec2.target])
+    enc = pipe.named_steps["features"].named_transformers_["freq"]
+    assert enc.n_fit_ == len(train)
+    assert sum(enc.tables_["card1"].values()) == pytest.approx(1.0)
+    names = list(pipe.named_steps["features"].get_feature_names_out())
+    assert "freq__freq_card1" in names
+    p = pipe.predict_proba(parts["validation"])[:, 1]
+    assert p.min() >= 0.0 and p.max() <= 1.0

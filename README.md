@@ -18,7 +18,7 @@ uv run pytest                            # fixture-based tests, no data needed
 
 ```bash
 uv run python scripts/train.py --model configs/model/logreg.yaml --dev   # 10 % sample, seconds
-uv run python scripts/train.py --model configs/model/xgboost.yaml        # full training window, ~45 s
+uv run python scripts/train.py --model configs/model/xgboost_v2_freq.yaml  # current best, ~50 s
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # browse runs
 ```
 
@@ -30,5 +30,6 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # brows
 | E002 | logistic regression, raw columns | 0.402 | 0.842 | 0.118 |
 | E003 | XGBoost, raw columns | **0.570** | 0.912 | 0.292 |
 | E005 | E003 + hour / weekday | 0.576 (noise: +0.002 seed-paired) | 0.912 | 0.284 |
+| E006 | E003 + frequency encoding (ADR 0005) | **0.578** (+0.009 seed-paired) | 0.919 | 0.294 |
 
 Details and interpretation: `docs/experiments.md`. Decisions: `docs/decisions/`.

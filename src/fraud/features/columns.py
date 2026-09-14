@@ -26,10 +26,11 @@ class FeatureSpec:
     numeric: tuple[str, ...]
     categorical: tuple[str, ...]
     derived: tuple[str, ...] = ()
+    frequency: tuple[str, ...] = ()
 
     @property
     def all_inputs(self) -> tuple[str, ...]:
-        return self.numeric + self.categorical
+        return self.numeric + self.categorical + self.frequency
 
 
 def load_feature_spec(path: Path) -> FeatureSpec:
@@ -44,6 +45,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
     numeric.extend(num.get("boolean", []))
     categorical = tuple(str(c) for c in raw.get("categorical", []))
     derived = tuple(str(d) for d in raw.get("derived", []))
+    frequency = tuple(str(c) for c in raw.get("frequency", []))
     spec = FeatureSpec(
         name=str(raw["name"]),
         target=str(raw["target"]),
@@ -52,12 +54,14 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         numeric=tuple(numeric),
         categorical=categorical,
         derived=derived,
+        frequency=frequency,
     )
     forbidden = {spec.target, spec.id_col, spec.time_col}
     leaked = forbidden & set(spec.all_inputs)
     if leaked:
         raise ValueError(f"feature spec {spec.name} uses forbidden columns {sorted(leaked)}")
-    dupes = [c for c in set(spec.all_inputs) if spec.all_inputs.count(c) > 1]
+    raw_inputs = spec.numeric + spec.categorical
+    dupes = [c for c in set(raw_inputs) if raw_inputs.count(c) > 1]
     if dupes:
         raise ValueError(f"feature spec {spec.name} lists columns twice: {sorted(dupes)}")
     return spec

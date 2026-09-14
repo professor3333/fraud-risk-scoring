@@ -20,7 +20,7 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] Constant baseline + logistic-regression pipeline, logged to MLflow (E001 val PR-AUC 0.034, E002 0.402)
 
 ## Stage 3 — Feature engineering + XGBoost
-- [ ] Feature ADRs and leakage audit rows per family
+- [x] Feature ADRs and leakage audit rows per family (ADR 0005 frequency encoding accepted as E006; hour/weekday rejected as E005)
 - [x] XGBoost pipeline beats baselines on validation (E003 val PR-AUC 0.570, gap 0.22); seed noise measured (E004, sd 0.002)
 - [ ] Tuning run compared to untuned
 
@@ -39,4 +39,4 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] README complete and verified from a clean clone
 
 ## Current stage: **3 — Feature engineering + XGBoost**
-Next: feature experiments one at a time (hour of day; high-cardinality encoding ADR; D1 entity ADR), then tuning.
+Next: ADR 0004 (D1 entity history features), then tuning with time-ordered CV.

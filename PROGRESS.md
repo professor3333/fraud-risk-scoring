@@ -4,9 +4,9 @@ Stage checklist. Each stage is a working system before the next begins.
 
 ## Stage 0 — Scaffolding
 - [x] Repo initialised, layout, `pyproject.toml`, `uv.lock`
-- [ ] GitHub remote (public)
-- [ ] Dataset downloaded into `data/raw/`
-- [ ] Raw-data loader + schema checks + data tests
+- [x] GitHub remote (public)
+- [x] Dataset downloaded into `data/raw/`
+- [x] Raw-data loader + schema checks + data tests
 
 ## Stage 1 — Data understanding
 - [ ] EDA notebook (exploration only)
@@ -38,5 +38,5 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] Small UI; deployment or documented local-only reason
 - [ ] README complete and verified from a clean clone
 
-## Current stage: **0 — Scaffolding**
-Next: create GitHub remote, download data, write the loader and data tests.
+## Current stage: **1 — Data understanding**
+Next: EDA notebook and `docs/eda.md`; problem-formulation ADR.

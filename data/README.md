@@ -23,8 +23,10 @@ labels, so all train/validation/test windows are carved from `train_*` by time.
 ## Download
 
 1. Accept the competition rules on the Kaggle page (required once, in a browser).
-2. Put a Kaggle API token at `~/.kaggle/kaggle.json` (Kaggle → Settings → API →
-   *Create New Token*), `chmod 600` it.
+2. Create a Kaggle API token (Kaggle → Settings → API → *Create New Token*)
+   and export it as `KAGGLE_API_TOKEN` — for example, store it once in
+   `~/.kaggle/access_token` (`chmod 600`) and run
+   `export KAGGLE_API_TOKEN=$(cat ~/.kaggle/access_token)`.
 3. Run:
 
 ```bash

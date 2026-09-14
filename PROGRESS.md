@@ -9,9 +9,9 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] Raw-data loader + schema checks + data tests
 
 ## Stage 1 — Data understanding
-- [ ] EDA notebook (exploration only)
-- [ ] `docs/eda.md`: distributions, missingness, temporal structure, label rate over time
-- [ ] Problem formulation ADR (what `isFraud` means; what is being predicted)
+- [x] EDA script (`scripts/eda.py` → `reports/eda/`)
+- [x] `docs/eda.md`: distributions, missingness, temporal structure, label rate over time
+- [x] Problem formulation ADR (what `isFraud` means; what is being predicted)
 
 ## Stage 2 — Temporal split, leakage analysis, baselines
 - [ ] Split-strategy ADR + `configs/split.yaml` + split tests
@@ -38,5 +38,5 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] Small UI; deployment or documented local-only reason
 - [ ] README complete and verified from a clean clone
 
-## Current stage: **1 — Data understanding**
-Next: EDA notebook and `docs/eda.md`; problem-formulation ADR.
+## Current stage: **2 — Temporal split, leakage analysis, baselines**
+Next: split-strategy ADR + config + tests; primary-metric ADR; baselines in MLflow.

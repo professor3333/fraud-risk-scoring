@@ -1,0 +1,12 @@
+# E002: logistic-regression baseline on raw provider columns.
+experiment: fraud-baselines
+run_name: logreg_raw
+features: configs/features/baseline.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: logreg
+  params:
+    C: 1.0
+    max_iter: 2000
+    solver: lbfgs

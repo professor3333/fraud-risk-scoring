@@ -16,8 +16,8 @@ Stage checklist. Each stage is a working system before the next begins.
 ## Stage 2 — Temporal split, leakage analysis, baselines
 - [x] Split-strategy ADR + `configs/split.yaml` + split tests
 - [x] Primary-metric ADR (also fixes imbalance handling: none by default)
-- [ ] `docs/leakage_audit.md` for the first feature families
-- [ ] Constant baseline + logistic-regression pipeline, logged to MLflow
+- [x] `docs/leakage_audit.md` for the first feature families
+- [x] Constant baseline + logistic-regression pipeline, logged to MLflow (E001 val PR-AUC 0.034, E002 0.402)
 
 ## Stage 3 — Feature engineering + XGBoost
 - [ ] Feature ADRs and leakage audit rows per family
@@ -38,5 +38,5 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] Small UI; deployment or documented local-only reason
 - [ ] README complete and verified from a clean clone
 
-## Current stage: **2 — Temporal split, leakage analysis, baselines**
-Next: leakage audit for the baseline feature families; constant + logistic-regression baselines in MLflow.
+## Current stage: **3 — Feature engineering + XGBoost**
+Next: XGBoost on the baseline feature set (one change: model), then feature experiments one at a time.

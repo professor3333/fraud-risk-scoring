@@ -1,0 +1,12 @@
+# Cost model and operating threshold (ADR 0006). Costs are per transaction of
+# amount a: cost = fixed + amount_coef * a.
+costs:
+  false_negative: {fixed: 15.0, amount_coef: 1.0}   # approved fraud: full loss + chargeback fee
+  false_positive: {fixed: 2.0, amount_coef: 0.10}   # declined legitimate: friction + lost margin
+sweep:
+  start: 0.01
+  stop: 0.99
+  step: 0.005
+# Chosen operating point; set from reports/threshold/ after running
+# scripts/select_threshold.py on the current best model. 0.5 until then.
+threshold: 0.5

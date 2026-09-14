@@ -1,0 +1,48 @@
+[project]
+name = "fraud"
+version = "0.1.0"
+description = "Fraud risk scoring on the IEEE-CIS Fraud Detection dataset: temporal validation, XGBoost, calibrated thresholds, FastAPI serving."
+authors = [
+    { name = "Niroj33", email = "86530493+professor3333@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=2.2",
+    "pyarrow>=17",
+    "scikit-learn>=1.5",
+    "matplotlib>=3.9",
+    "pyyaml>=6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "jupyter>=1.1",
+    "pandas-stubs",
+    "types-pyyaml",
+    "kaggle>=2.2.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: needs the full dataset; excluded from the default run"]
+addopts = "-m 'not slow'"

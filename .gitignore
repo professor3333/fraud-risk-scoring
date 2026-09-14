@@ -1,0 +1,27 @@
+# Data and artifacts (large, regenerable; see data/README.md)
+data/*
+!data/README.md
+models/
+mlruns/
+mlartifacts/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Secrets
+.env
+kaggle.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

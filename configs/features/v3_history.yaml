@@ -1,14 +1,28 @@
-# v2_freq = baseline_raw + frequency encoding of twelve high-cardinality columns (ADR 0005, E006).
+# v3_history = v2_freq + five entity-history features from strictly earlier rows (ADR 0004, E007).
 # Fit-time statistics (one-hot vocabularies, frequency tables) are learned on
 # the training window inside the sklearn pipeline.
-name: v2_freq
+name: v3_history
 target: isFraud
 id_col: TransactionID
 time_col: TransactionDT
 
 # Numeric: every numeric provider column except the id, the timestamp, and the label.
 numeric:
-  explicit: [TransactionAmt, card1, card2, card3, card5, addr1, addr2, dist1, dist2]
+  explicit:
+    - TransactionAmt
+    - card1
+    - card2
+    - card3
+    - card5
+    - addr1
+    - addr2
+    - dist1
+    - dist2
+    - ent_prior_count
+    - ent_seconds_since_prev
+    - ent_prior_amt_mean
+    - ent_amt_ratio
+    - ent_prior_count_1d
   prefixes: [C, D, V]                   # C1-C14, D1-D15, V1-V339
   identity_numeric: true                # id_01-id_11, id_13, id_14, id_17-id_22, id_24-id_26, id_32
   boolean: [has_identity]
@@ -57,3 +71,6 @@ frequency:
   - id_30
   - id_31
   - id_33
+
+# Computed before the split by fraud.features.history over the time-ordered frame.
+history: true

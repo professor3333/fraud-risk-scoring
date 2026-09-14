@@ -24,6 +24,7 @@ from fraud.data.load import load_train
 from fraud.data.split import SplitConfig, check_split, load_split_config, split
 from fraud.evaluate.metrics import compute_metrics, plot_pr_curve
 from fraud.features.columns import FeatureSpec, load_feature_spec
+from fraud.features.history import add_entity_history
 from fraud.pipeline.build import build_pipeline
 
 
@@ -101,6 +102,9 @@ def run_experiment(
 
     if df is None:
         df = load_train(raw_dir, cache_dir=cache_dir)
+    if spec.history:
+        # Strictly-earlier-rows features over the full time-ordered frame (ADR 0004).
+        df = add_entity_history(df)
     parts = split(df, split_cfg)
     check_split(parts, split_cfg, spec.id_col)
 

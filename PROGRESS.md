@@ -39,4 +39,5 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] README complete and verified from a clean clone
 
 ## Current stage: **3 — Feature engineering + XGBoost**
-Next: ADR 0004 (D1 entity history features), then tuning with time-ordered CV.
+ADR 0004 written; E007 entity history rejected (no gain when restricted to legitimate computation).
+Next: tuning with time-ordered CV inside the training window, compared to E006.

@@ -27,6 +27,7 @@ class FeatureSpec:
     categorical: tuple[str, ...]
     derived: tuple[str, ...] = ()
     frequency: tuple[str, ...] = ()
+    history: bool = False
 
     @property
     def all_inputs(self) -> tuple[str, ...]:
@@ -46,6 +47,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
     categorical = tuple(str(c) for c in raw.get("categorical", []))
     derived = tuple(str(d) for d in raw.get("derived", []))
     frequency = tuple(str(c) for c in raw.get("frequency", []))
+    history = bool(raw.get("history", False))
     spec = FeatureSpec(
         name=str(raw["name"]),
         target=str(raw["target"]),
@@ -55,6 +57,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         categorical=categorical,
         derived=derived,
         frequency=frequency,
+        history=history,
     )
     forbidden = {spec.target, spec.id_col, spec.time_col}
     leaked = forbidden & set(spec.all_inputs)

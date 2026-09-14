@@ -132,3 +132,35 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   ablation in Stage 5 will say which of the twelve earn their place. Current
   best: E006, feature set `v2_freq`.
 
+
+## E007 — Entity history features from strictly earlier rows (ADR 0004)
+
+- **Hypothesis:** velocity and deviation-from-habit on the reconstructed
+  card entity (`ent_prior_count`, `ent_seconds_since_prev`,
+  `ent_prior_amt_mean`, `ent_amt_ratio`, `ent_prior_count_1d`) carry signal
+  the provider's static columns do not. The marginal fraud rate by prior
+  count is only mildly increasing (2.0 % at 0 → 3.8 % at 11+), so the gain,
+  if any, comes from interactions with amount and product, not from
+  velocity alone. No label is used.
+- **Config:** `configs/model/xgboost_v3_history.yaml` = E006 + feature set
+  `v3_history`. One change: the five history columns.
+- **Expected:** validation PR-AUC +0.01 – 0.04 over E006 (0.578). Accepted if
+  ≥ +0.01. A jump far beyond that band would be a red flag to re-audit the
+  computation for future information.
+- **Result** (run `be7472fb`): validation PR-AUC **0.5816** (+0.0038), ROC-AUC
+  0.920, recall at P ≥ 0.90 0.280. Below the floor, so rejected by rule;
+  seeds 1 / 2 run for interpretation: 0.5735 (−0.0062), 0.5781 (−0.0033).
+  Mean paired delta **−0.0019**.
+- **Interpretation:** **rejected.** Restricted to what a real system can
+  compute — label-free aggregates over strictly earlier rows of the entity —
+  the reconstructed card id adds nothing over the provider's own `C*` / `D*`
+  columns, which already summarise the card's past (that is presumably how
+  the provider built them). The Kaggle gains attributed to "uid" features
+  came from aggregates over the *whole* dataset (future rows, and via
+  propagation, the label) evaluated on a test set sharing those entities;
+  none of that is available at authorization. This is the single most
+  important negative result in the project. The module and its G3 tests stay
+  in the repo as the reference implementation should a legitimate variant
+  (e.g. longer windows, distinct-merchant counts) be proposed later. Current
+  best remains E006.
+

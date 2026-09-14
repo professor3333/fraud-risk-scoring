@@ -29,5 +29,6 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # brows
 | E001 | constant prior | 0.034 | 0.500 | 0.000 |
 | E002 | logistic regression, raw columns | 0.402 | 0.842 | 0.118 |
 | E003 | XGBoost, raw columns | **0.570** | 0.912 | 0.292 |
+| E005 | E003 + hour / weekday | 0.576 (noise: +0.002 seed-paired) | 0.912 | 0.284 |
 
 Details and interpretation: `docs/experiments.md`. Decisions: `docs/decisions/`.

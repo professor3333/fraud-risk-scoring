@@ -1,0 +1,38 @@
+# v1_time = baseline_raw + hour of day + weekday (E005). Derived in the pipeline
+# from TransactionDT by fraud.features.time; the raw timestamp stays excluded.
+name: v1_time
+target: isFraud
+id_col: TransactionID
+time_col: TransactionDT
+
+derived: [time]
+
+numeric:
+  explicit: [TransactionAmt, card1, card2, card3, card5, addr1, addr2, dist1, dist2, hour, weekday]
+  prefixes: [C, D, V]
+  identity_numeric: true
+  boolean: [has_identity]
+
+categorical:
+  - ProductCD
+  - card4
+  - card6
+  - M1
+  - M2
+  - M3
+  - M4
+  - M5
+  - M6
+  - M7
+  - M8
+  - M9
+  - DeviceType
+  - id_12
+  - id_15
+  - id_16
+  - id_28
+  - id_29
+  - id_35
+  - id_36
+  - id_37
+  - id_38

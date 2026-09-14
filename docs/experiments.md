@@ -84,3 +84,28 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   the 0.005 – 0.01 band are re-run on two more seeds before a decision;
   smaller deltas are noise.** Recall at P ≥ 0.90 is too noisy (sd 0.008) to
   drive decisions on its own.
+
+## E005 — Hour of day and weekday
+
+- **Hypothesis:** the daily fraud cycle (10.6 % at "hour 7" vs 2.5 % mid-day,
+  `docs/eda.md` §2) is not recoverable from any existing column (`D9` is the
+  only clock-like column and is 87 % null), so `hour` adds signal; `weekday`
+  is weak (flat fraud rate) and mostly along for the ride.
+- **Config:** `configs/model/xgboost_v1_time.yaml` = E003 + feature set
+  `v1_time` (`hour`, `weekday` derived in-pipeline). One change: the feature
+  set.
+- **Expected:** validation PR-AUC +0.01 – 0.03 over E003 (0.570). Accepted if
+  ≥ +0.01 (ADR 0003).
+- **Result** (run `b4d92e3f`): validation PR-AUC **0.5759** (+0.0058), ROC-AUC
+  0.912, recall at P ≥ 0.90 0.284. In the 0.005 – 0.01 band, so re-run on
+  seeds 1 and 2: 0.5739 (E003 seed 1: 0.5718, +0.0021) and 0.5685 (E003 seed
+  2: 0.5691, −0.0006). Mean paired delta **+0.0024**.
+- **Interpretation:** **rejected** — below the 0.005 floor on the seed-paired
+  test. The hour-of-day signal is genuine in the EDA but the trees already
+  recover it: `D8` carries fractional days and `D9` is hour / 24 where
+  present, and the `V` blocks were engineered by the provider with time in
+  hand. Lesson recorded: a strong marginal signal in EDA is not the same as a
+  conditional gain over 400 provider features. The `Derive` step stays (it
+  is the mechanism for future row-local features); `baseline_raw` remains
+  the feature set of the current best (E003).
+

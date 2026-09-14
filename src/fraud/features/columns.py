@@ -25,6 +25,7 @@ class FeatureSpec:
     time_col: str
     numeric: tuple[str, ...]
     categorical: tuple[str, ...]
+    derived: tuple[str, ...] = ()
 
     @property
     def all_inputs(self) -> tuple[str, ...]:
@@ -42,6 +43,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         numeric.extend(IDENTITY_NUMERIC)
     numeric.extend(num.get("boolean", []))
     categorical = tuple(str(c) for c in raw.get("categorical", []))
+    derived = tuple(str(d) for d in raw.get("derived", []))
     spec = FeatureSpec(
         name=str(raw["name"]),
         target=str(raw["target"]),
@@ -49,6 +51,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         time_col=str(raw["time_col"]),
         numeric=tuple(numeric),
         categorical=categorical,
+        derived=derived,
     )
     forbidden = {spec.target, spec.id_col, spec.time_col}
     leaked = forbidden & set(spec.all_inputs)

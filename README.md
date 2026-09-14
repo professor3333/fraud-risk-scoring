@@ -10,6 +10,23 @@ Work in progress — see `PROGRESS.md`.
 
 ```bash
 uv sync
+uv run python scripts/download_data.py   # needs a Kaggle token; see data/README.md
+uv run pytest                            # fixture-based tests, no data needed
 ```
 
-Data download instructions are in `data/README.md`.
+## Train
+
+```bash
+uv run python scripts/train.py --model configs/model/logreg.yaml --dev   # 10 % sample, seconds
+uv run python scripts/train.py --model configs/model/logreg.yaml         # full training window
+uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # browse runs
+```
+
+## Results (validation window, ADR 0002)
+
+| experiment | model | PR-AUC | ROC-AUC | recall @ precision ≥ 0.90 |
+|---|---|---:|---:|---:|
+| E001 | constant prior | 0.034 | 0.500 | 0.000 |
+| E002 | logistic regression, raw columns | 0.402 | 0.842 | 0.118 |
+
+Details and interpretation: `docs/experiments.md`. Decisions: `docs/decisions/`.

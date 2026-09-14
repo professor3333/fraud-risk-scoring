@@ -31,5 +31,6 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # brows
 | E003 | XGBoost, raw columns | **0.570** | 0.912 | 0.292 |
 | E005 | E003 + hour / weekday | 0.576 (noise: +0.002 seed-paired) | 0.912 | 0.284 |
 | E006 | E003 + frequency encoding (ADR 0005) | **0.578** (+0.009 seed-paired) | 0.919 | 0.294 |
+| E007 | E006 + entity history, strictly earlier rows (ADR 0004) | 0.582 (noise: −0.002 seed-paired) | 0.920 | 0.280 |
 
 Details and interpretation: `docs/experiments.md`. Decisions: `docs/decisions/`.

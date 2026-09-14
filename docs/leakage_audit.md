@@ -28,6 +28,7 @@ something we can verify from the anonymised data.
 | `hour`, `weekday` (derived) | 2 | yes | no | none (pure function of the row's `TransactionDT`) | **in** (legitimate; not in the current best — E005 showed no gain) | `DT mod 86400` and `DT // 86400 mod 7` in the provider's clock. Row-local, computable at authorization, tested to depend on no other row (`tests/test_features.py`). They encode *time of day / week*, not *position in the dataset*: the values repeat every day / week, so no window is identifiable from them. |
 | `has_identity` | 1 | yes | no | none (derived from the join) | **in** | Whether an identity record accompanies the transaction. Coverage moves with time and product (`docs/eda.md` §3); legitimate because the serving contract makes the identity record part of the request, and the temporal split measures whether the signal transfers. |
 | `freq_*` (frequency encoding of `card1/2/3/5`, `addr1/2`, `P_/R_emaildomain`, `DeviceInfo`, `id_30/31/33`) | 12 | yes | no | per-level share of **training-window** rows (`FrequencyEncoder`, inside the pipeline) | **in** (E006, ADR 0005) | The table is a frozen artefact of the training population; unseen levels → 0; NaN is a level. Never computed over validation/test rows (`tests/test_features.py`). |
+| `ent_*` (entity history: prior count, seconds since previous, prior mean amount, amount ratio, count in last day) | 5 | yes, given a history store | **no** — strictly earlier rows of the same entity, ties by `TransactionID`; tested on a synthetic frame | none (pure function over the time-ordered frame, before the split) | legitimate; **not in the current best** (E007: no gain) | ADR 0004. No label enters. The entity key `(card1, addr1, day − D1)` is a grouping device only — as a feature it would encode an absolute date and is **out**. Prior-fraud-on-entity features are **out** permanently: they are the propagated label. |
 | `isFraud` | 1 | — | — | — | **target** | Never an input; `fraud.features.columns.load_feature_spec` raises if a spec lists it. |
 
 ## Preprocessing steps
@@ -42,5 +43,4 @@ something we can verify from the anonymised data.
 
 ## Open items (must be decided before the feature exists)
 
-- ADR 0004: entity reconstruction from `D1` and per-entity rolling aggregates.
 - Target encoding of the same columns (ADR 0005 option 3): only if frequency encoding leaves a measurable gap, and only out-of-fold and time-ordered within the training window.

@@ -80,3 +80,96 @@ def test_frequency_encoder_rejects_column_mismatch() -> None:
     enc = FrequencyEncoder().fit(pd.DataFrame({"a": [1], "b": [2]}))
     with pytest.raises(ValueError, match="columns"):
         enc.transform(pd.DataFrame({"b": [2], "a": [1]}))
+
+
+# --- entity history (ADR 0004) --------------------------------------------------
+
+
+def _history_frame() -> pd.DataFrame:
+    """Two entities interleaved in time, one row with a missing key."""
+    return pd.DataFrame(
+        {
+            schema.ID_COL: [1, 2, 3, 4, 5, 6, 7],
+            schema.TIME_COL: [
+                100_000,  # A first
+                100_500,  # B first
+                101_000,  # A second (1000 s later)
+                150_000,  # A third (49 000 s later)
+                190_000,  # B second
+                190_100,  # A fourth: 40 000 s after third, > 1 day after first two
+                200_000,  # missing D1 -> no entity
+            ],
+            "TransactionAmt": [10.0, 5.0, 30.0, 20.0, 5.0, 100.0, 7.0],
+            "card1": [1, 2, 1, 1, 2, 1, 1],
+            "addr1": [300.0, 300.0, 300.0, 300.0, 300.0, 300.0, 300.0],
+            # day - D1 constant per entity: days are 1,1,1,1,2,2,2
+            "D1": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, float("nan")],
+        }
+    )
+
+
+def test_entity_history_uses_only_strictly_earlier_rows() -> None:
+    from fraud.features.history import HISTORY_FEATURES, add_entity_history
+
+    out = add_entity_history(_history_frame())
+    a = out[out["card1"] == 1].iloc[:4]  # rows 1,3,4,6 in time order
+    assert a["ent_prior_count"].tolist() == [0, 1, 2, 3]
+    assert a["ent_seconds_since_prev"].tolist()[1:] == [1_000, 49_000, 40_100]
+    assert pd.isna(a["ent_seconds_since_prev"].iloc[0])
+    assert a["ent_prior_amt_mean"].tolist()[1:] == [10.0, 20.0, 20.0]
+    assert a["ent_amt_ratio"].tolist()[1:] == [3.0, 1.0, 5.0]
+    # within the previous day: row 3 sees row 1; row 4 sees rows 1,3 (50 000 s < 86 400);
+    # row 6 sees only row 4 (rows 1,3 are > 1 day back)
+    assert a["ent_prior_count_1d"].tolist() == [0, 1, 2, 1]
+    b = out[out["card1"] == 2]
+    assert b["ent_prior_count"].tolist() == [0, 1]
+    assert out.loc[out[schema.ID_COL] == 7, list(HISTORY_FEATURES)].isna().all(axis=None)
+    # Input untouched; output has the same row order and index.
+    assert "ent_prior_count" not in _history_frame().columns
+    assert out.index.equals(_history_frame().index)
+
+
+def test_entity_history_is_unaffected_by_later_rows() -> None:
+    """Altering or appending later rows must not change earlier rows' features (G3)."""
+    from fraud.features.history import HISTORY_FEATURES, add_entity_history
+
+    base = _history_frame()
+    before = add_entity_history(base)
+    later = base.copy()
+    later.loc[later[schema.TIME_COL] >= 150_000, "TransactionAmt"] *= 100
+    extra = pd.DataFrame(
+        {
+            schema.ID_COL: [8, 9],
+            schema.TIME_COL: [250_000, 260_000],
+            "TransactionAmt": [1.0, 2.0],
+            "card1": [1, 2],
+            "addr1": [300.0, 300.0],
+            "D1": [2.0, 2.0],
+        }
+    )
+    after = add_entity_history(pd.concat([later, extra], ignore_index=True))
+    early = base[schema.TIME_COL] < 150_000
+    pd.testing.assert_frame_equal(
+        before.loc[early, list(HISTORY_FEATURES)].reset_index(drop=True),
+        after.loc[early.to_numpy().tolist() + [False, False], list(HISTORY_FEATURES)].reset_index(
+            drop=True
+        ),
+    )
+
+
+def test_entity_history_is_order_independent() -> None:
+    from fraud.features.history import HISTORY_FEATURES, add_entity_history
+
+    base = _history_frame()
+    shuffled = base.sample(frac=1.0, random_state=3)
+    a = add_entity_history(base).set_index(schema.ID_COL)[list(HISTORY_FEATURES)]
+    b = add_entity_history(shuffled).set_index(schema.ID_COL)[list(HISTORY_FEATURES)]
+    pd.testing.assert_frame_equal(a.sort_index(), b.sort_index())
+
+
+def test_entity_key_is_not_emitted_as_a_feature() -> None:
+    from fraud.features.history import HISTORY_FEATURES, add_entity_history
+
+    out = add_entity_history(_history_frame())
+    new_cols = set(out.columns) - set(_history_frame().columns)
+    assert new_cols == set(HISTORY_FEATURES)

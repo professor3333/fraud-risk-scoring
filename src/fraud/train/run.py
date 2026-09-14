@@ -24,7 +24,7 @@ from fraud.data.load import load_train
 from fraud.data.split import SplitConfig, check_split, load_split_config, split
 from fraud.evaluate.metrics import compute_metrics, plot_pr_curve
 from fraud.features.columns import FeatureSpec, load_feature_spec
-from fraud.pipeline.baseline import build_pipeline
+from fraud.pipeline.build import build_pipeline
 
 
 @dataclass(frozen=True)

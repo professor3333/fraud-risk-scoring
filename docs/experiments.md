@@ -43,3 +43,44 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   baseline on rare positives. This is the number XGBoost has to beat
   (Stage 3), and the training-time cost argues for a sparse or reduced
   feature matrix if the baseline is ever refit routinely.
+
+## E003 — XGBoost on the same raw feature set
+
+- **Hypothesis:** gradient-boosted trees capture the non-linear and
+  interaction structure (product × amount × `C`/`V` patterns, informative
+  missingness) that the linear model cannot, on exactly the same columns.
+  The only change vs E002 is the model and the preprocessing it needs (no
+  imputation or scaling; NaN routed natively).
+- **Config:** `configs/model/xgboost.yaml` — 600 trees, η 0.05, depth 6,
+  min_child_weight 5, subsample 0.8, colsample 0.6, hist. Fixed tree count,
+  no early stopping, so validation is not consulted during fitting.
+- **Expected:** validation PR-AUC 0.55 – 0.70 (a large step over 0.402),
+  ROC-AUC ≥ 0.90, and a *larger* train/validation gap than the linear model —
+  trees fit the training window harder. Recall at precision ≥ 0.90 should
+  roughly double.
+- **Result** (run `e7527953`): validation PR-AUC **0.5701**, ROC-AUC 0.9115;
+  at 0.5 precision 0.848, recall 0.343, F1 0.489; confusion tp 990 · fp 177 ·
+  fn 1,894 · tn 81,983; recall at precision ≥ 0.90 = 0.292. Train PR-AUC
+  0.792 → gap 0.222. Wall time 43 s (vs 16 min for E002).
+- **Interpretation:** +0.168 PR-AUC over E002 on identical columns — the
+  non-linear structure is real and large. Recall at 90 % precision goes
+  from 0.118 to 0.292: at the same false-positive budget the trees catch 2.5×
+  the fraud. The gap is wide (0.22), as expected for 600 depth-6 trees on
+  420k rows; it is the reason tuning and regularisation are an experiment
+  later, not a reason to reject the model now. Accepted as the current best.
+
+## E004 — Seed variation of E003 (noise floor)
+
+- **Hypothesis:** the run-to-run spread from `random_state` alone (subsample,
+  colsample) is small relative to the E002 → E003 step, and gives the minimum
+  improvement a later change must exceed.
+- **Config:** E003 with seeds 42, 1, 2, 3.
+- **Expected:** validation PR-AUC standard deviation ≈ 0.002 – 0.005.
+- **Result:** PR-AUC 0.5701 / 0.5718 / 0.5691 / 0.5737 — mean 0.5712,
+  sd 0.0020, range 0.0046. Recall at P ≥ 0.90: mean 0.284, sd 0.008.
+- **Interpretation:** noise is ~0.002 on the primary metric. **Acceptance rule
+  from here on: a change is accepted when it improves validation PR-AUC by
+  ≥ 0.01 (≈ 5 sd, > 2× the observed range) at the default seed; changes in
+  the 0.005 – 0.01 band are re-run on two more seeds before a decision;
+  smaller deltas are noise.** Recall at P ≥ 0.90 is too noisy (sd 0.008) to
+  drive decisions on its own.

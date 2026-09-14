@@ -13,7 +13,7 @@ from fraud.data import schema
 from fraud.data.load import load_train
 from fraud.data.split import load_split_config, split
 from fraud.features.columns import FeatureSpec, load_feature_spec
-from fraud.pipeline.baseline import MISSING_LEVEL, build_pipeline
+from fraud.pipeline.build import MISSING_LEVEL, build_pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGREG = {"type": "logreg", "params": {"C": 1.0, "max_iter": 500}}
@@ -101,3 +101,20 @@ def test_pipeline_selects_its_own_columns(
     )
     with pytest.raises(ValueError):
         pipe.predict_proba(parts["validation"].drop(columns=["ProductCD"]))
+
+
+def test_tree_preprocessing_keeps_nan_and_xgboost_scores(
+    spec: FeatureSpec, parts: dict[str, pd.DataFrame]
+) -> None:
+    xgb = {"type": "xgboost", "params": {"n_estimators": 20, "max_depth": 3}}
+    pipe = build_pipeline(spec, xgb, seed=0)
+    train = parts["train"]
+    pipe.fit(train, train[spec.target])
+    x_val = pipe[:-1].transform(parts["validation"])
+    assert np.isnan(x_val).any()  # trees route NaN natively; nothing is imputed
+    assert x_val.shape[1] == len(spec.numeric) + sum(
+        len(c)
+        for c in pipe.named_steps["features"].named_transformers_["cat"]["onehot"].categories_
+    )
+    p = pipe.predict_proba(parts["test"])[:, 1]
+    assert p.min() >= 0.0 and p.max() <= 1.0

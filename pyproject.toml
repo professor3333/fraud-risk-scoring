@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib>=3.9",
     "pyyaml>=6",
     "mlflow>=3.16.0",
+    "xgboost>=3.4.1",
 ]
 
 [dependency-groups]

@@ -12,7 +12,7 @@ from fraud.data import schema
 from fraud.data.load import load_train
 from fraud.data.split import load_split_config, split
 from fraud.features.columns import load_feature_spec
-from fraud.pipeline.baseline import build_pipeline
+from fraud.pipeline.build import build_pipeline
 from fraud.train.run import TrainConfig, fit_and_evaluate, run_experiment
 
 ROOT = Path(__file__).resolve().parents[1]

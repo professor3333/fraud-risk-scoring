@@ -21,7 +21,7 @@ Stage checklist. Each stage is a working system before the next begins.
 
 ## Stage 3 — Feature engineering + XGBoost
 - [ ] Feature ADRs and leakage audit rows per family
-- [ ] XGBoost pipeline beats baselines on validation (gap reported)
+- [x] XGBoost pipeline beats baselines on validation (E003 val PR-AUC 0.570, gap 0.22); seed noise measured (E004, sd 0.002)
 - [ ] Tuning run compared to untuned
 
 ## Stage 4 — Threshold policy and calibration
@@ -39,4 +39,4 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] README complete and verified from a clean clone
 
 ## Current stage: **3 — Feature engineering + XGBoost**
-Next: XGBoost on the baseline feature set (one change: model), then feature experiments one at a time.
+Next: feature experiments one at a time (hour of day; high-cardinality encoding ADR; D1 entity ADR), then tuning.

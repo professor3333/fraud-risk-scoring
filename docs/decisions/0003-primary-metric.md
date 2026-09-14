@@ -29,10 +29,11 @@ ADR 0006 sets one from costs); recall at precision ≥ 0.90 and precision at
 recall ≥ 0.50 as tail summaries; later, Brier score and a reliability diagram
 when calibration is assessed (ADR 0007).
 
-A change is accepted when validation PR-AUC improves and the improvement is
-larger than the run-to-run noise measured by the reproducibility test and
-the seed-variation experiment; this rule is refined once that noise is
-measured.
+A change is accepted when validation PR-AUC improves by **≥ 0.01** at the
+default seed. Improvements of 0.005 – 0.01 are re-run on two more seeds and
+accepted only if the mean improvement stays ≥ 0.005. Smaller deltas are noise.
+Basis: E004 measured a seed standard deviation of 0.002 and a range of
+0.005 across four seeds of the XGBoost baseline (`docs/experiments.md`).
 
 **Class imbalance: nothing by default.** Average precision and ROC-AUC are
 ranking metrics; re-weighting or resampling changes the score scale and the

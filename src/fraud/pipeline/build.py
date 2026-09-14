@@ -1,9 +1,19 @@
-"""Baseline sklearn pipelines (G4): a constant-rate model and logistic regression.
+"""Pipeline assembly: preprocessing + model, as one sklearn ``Pipeline`` (G7, G8).
 
 The pipeline takes the raw joined frame and selects its own columns, so training
 and serving feed it the same thing. Every fitted statistic (medians, scaler
 moments, one-hot vocabularies) is learned by ``fit`` on whatever it is given —
 the caller is responsible for giving it the training window only.
+
+Two preprocessing variants exist because the models need different inputs:
+
+- ``linear``: median imputation + missing indicators + standard scaling, for
+  logistic regression, which cannot take NaN and is scale-sensitive.
+- ``tree``: numeric columns cast to float with NaN kept, for gradient-boosted
+  trees, which route missing values natively and are scale-invariant.
+
+Both one-hot encode the same low-cardinality categoricals with ``<missing>`` as
+a level.
 """
 
 from __future__ import annotations
@@ -19,10 +29,16 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from xgboost import XGBClassifier
 
 from fraud.features.columns import FeatureSpec
 
 MISSING_LEVEL = "<missing>"
+PREPROCESSING_FOR_MODEL: dict[str, str] = {
+    "constant": "linear",
+    "logreg": "linear",
+    "xgboost": "tree",
+}
 
 
 class MissingAsCategory(BaseEstimator, TransformerMixin):  # type: ignore[misc]
@@ -57,17 +73,22 @@ class ToFloat(BaseEstimator, TransformerMixin):  # type: ignore[misc]
         return np.asarray(input_features, dtype=object)
 
 
-def build_preprocessor(spec: FeatureSpec) -> ColumnTransformer:
-    numeric = Pipeline(
-        [
-            ("to_float", ToFloat()),
-            (
-                "impute",
-                SimpleImputer(strategy="median", add_indicator=True, keep_empty_features=True),
-            ),
-            ("scale", StandardScaler()),
-        ]
-    )
+def build_preprocessor(spec: FeatureSpec, kind: str) -> ColumnTransformer:
+    if kind == "linear":
+        numeric = Pipeline(
+            [
+                ("to_float", ToFloat()),
+                (
+                    "impute",
+                    SimpleImputer(strategy="median", add_indicator=True, keep_empty_features=True),
+                ),
+                ("scale", StandardScaler()),
+            ]
+        )
+    elif kind == "tree":
+        numeric = Pipeline([("to_float", ToFloat())])
+    else:
+        raise ValueError(f"unknown preprocessing kind {kind!r}")
     categorical = Pipeline(
         [
             ("missing", MissingAsCategory()),
@@ -91,13 +112,16 @@ def build_model(model_cfg: dict[str, Any], seed: int) -> BaseEstimator:
         return DummyClassifier(strategy="prior")
     if kind == "logreg":
         return LogisticRegression(random_state=seed, **params)
+    if kind == "xgboost":
+        return XGBClassifier(random_state=seed, tree_method="hist", **params)
     raise ValueError(f"unknown model type {kind!r}")
 
 
 def build_pipeline(spec: FeatureSpec, model_cfg: dict[str, Any], seed: int) -> Pipeline:
+    kind = PREPROCESSING_FOR_MODEL[model_cfg["type"]]
     return Pipeline(
         [
-            ("features", build_preprocessor(spec)),
+            ("features", build_preprocessor(spec, kind)),
             ("model", build_model(model_cfg, seed)),
         ]
     )

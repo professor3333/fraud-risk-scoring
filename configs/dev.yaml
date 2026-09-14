@@ -1,0 +1,11 @@
+# Development subset: same boundaries as split.yaml, uniform 10 % row sample per
+# window. For plumbing and smoke tests only (ADR 0002).
+time_col: TransactionDT
+seconds_per_day: 86400
+windows:
+  train:      {start_day: 1,   end_day: 122}
+  validation: {start_day: 123, end_day: 152}
+  test:       {start_day: 153, end_day: 183}
+sample:
+  fraction: 0.10
+  seed: 42

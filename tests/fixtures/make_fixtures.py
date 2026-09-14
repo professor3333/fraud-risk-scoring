@@ -17,14 +17,15 @@ from fraud.data import schema
 
 N_TX = 400
 N_IDENTITY = 100
-N_FRAUD = 14
+N_FRAUD_PER_WINDOW = {"train": 12, "validation": 5, "test": 5}
+WINDOW_DAYS = {"train": (1, 122), "validation": (123, 152), "test": (153, 183)}
 SEED = 20240914
 OUT_DIR = Path(__file__).resolve().parent / "raw"
 
 
 def make_transactions(rng: np.random.Generator) -> pd.DataFrame:
     ids = np.arange(2_987_000, 2_987_000 + N_TX)
-    dt = np.sort(rng.integers(86_400, 86_400 * 30, size=N_TX))
+    dt = np.sort(rng.integers(86_400, 86_400 * 184, size=N_TX))
     frame: dict[str, object] = {
         schema.ID_COL: ids,
         schema.TARGET_COL: np.zeros(N_TX, dtype=np.int64),
@@ -33,8 +34,25 @@ def make_transactions(rng: np.random.Generator) -> pd.DataFrame:
         "ProductCD": rng.choice(["W", "C", "R", "H", "S"], size=N_TX),
         "card1": rng.integers(1000, 18_000, size=N_TX),
     }
-    fraud_idx = rng.choice(N_TX, size=N_FRAUD, replace=False)
-    frame[schema.TARGET_COL] = np.isin(np.arange(N_TX), fraud_idx).astype(np.int64)
+    # Positives in every split window, so window-level metrics are defined.
+    day = dt // 86_400
+    fraud_idx = np.concatenate(
+        [
+            rng.choice(np.flatnonzero((day >= lo) & (day <= hi)), size=n, replace=False)
+            for name, n in N_FRAUD_PER_WINDOW.items()
+            for lo, hi in [WINDOW_DAYS[name]]
+        ]
+    )
+    is_fraud = np.isin(np.arange(N_TX), fraud_idx)
+    frame[schema.TARGET_COL] = is_fraud.astype(np.int64)
+    # Plant a weak, honest signal so model tests can require "beats the prior":
+    # fraud rows skew towards ProductCD == "C" and larger amounts.
+    product = np.asarray(frame["ProductCD"], dtype=object)
+    product[is_fraud & (rng.random(N_TX) < 0.9)] = "C"
+    frame["ProductCD"] = product
+    amt = np.asarray(frame["TransactionAmt"], dtype=float)
+    amt[is_fraud] = np.round(amt[is_fraud] * 10.0, 2)
+    frame["TransactionAmt"] = amt
 
     def sparse_float(p_null: float, lo: float, hi: float) -> np.ndarray:
         vals = rng.uniform(lo, hi, size=N_TX).round(1)

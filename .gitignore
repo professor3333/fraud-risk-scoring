@@ -4,6 +4,7 @@ data/*
 models/
 mlruns/
 mlartifacts/
+mlflow.db
 
 # Python
 .venv/

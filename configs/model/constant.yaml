@@ -1,0 +1,8 @@
+# E001: constant-rate baseline. Predicts the training-window fraud rate for every row.
+experiment: fraud-baselines
+run_name: constant_prior
+features: configs/features/baseline.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: constant

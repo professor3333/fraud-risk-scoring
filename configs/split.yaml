@@ -1,0 +1,8 @@
+# Temporal split boundaries (ADR 0002). Days are TransactionDT // 86400.
+# Windows are [start, end] inclusive in days; converted to seconds by fraud.data.split.
+time_col: TransactionDT
+seconds_per_day: 86400
+windows:
+  train:      {start_day: 1,   end_day: 122}
+  validation: {start_day: 123, end_day: 152}
+  test:       {start_day: 153, end_day: 183}

@@ -24,7 +24,7 @@ OUT_DIR = Path(__file__).resolve().parent / "raw"
 
 def make_transactions(rng: np.random.Generator) -> pd.DataFrame:
     ids = np.arange(2_987_000, 2_987_000 + N_TX)
-    dt = np.sort(rng.integers(86_400, 86_400 * 30, size=N_TX))
+    dt = np.sort(rng.integers(86_400, 86_400 * 184, size=N_TX))
     frame: dict[str, object] = {
         schema.ID_COL: ids,
         schema.TARGET_COL: np.zeros(N_TX, dtype=np.int64),

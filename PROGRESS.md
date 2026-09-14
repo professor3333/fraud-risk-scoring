@@ -14,8 +14,8 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] Problem formulation ADR (what `isFraud` means; what is being predicted)
 
 ## Stage 2 — Temporal split, leakage analysis, baselines
-- [ ] Split-strategy ADR + `configs/split.yaml` + split tests
-- [ ] Primary-metric ADR
+- [x] Split-strategy ADR + `configs/split.yaml` + split tests
+- [x] Primary-metric ADR (also fixes imbalance handling: none by default)
 - [ ] `docs/leakage_audit.md` for the first feature families
 - [ ] Constant baseline + logistic-regression pipeline, logged to MLflow
 
@@ -39,4 +39,4 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] README complete and verified from a clean clone
 
 ## Current stage: **2 — Temporal split, leakage analysis, baselines**
-Next: split-strategy ADR + config + tests; primary-metric ADR; baselines in MLflow.
+Next: leakage audit for the baseline feature families; constant + logistic-regression baselines in MLflow.

@@ -264,3 +264,31 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   on the temporal number; this run is a control and is not in the results
   table's comparison set.
 
+
+## E002b — Logistic regression on a small interpretable subset
+
+- **Hypothesis:** a linear model on 20 numeric columns (amount, billing
+  region, the 14 `C` counts, `D1`/`D10`/`D15`) plus one-hot product, card
+  type and both e-mail domains recovers a substantial share of E002's
+  signal — the `C` counts and product/e-mail presence are where the
+  marginal signal sits in the EDA — at a fraction of the cost. Precision /
+  recall / F1 at 0.5 are recorded for completeness only; the threshold is
+  chosen in its own component (ADR 0006).
+- **Config:** `configs/model/logreg_small.yaml`; features
+  `baseline_small` (26 raw columns → ~150 encoded).
+- **Expected:** validation PR-AUC 0.20 – 0.30 (half of E002's 0.402),
+  ROC-AUC 0.75 – 0.82; seconds rather than minutes.
+- **Result** (run `309924ff`): validation PR-AUC **0.2884**, ROC-AUC 0.795;
+  at 0.5 precision 0.895 / recall 0.083 / F1 0.151 (provisional threshold),
+  confusion tp 238 · fp 28 · fn 2,646 · tn 82,132; recall at P ≥ 0.90 =
+  0.082. Train PR-AUC 0.253 — *below* validation. Wall time 22 s.
+- **Interpretation:** 26 raw columns give 72 % of the 423-column linear
+  model's PR-AUC (0.288 vs 0.402) in 1/40 of the time, and with no
+  overfitting at all (the train score is lower than validation, which says
+  the validation month is slightly easier for these columns). The signal a
+  linear model can use lives mostly in the `C` counts and the product /
+  e-mail / card-type levels. Nearly all of E002's extra 0.11 comes from the
+  `V` block and its missing-indicators — consistent with the later ablation
+  (`V` matters to models that can use it, but is replaceable). Neither
+  linear model is a candidate; both are reference points for the trees.
+

@@ -1,0 +1,12 @@
+# E002b: logistic regression on a small interpretable subset (configs/features/baseline_small.yaml).
+experiment: fraud-baselines
+run_name: logreg_small
+features: configs/features/baseline_small.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: logreg
+  params:
+    C: 1.0
+    max_iter: 2000
+    solver: lbfgs

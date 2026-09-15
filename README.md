@@ -72,7 +72,8 @@ once at the end.
 | experiment | model | val PR-AUC | val ROC-AUC | recall @ P ≥ 0.90 |
 |---|---|---:|---:|---:|
 | E001 | constant prior | 0.034 | 0.500 | 0.000 |
-| E002 | logistic regression, raw columns | 0.402 | 0.842 | 0.118 |
+| E002b | logistic regression, 26 interpretable columns | 0.288 | 0.795 | 0.082 |
+| E002 | logistic regression, all 423 raw columns | 0.402 | 0.842 | 0.118 |
 | E003 | XGBoost, raw columns | 0.570 | 0.912 | 0.292 |
 | E005 | + hour / weekday | 0.576 · rejected (+0.002 seed-paired) | 0.912 | 0.284 |
 | E006 | + frequency encoding (ADR 0005) | 0.578 · accepted (+0.009 seed-paired) | 0.919 | 0.294 |
@@ -183,6 +184,7 @@ uv run python scripts/validate_data.py     # contract report: columns, dtypes, i
 ```bash
 uv run python scripts/eda.py                                                  # ~20 s: summary JSON, CSVs, figures
 uv run python scripts/train.py --model configs/model/constant.yaml            # E001
+uv run python scripts/train.py --model configs/model/logreg_small.yaml        # E002b, ~20 s
 uv run python scripts/train.py --model configs/model/logreg.yaml              # E002, ~16 min
 uv run python scripts/train.py --model configs/model/xgboost.yaml             # E003, ~45 s
 uv run python scripts/train.py --model configs/model/xgboost_v2_freq.yaml     # E006

@@ -54,8 +54,8 @@ calibration choice). The test window was scored **once**, at the end.
 | Brier (prior: 0.033) / ECE | 0.0192 / 0.0046 | 0.0219 / 0.0060 |
 | cost at 0.08 / at 0.5 / approve-all | 227k / 328k / 486k | 275k / 363k / 477k |
 
-Baselines on validation: constant 0.034 PR-AUC; logistic regression 0.402;
-untuned XGBoost on raw columns 0.570.
+Baselines on validation: constant 0.034 PR-AUC; logistic regression 0.288
+(26 columns) / 0.402 (all raw columns); untuned XGBoost on raw columns 0.570.
 
 **Reading the test column.** PR-AUC falls 0.06 from validation to test. The
 test month is one month further from the training window, and every

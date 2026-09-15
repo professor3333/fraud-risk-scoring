@@ -313,3 +313,54 @@ def test_run_logs_provenance_and_artifacts(df: pd.DataFrame, tmp_path: Path) -> 
     assert {
         a.path for a in mlflow.artifacts.list_artifacts(run_id=result.run_id, artifact_path="model")
     }
+
+
+# --- review policy ----------------------------------------------------------------
+
+
+def test_policy_bands_and_budget_sizing() -> None:
+    from fraud.evaluate.policy import (
+        Policy,
+        ReviewCost,
+        apply_policy,
+        block_threshold,
+        budget_curve,
+        evaluate_policy,
+        operating_points,
+        size_review_band,
+    )
+    from fraud.evaluate.threshold import CostModel, ErrorCost
+
+    # two days, 6 rows each; scores descending within a day
+    y = np.array([1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0])
+    s = np.array([0.9, 0.7, 0.6, 0.3, 0.2, 0.1, 0.95, 0.8, 0.5, 0.4, 0.2, 0.05])
+    day = np.array([1] * 6 + [2] * 6)
+    amt = np.full(12, 100.0)
+    pts = operating_points(y, s, n_days=2, thresholds=np.array([0.05, 0.5, 0.75, 0.9]))
+    assert (
+        pts.loc[pts.threshold == 0.9, "tp"].item() == 2
+        and pts.loc[pts.threshold == 0.9, "fp"].item() == 0
+    )
+    assert pts.loc[pts.threshold == 0.05, "recall"].item() == 1.0
+    # precision at 0.9 = 1.0, at 0.75 = 2/3 (0.8 is legit) -> block threshold 0.9 with a 0.8 bar
+    assert block_threshold(pts, 0.8) == 0.9
+    # budget 2/day: review the two highest below 0.9 -> scores 0.7, 0.6 (day 1) and 0.8, 0.5 (day 2)
+    review_t = size_review_band(s, day, block_t=0.9, budget_per_day=2)
+    assert review_t == 0.5
+    policy = Policy(0.9, review_t, 2)
+    actions = apply_policy(s, policy)
+    assert (actions == "block").sum() == 2 and (actions == "review").sum() == 4
+    m = evaluate_policy(
+        y, s, amt, day, policy, CostModel(ErrorCost(15, 1), ErrorCost(2, 0.1)), ReviewCost(3, 0.02)
+    )
+    assert m["recall_block"] == pytest.approx(0.5)
+    assert m["recall_block_plus_review"] == pytest.approx(1.0)  # 0.7 and 0.5 are the other frauds
+    assert m["fraud_approved_per_day"] == 0.0
+    # cost: 2 blocked frauds cost 0; 4 reviews -> 2 legit (3 + 2) + 2 fraud (3) = 16
+    assert m["total_cost"] == pytest.approx(16.0)
+    curve = budget_curve(y, s, day, (1, 3))
+    assert curve.loc[curve.budget_per_day == 1, "precision_at_budget"].item() == 1.0
+    # top 3 per day: day 1 (0.9, 0.7, 0.6) and day 2 (0.95, 0.8, 0.5) hold all four frauds
+    assert curve.loc[curve.budget_per_day == 3, "recall_at_budget"].item() == 1.0
+    at3 = curve[curve.budget_per_day == 3].iloc[0]
+    assert at3["precision_at_budget"] == pytest.approx(4 / 6)

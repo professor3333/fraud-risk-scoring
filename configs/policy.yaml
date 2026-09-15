@@ -1,0 +1,11 @@
+# Three-action review policy (docs/review_policy.md).
+# Block when validation precision at the threshold is at least this high:
+block_min_precision: 0.80
+# Analyst budgets to evaluate (reviews per day); the policy's review band is
+# sized to the budget on the validation window.
+review_budgets_per_day: [25, 50, 100, 200, 500, 1000]
+# Cost of a review, on top of ADR 0006's decline / miss costs:
+costs:
+  review_fixed: 3.0          # analyst handling per reviewed transaction
+  review_legit_amount_coef: 0.02   # delay friction on a reviewed legitimate purchase
+  # reviewed fraud is assumed caught: no loss, only the handling cost

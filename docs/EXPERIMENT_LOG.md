@@ -31,5 +31,6 @@ the seed-paired mean over seeds 42 / 1 / 2 (ADR 0003).
 | E020 | `V` is optional once entity frequency is modelled | shipped set without `V` (100 inputs) | paired −0.003 | Neutral — compact option, not shipped |
 | E021 | One-axis sweeps show underfit → capacity → overfit → regularise | depth / η / mcw / subsample / colsample / L1 / L2 / trees | _running_ | _pending_ |
 | — | Isotonic calibration fixes the tail | isotonic vs sigmoid on OOF scores | isotonic ties cost 0.011 PR-AUC; sigmoid Brier 0.0195→0.0191 | Sigmoid (ADR 0007) |
+| — | A review action beats decline-only; ranks hold under drift, thresholds don't | three-band policy sized to a budget, checked on test | 200 reviews/day: recall 0.77, cost −30 % vs decline-only; test block precision 0.80→0.71, review volume +25 % | Block by threshold, review by daily rank (`docs/review_policy.md`) |
 | — | The cost-optimal threshold is far below 0.5 | amount-weighted cost curve | 0.08 (flat 0.06–0.145); −52 % cost vs approve-all | 0.08 (ADR 0006) |
 | — | The model transfers one month further out | single test evaluation of E016 | 0.557 (−0.06), recall at 0.08 holds | Reported; retrain monthly |

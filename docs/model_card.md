@@ -106,10 +106,12 @@ frequency-encoded composite keys.
   threshold moves between 0.055 and 0.165 under ±50 % changes
   (`docs/threshold.md`); the direction is robust, the value is a business
   input.
-- **Recall-heavy policy.** At 0.08 about 7 % of transactions are declined and
-  two thirds of those are legitimate. With a review queue instead of a hard
-  decline the false-positive cost falls and the threshold would move lower
-  still; with a friction-sensitive merchant it moves higher.
+- **Recall-heavy single threshold.** At 0.08 about 7 % of transactions are
+  declined and two thirds of those are legitimate. `docs/review_policy.md`
+  replaces it with block ≥ 0.42 / review by daily rank / approve, which
+  costs 30 % less on validation; on test the block precision drifts from
+  0.80 to 0.71 and a fixed review threshold overshoots its budget by 25 %,
+  so reviewing should be rank-based.
 - **Fairness.** No demographic attributes exist in the data; disparate impact
   across, e.g., email domain or device type has not been assessed and would
   need an argument before this model made autonomous decline decisions.

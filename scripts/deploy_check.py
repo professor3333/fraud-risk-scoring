@@ -54,7 +54,7 @@ def main() -> None:
     top = scored["rows"][0]
     print(f"ok  {base}")
     print(f"    model {info['version']}  parity_rows {health['parity_rows']}")
-    print(f"    threshold {info['threshold']}  bands {info['bands']}")
+    print(f"    bands {info['bands']}  default budget {info['default_review_budget']}")
     counts = f"block {s['high_risk']}, review {s['review']}, approve {s['approve']}"
     print(f"    sample: analysed {s['analysed']}, {counts}")
     print(f"    top row {top['transaction_id']}: p={top['fraud_probability']:.4f} {top['action']}")

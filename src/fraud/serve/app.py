@@ -19,7 +19,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
 from fraud.evaluate.policy import apply_rank_policy
-from fraud.evaluate.threshold import load_threshold_config
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.frames import payloads_to_frame, request_to_frame, table_to_frame
 from fraud.serve.parity import frozen_paths, verify
@@ -51,7 +50,6 @@ DEFAULT_CONFIG = ROOT / "configs" / "serving.yaml"
 @dataclass(frozen=True)
 class ServingState:
     model: CalibratedModel
-    threshold: float
     bands: Bands
     model_version: str
     parity_rows: int
@@ -65,8 +63,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model_path = root / raw["model_path"]
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
-    threshold = load_threshold_config(root / raw["threshold_config"]).threshold
-    bands = Bands(**raw.get("bands", {"review": threshold, "block": 1.0}))
+    bands = Bands(**raw["bands"])
     if not 0.0 <= bands.review <= bands.block <= 1.0:
         raise ValueError(f"bands must satisfy 0 <= review <= block <= 1, got {bands}")
     # Refuse to serve an artifact that does not reproduce its frozen probabilities (G8).
@@ -77,7 +74,6 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         parity_rows = 0 if not all(p.exists() for p in frozen_paths(model_path)) else -1
     return ServingState(
         model=model,
-        threshold=threshold,
         bands=bands,
         model_version=f"{raw['model_version']}@{digest}",
         parity_rows=parity_rows,
@@ -107,10 +103,8 @@ def _response(
     return PredictionResponse(
         transaction_id=transaction_id,
         fraud_probability=p,
-        decision="decline" if p >= state.threshold else "approve",
         risk_level=level,
         action=action,
-        threshold=state.threshold,
         model_version=state.model_version,
     )
 
@@ -217,8 +211,6 @@ def score_table(
         average_fraud_probability=float(probabilities.mean()) if len(rows) else 0.0,
         ignored_columns=ignored,
         model_version=state.model_version,
-        threshold=state.threshold,
-        bands=state.bands,
         policy=applied,
     )
     return CsvPredictionResponse(summary=summary, rows=rows)
@@ -240,7 +232,6 @@ def model_info(state: ServingState) -> ModelInfoResponse:
         validation_pr_auc=float(info.get("validation_pr_auc", float("nan"))),
         test_pr_auc=float(info.get("test_pr_auc", float("nan"))),
         calibration=str(info.get("calibration", state.model.method)),
-        threshold=state.threshold,
         bands=state.bands,
         training_window_days=tuple(info.get("training_window_days", (0, 0))),
         validation_window_days=tuple(info.get("validation_window_days", (0, 0))),
@@ -274,7 +265,6 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         return HealthResponse(
             status="ok",
             model_version=s.model_version,
-            threshold=s.threshold,
             parity_rows=s.parity_rows,
         )
 

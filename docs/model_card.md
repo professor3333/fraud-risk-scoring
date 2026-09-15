@@ -135,7 +135,10 @@ on E022 with the same profile.
   cannot be verified from anonymised data (`docs/leakage_audit.md`).
 - **Drift.** One extra month costs 0.08 PR-AUC and 0.08 precision at the
   threshold, and the higher-capacity model loses more of its validation
-  advantage than its predecessor did. The frequency tables and the calibration map are frozen to the
+  advantage than its predecessor did. `docs/monitoring.md` describes the
+  runtime monitor (score / action / feature PSI; eventual performance with
+  matured labels) that is meant to catch this in production; it reproduced
+  the drop on a reporting-window day (eventual PR-AUC 0.617 vs 0.637). The frequency tables and the calibration map are frozen to the
   training population and age with it.
 - **Cost model is assumed.** FN = amount + 15, FP = 0.10 · amount + 2. The
   threshold moves between 0.055 and 0.165 under ±50 % changes

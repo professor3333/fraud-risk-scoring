@@ -26,6 +26,10 @@ primary_region = "sin"
   path = "/health"
   timeout = "5s"
 
+[mounts]
+  source = "fraud_audit"
+  destination = "/app/audit"        # prediction audit trail survives deploys
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"                  # pandas + xgboost + the 41 MB artifact need ~600 MB

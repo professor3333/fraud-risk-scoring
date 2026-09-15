@@ -32,6 +32,7 @@ container health check (`.github/workflows/ci.yml`).
 | API == offline, batch == single, CSV == single | `test_serving::test_predict_matches_offline_pipeline`, `test_batch_is_ranked_and_matches_single_predictions`, `test_csv_upload_scores_ranks_and_summarises` |
 | calibration preserves ranking; cost / policy arithmetic | `test_model::test_calibrated_model_keeps_ranking_and_improves_brier`, `test_cost_curve_prefers_catching_expensive_fraud`, `test_policy_bands_and_budget_sizing`, `test_top_k_per_day_reviews_the_highest_scores` |
 | experiment record complete (provenance, metrics, artifacts) | `test_model::test_run_logs_provenance_and_artifacts` |
+| prediction audit trail (single, batch and CSV events; request id echoed; per-transaction lookup; disable switch) | `test_serving::test_predictions_are_audited`, `test_csv_upload_is_audited_with_one_request_id`, `test_audit_can_be_disabled` |
 
 ## Fixture
 

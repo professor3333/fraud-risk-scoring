@@ -28,6 +28,7 @@ flyctl apps create fraud-risk-scoring
 # make sure the served artifact and its frozen sample exist locally
 ls models/xgb_f5_capacity_calibrated.joblib models/xgb_f5_capacity_calibrated_frozen_*.json
 
+flyctl volumes create fraud_audit --size 1   # persistent audit trail (mounted at /app/audit)
 flyctl deploy --remote-only          # builds the Dockerfile on Fly's builder, pushes, starts
 uv run python scripts/deploy_check.py https://fraud-risk-scoring.fly.dev
 ```

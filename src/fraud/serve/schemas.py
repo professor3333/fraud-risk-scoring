@@ -57,3 +57,4 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     model_version: str
     threshold: float
+    parity_rows: int  # frozen rows re-scored at startup; the service refuses to start on a mismatch

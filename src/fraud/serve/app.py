@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import joblib
-import pandas as pd
 import yaml
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -18,18 +17,12 @@ from fastapi.responses import HTMLResponse
 from fraud.data import schema
 from fraud.evaluate.threshold import load_threshold_config
 from fraud.pipeline.calibrated import CalibratedModel
-from fraud.serve.schemas import (
-    IDENTITY_FIELDS,
-    HealthResponse,
-    PredictionResponse,
-    TransactionRequest,
-)
+from fraud.serve.frames import request_to_frame
+from fraud.serve.parity import frozen_paths, verify
+from fraud.serve.schemas import HealthResponse, PredictionResponse, TransactionRequest
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parent / "static"
-INPUT_COLUMNS: tuple[str, ...] = (
-    tuple(c for c in schema.TRANSACTION_COLS if c != schema.TARGET_COL) + IDENTITY_FIELDS
-)
 DEFAULT_CONFIG = ROOT / "configs" / "serving.yaml"
 
 
@@ -38,6 +31,7 @@ class ServingState:
     model: CalibratedModel
     threshold: float
     model_version: str
+    parity_rows: int
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -47,28 +41,18 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
     threshold = load_threshold_config(root / raw["threshold_config"]).threshold
+    # Refuse to serve an artifact that does not reproduce its frozen probabilities (G8).
+    if raw.get("require_parity", True):
+        parity = verify(model, model_path)
+        parity_rows = parity.n_rows
+    else:
+        parity_rows = 0 if not all(p.exists() for p in frozen_paths(model_path)) else -1
     return ServingState(
-        model=model, threshold=threshold, model_version=f"{raw['model_version']}@{digest}"
+        model=model,
+        threshold=threshold,
+        model_version=f"{raw['model_version']}@{digest}",
+        parity_rows=parity_rows,
     )
-
-
-def request_to_frame(payload: dict[str, Any]) -> pd.DataFrame:
-    """One validated request -> a one-row frame shaped like the training frame."""
-    row = {c: payload.get(c) for c in INPUT_COLUMNS}
-    row[schema.HAS_IDENTITY_COL] = any(row[c] is not None for c in IDENTITY_FIELDS)
-    frame = pd.DataFrame([row])
-    for col in schema.TRANSACTION_STR_COLS | schema.IDENTITY_STR_COLS:
-        frame[col] = frame[col].astype("str")
-    numeric = [
-        c
-        for c in frame.columns
-        if c not in schema.TRANSACTION_STR_COLS | schema.IDENTITY_STR_COLS
-        and c != schema.HAS_IDENTITY_COL
-    ]
-    frame[numeric] = frame[numeric].astype("float64")
-    frame[schema.ID_COL] = frame[schema.ID_COL].astype("int64")
-    frame[schema.TIME_COL] = frame[schema.TIME_COL].astype("int64")
-    return frame
 
 
 def score(state: ServingState, payload: dict[str, Any]) -> PredictionResponse:
@@ -98,7 +82,12 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         s: ServingState = request.app.state.serving
-        return HealthResponse(status="ok", model_version=s.model_version, threshold=s.threshold)
+        return HealthResponse(
+            status="ok",
+            model_version=s.model_version,
+            threshold=s.threshold,
+            parity_rows=s.parity_rows,
+        )
 
     @app.post("/predict", response_model=PredictionResponse)
     def predict(body: TransactionRequest, request: Request) -> PredictionResponse:  # type: ignore[valid-type]

@@ -4,7 +4,9 @@ data
 mlruns
 mlflow.db
 models/*
-!models/xgb_f5_interactions_calibrated.joblib
+!models/xgb_f5_capacity_calibrated.joblib
+!models/xgb_f5_capacity_calibrated_frozen_sample.json
+!models/xgb_f5_capacity_calibrated_frozen_expected.json
 notebooks
 reports
 tests

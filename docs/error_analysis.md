@@ -1,8 +1,14 @@
 # Final evaluation and error analysis
 
-Everything frozen: feature set `f5_interactions` (E016), XGBoost with the
-E008 parameters, sigmoid calibration (ADR 0007), threshold 0.08 (ADR 0006),
-review bands 0.067 / 0.42 (`docs/review_policy.md`). The test window (days
+Analysed on the model shipped at the time (E016: feature set
+`f5_interactions`, E008 parameters, sigmoid calibration, threshold 0.08,
+review bands 0.067 / 0.42) and re-checked on the current shipped model
+(E022, same features, depth 12 × 1,600 trees; `reports/final/` now holds
+E022's bundle). The re-check gave the same profile: 490 high-confidence false
+positives (62 % product `C`, 62 % no address, 67 % new card), 844
+high-confidence false negatives (71 % product `W`, 71 % sharing an entity
+with ≥ 2 other test frauds), 1,307 confident true frauds. The numbers below
+are E016's; the reading is unchanged. The test window (days
 153 – 183, 85,430 transactions, 2,994 fraud) was scored once for this
 candidate; `reports/final/` is that same set of predictions, laid out for
 inspection. Nothing in this document changes a decision.

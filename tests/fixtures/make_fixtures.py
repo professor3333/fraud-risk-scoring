@@ -101,7 +101,43 @@ def make_identity(rng: np.random.Generator, tx_ids: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame(frame)[list(schema.IDENTITY_COLS)]
 
 
+def write_golden() -> None:
+    """Fit the fixture pipeline from the committed config and store its frozen probabilities."""
+    import json
+
+    from fraud.data.load import load_train
+    from fraud.data.split import load_split_config, split
+    from fraud.features.columns import load_feature_spec
+    from fraud.pipeline.calibrated import CalibratedModel
+    from fraud.serve.parity import choose_sample
+    from fraud.train.run import fit_and_evaluate, load_train_config
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = load_train_config(root / "configs" / "model" / "xgboost.yaml")
+    spec = load_feature_spec(cfg.features)
+    parts = split(load_train(OUT_DIR), load_split_config(root / "configs" / "split.yaml"))
+    pipe, _, _ = fit_and_evaluate(parts, spec, cfg)
+    held = parts["validation"]
+    model = CalibratedModel(pipe, method="sigmoid").fit_calibrator(
+        pipe.predict_proba(held)[:, 1], held[spec.target]
+    )
+    sample = choose_sample(parts["test"], n_per_group=5)
+    probs = model.predict_proba(sample)[:, 1]
+    golden = {
+        "probabilities": {
+            str(int(i)): float(p) for i, p in zip(sample[schema.ID_COL], probs, strict=True)
+        }
+    }
+    (OUT_DIR.parent / "frozen_expected.json").write_text(json.dumps(golden, indent=2))
+    print(f"wrote golden probabilities for {len(probs)} fixture rows")
+
+
 def main() -> None:
+    import sys
+
+    if "--golden" in sys.argv:
+        write_golden()
+        return
     rng = np.random.default_rng(SEED)
     tx = make_transactions(rng)
     idn = make_identity(rng, tx[schema.ID_COL].to_numpy())

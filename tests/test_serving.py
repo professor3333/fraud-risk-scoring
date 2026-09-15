@@ -19,6 +19,7 @@ from fraud.features.columns import load_feature_spec
 from fraud.pipeline.build import build_pipeline
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.app import create_app, request_to_frame
+from fraud.serve.parity import choose_sample, freeze
 from fraud.serve.schemas import IDENTITY_FIELDS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,7 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
         pipe.predict_proba(held)[:, 1], held[spec.target]
     )
     joblib.dump(model, root / "models" / "m.joblib")
+    freeze(model, root / "models" / "m.joblib", choose_sample(parts["test"], n_per_group=5))
     (root / "configs" / "threshold.yaml").write_text(
         "costs:\n  false_negative: {fixed: 15.0, amount_coef: 1.0}\n"
         "  false_positive: {fixed: 2.0, amount_coef: 0.10}\n"
@@ -147,7 +149,7 @@ def test_index_page_is_served(client: TestClient) -> None:
 def test_real_model_parity_on_real_rows(full_raw_dir: Path) -> None:
     """The deployed artifact scores real validation rows identically via the API and offline."""
     cfg = ROOT / "configs" / "serving.yaml"
-    model_path = ROOT / "models" / "xgb_f5_interactions_calibrated.joblib"
+    model_path = ROOT / "models" / "xgb_f5_capacity_calibrated.joblib"
     if not model_path.exists():
         pytest.skip("served artifact not built")
     df = load_train(full_raw_dir, cache_dir=full_raw_dir.parent / "processed")

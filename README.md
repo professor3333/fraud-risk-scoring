@@ -195,7 +195,7 @@ data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
-                  error_analysis.md, xgboost_progression.md, model_card.md
+                  error_analysis.md, xgboost_progression.md, testing.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
@@ -226,7 +226,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 86 tests on the synthetic fixture; no data needed
+uv run pytest            # 93 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -374,17 +374,23 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 86 fixture tests, no data, no network, ~10 s
+uv run pytest              # 93 fixture tests, no data, no network, ~15 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
 Tests are grouped by what they protect: data contract, split ordering and
 sizes, leakage (nothing fit on validation; history features depend on no
-later row), pipeline (unseen categories, missing identity, save/load
-parity), model (beats the prior, probabilities in [0, 1], reproducible),
-threshold/calibration arithmetic, serving (validation, API = offline),
-parity (training path = artifact = API = frozen golden; tampering refused).
+later row), pipeline (unseen categories, missing identity, feature count,
+save/load parity), model (beats the prior, probabilities in [0, 1], shape,
+reproducible), threshold/calibration arithmetic, serving (validation, API =
+offline, batch = single, CSV = single, OpenAPI contract), parity (training
+path = artifact = API = frozen golden; tampering refused). The property →
+test map is `docs/testing.md`.
+
+CI (`.github/workflows/ci.yml`): ruff → mypy → pytest → smoke training
+through the CLI on the fixture → Docker build → container `/health` with
+the startup parity check. The full model is never trained in CI.
 
 ## Development setup
 

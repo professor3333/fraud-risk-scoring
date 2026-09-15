@@ -135,3 +135,27 @@ def test_full_dataset_window_sizes(full_raw_dir: Path, cfg: SplitConfig) -> None
         assert 0.025 <= rate <= 0.05, (name, rate)
     assert len(parts["validation"]) > 80_000
     assert len(parts["test"]) > 80_000
+
+
+# --- tuning folds (ADR 0002: expanding window inside the training window) -------
+
+
+def test_tuning_folds_stay_inside_training_window(cfg: SplitConfig) -> None:
+    from fraud.train.tune import check_folds_inside_training_window, load_tune_config
+
+    tune = load_tune_config(CONFIGS / "tuning" / "xgboost.yaml")
+    check_folds_inside_training_window(tune.folds, cfg)
+    for f in tune.folds:
+        assert f.val_end_day <= cfg.window("train").end_day
+        assert f.train_end_day < f.val_start_day
+
+
+def test_fold_frames_are_strictly_ordered(frame: pd.DataFrame, cfg: SplitConfig) -> None:
+    from fraud.train.tune import Fold, fold_frames
+
+    train = split(frame, cfg)["train"]
+    fit, score = fold_frames(train, Fold(62, 63, 92), cfg.seconds_per_day)
+    assert fit[schema.TIME_COL].max() < score[schema.TIME_COL].min()
+    assert not fit[schema.ID_COL].isin(score[schema.ID_COL]).any()
+    with pytest.raises(ValueError, match="ordered"):
+        Fold(70, 63, 92)

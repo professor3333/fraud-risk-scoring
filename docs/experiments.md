@@ -164,3 +164,37 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   (e.g. longer windows, distinct-merchant counts) be proposed later. Current
   best remains E006.
 
+
+## E008 — Hyperparameter search with expanding-window CV
+
+- **Hypothesis:** the E003/E006 parameters were a reasonable guess, not a
+  tuned point. A 16-trial random search over depth, learning rate, tree
+  count, child weight, subsampling and regularisation, scored by
+  expanding-window CV inside the training window (folds: days 1–62 → 63–92
+  and 1–92 → 93–122), finds a configuration that transfers to the validation
+  window. The untuned parameters are scored on the same folds as a
+  reference.
+- **Config:** `configs/tuning/xgboost.yaml`; then the best trial refit on the
+  full training window as `configs/model/xgboost_v2_tuned.yaml` and compared
+  with E006 on validation. Feature set `v2_freq` throughout.
+- **Expected:** best CV PR-AUC above the reference by 0.01 – 0.03; validation
+  gain smaller than the CV gain (the search sees the folds, validation is
+  untouched). Accepted if validation PR-AUC ≥ E006 + 0.01. The train/val gap
+  is reported: a tuned model that only widens the gap is not an improvement.
+- **Result:** search (MLflow `fraud-tuning`, 16 trials + reference,
+  `reports/tuning/xgboost_trials.csv`): reference CV PR-AUC 0.607 ± 0.017;
+  best trial 0.626 ± 0.017 (800 trees, η 0.05, depth 8, min_child_weight 5,
+  subsample 0.8, colsample 0.5, λ 1, α 1). Every depth-4 trial scored below
+  the reference; depth 8 filled the top three. Refit on the full training
+  window (run `5ebc9a67`): validation PR-AUC **0.6155** (+0.0377 over E006),
+  ROC-AUC 0.929, precision / recall / F1 at 0.5 = 0.867 / 0.374 / 0.522,
+  recall at P ≥ 0.90 = 0.330. Train PR-AUC 0.918 → gap 0.30 (E006: 0.23).
+  Wall time 86 s.
+- **Interpretation:** **accepted** — nearly four times the bar, and the CV
+  gain (+0.019) transferred to validation with room to spare, which says the
+  folds are a faithful proxy for the later window. Deeper trees are what
+  the data wanted: fraud here is interactions among many weak columns. The
+  gap did widen; the learning curve (`reports/curves/`) is the check that
+  it is benign — validation PR-AUC keeps rising with trees rather than
+  turning over. Current best: E008 (`xgb_v2_tuned`).
+

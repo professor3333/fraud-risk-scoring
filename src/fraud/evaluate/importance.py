@@ -49,22 +49,34 @@ def spec_without_group(spec: FeatureSpec, group: str) -> FeatureSpec:
     )
 
 
-def gain_importance(pipe: Pipeline) -> pd.DataFrame:
+def source_column(feature_name: str, spec: FeatureSpec) -> str:
+    """Map a pipeline output name back to the raw column it came from."""
+    prefix, raw = feature_name.split("__", 1)
+    if prefix == "freq":
+        return raw.removeprefix("freq_")
+    raw = re.sub(r"^missingindicator_", "", raw)
+    if prefix == "cat":  # one-hot: '<column>_<level>'; pick the longest matching column
+        matches = [c for c in spec.categorical if raw == c or raw.startswith(c + "_")]
+        if matches:
+            return max(matches, key=len)
+    return raw
+
+
+def gain_importance(pipe: Pipeline, spec: FeatureSpec) -> pd.DataFrame:
     """Per-feature gain from the booster, with the pipeline's output names and their group."""
     model = pipe.named_steps["model"]
     names = list(pipe.named_steps["features"].get_feature_names_out())
     gain = model.get_booster().get_score(importance_type="gain")
     rows = []
     for i, name in enumerate(names):
-        g = float(gain.get(f"f{i}", 0.0))
-        raw = name.split("__", 1)[1]
-        raw = raw.removeprefix("freq_")
-        raw = re.sub(r"^missingindicator_", "", raw)
+        source = source_column(name, spec)
+        group = "frequency" if name.startswith("freq__") else group_of(source)
         rows.append(
             {
                 "feature": name,
-                "gain": g,
-                "group": group_of(raw) if not name.startswith("freq") else "frequency",
+                "source": source,
+                "gain": float(gain.get(f"f{i}", 0.0)),
+                "group": group,
             }
         )
     df = pd.DataFrame(rows)

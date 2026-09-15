@@ -29,8 +29,8 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] Calibration evaluated (reliability diagram, Brier); sigmoid applied (ADR 0007)
 
 ## Stage 5 — Ablation, importance, model card
-- [ ] Ablation per feature group; importance from two methods
-- [ ] `docs/model_card.md`; single test-window evaluation
+- [x] Ablation per feature group; importance from two methods (`docs/ablation.md`)
+- [x] `docs/model_card.md`; single test-window evaluation (test PR-AUC 0.553)
 
 ## Stage 6 — Serving
 - [ ] FastAPI `/health` + `/predict`; parity test with offline pipeline

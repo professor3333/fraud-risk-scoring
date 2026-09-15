@@ -1,0 +1,96 @@
+{
+  "base_val_pr_auc": 0.6154851186254999,
+  "ablation": [
+    {
+      "removed_group": "amount",
+      "n_removed": 1,
+      "val_pr_auc": 0.6069626561983734,
+      "delta_vs_full": -0.00852246242712651,
+      "train_val_gap": 0.29964790054042445
+    },
+    {
+      "removed_group": "product",
+      "n_removed": 1,
+      "val_pr_auc": 0.613793158416738,
+      "delta_vs_full": -0.0016919602087619445,
+      "train_val_gap": 0.30410181312500206
+    },
+    {
+      "removed_group": "card",
+      "n_removed": 10,
+      "val_pr_auc": 0.5625250899362277,
+      "delta_vs_full": -0.05296002868927219,
+      "train_val_gap": 0.31641232020777954
+    },
+    {
+      "removed_group": "addr",
+      "n_removed": 4,
+      "val_pr_auc": 0.6047387898371345,
+      "delta_vs_full": -0.010746328788365456,
+      "train_val_gap": 0.3035793849492576
+    },
+    {
+      "removed_group": "dist",
+      "n_removed": 2,
+      "val_pr_auc": 0.6199921310882964,
+      "delta_vs_full": 0.0045070124627965,
+      "train_val_gap": 0.2975620744769629
+    },
+    {
+      "removed_group": "email",
+      "n_removed": 2,
+      "val_pr_auc": 0.6129135639494105,
+      "delta_vs_full": -0.0025715546760893826,
+      "train_val_gap": 0.30099087355449017
+    },
+    {
+      "removed_group": "C",
+      "n_removed": 14,
+      "val_pr_auc": 0.566294793335429,
+      "delta_vs_full": -0.049190325290070946,
+      "train_val_gap": 0.3307404364610522
+    },
+    {
+      "removed_group": "D",
+      "n_removed": 15,
+      "val_pr_auc": 0.6143024889648743,
+      "delta_vs_full": -0.0011826296606256559,
+      "train_val_gap": 0.2938852286961524
+    },
+    {
+      "removed_group": "M",
+      "n_removed": 9,
+      "val_pr_auc": 0.6016880614386474,
+      "delta_vs_full": -0.013797057186852535,
+      "train_val_gap": 0.30975204793328937
+    },
+    {
+      "removed_group": "V",
+      "n_removed": 339,
+      "val_pr_auc": 0.6102346991910137,
+      "delta_vs_full": -0.005250419434486231,
+      "train_val_gap": 0.31492791534873155
+    },
+    {
+      "removed_group": "identity",
+      "n_removed": 37,
+      "val_pr_auc": 0.6069225489054746,
+      "delta_vs_full": -0.008562569720025337,
+      "train_val_gap": 0.3000754996201789
+    },
+    {
+      "removed_group": "has_identity",
+      "n_removed": 1,
+      "val_pr_auc": 0.6201249377860539,
+      "delta_vs_full": 0.004639819160554004,
+      "train_val_gap": 0.29834569306103464
+    },
+    {
+      "removed_group": "frequency",
+      "n_removed": 12,
+      "val_pr_auc": 0.6013817481552063,
+      "delta_vs_full": -0.014103370470293641,
+      "train_val_gap": 0.29649432827569633
+    }
+  ]
+}

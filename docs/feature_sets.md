@@ -37,8 +37,8 @@ columns; "Vesta-engineered" = `C`, `D`, `M`, `V` together.
 
 | cut | inputs | val PR-AUC | recall @ P ≥ 0.90 |
 |---|---:|---:|---:|
-| raw, transaction only (no identity, no `V`) | 50 | 0.5864 | — |
-| raw, transaction + identity (no `V`) | 84 | 0.5913 | — |
+| raw, transaction only (no identity, no `V`) | 50 | 0.5864 | 0.251 |
+| raw, transaction + identity (no `V`) | 84 | 0.5913 | 0.282 |
 | raw, everything incl. `V` (F0) | 423 | 0.6014 | 0.307 |
 | shipped, transaction only (no identity, no `V`) | 62 | 0.6035 | 0.274 |
 | shipped except `V` | 100 | **0.6214** | 0.320 |

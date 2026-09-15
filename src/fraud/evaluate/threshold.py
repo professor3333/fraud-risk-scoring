@@ -6,14 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import matplotlib
 import numpy as np
 import pandas as pd
 import yaml
 from numpy.typing import ArrayLike
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -144,6 +140,11 @@ def sensitivity_table(
 
 
 def plot_cost_curve(curve: pd.DataFrame, chosen: float, title: str) -> Any:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.4))
     axes[0].plot(curve["threshold"], curve["total_cost"], color="#2a78d6", lw=2, label="total")
     axes[0].plot(

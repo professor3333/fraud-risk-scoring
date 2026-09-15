@@ -33,9 +33,9 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] `docs/model_card.md`; single test-window evaluation (test PR-AUC 0.553)
 
 ## Stage 6 — Serving
-- [ ] FastAPI `/health` + `/predict`; parity test with offline pipeline
-- [ ] Dockerfile (non-root, from lock file)
-- [ ] Small UI; deployment or documented local-only reason
+- [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
+- [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
+- [x] Small UI (demo page at `/`); local-only, reason in README
 - [ ] README complete and verified from a clean clone
 
 ## Current stage: **3 — Feature engineering + XGBoost**

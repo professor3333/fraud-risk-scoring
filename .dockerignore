@@ -1,0 +1,16 @@
+.git
+.venv
+data
+mlruns
+mlflow.db
+models/*
+!models/xgb_v2_tuned_calibrated.joblib
+notebooks
+reports
+tests
+docs
+*.md
+.mypy_cache
+.ruff_cache
+.pytest_cache
+__pycache__

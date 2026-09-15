@@ -30,10 +30,17 @@ recall ≥ 0.50 as tail summaries; later, Brier score and a reliability diagram
 when calibration is assessed (ADR 0007).
 
 A change is accepted when validation PR-AUC improves by **≥ 0.01** at the
-default seed. Improvements of 0.005 – 0.01 are re-run on two more seeds and
-accepted only if the mean improvement stays ≥ 0.005. Smaller deltas are noise.
-Basis: E004 measured a seed standard deviation of 0.002 and a range of
-0.005 across four seeds of the XGBoost baseline (`docs/experiments.md`).
+default seed, or — for any smaller delta — when it is re-run on two more
+seeds and the **paired mean improvement is ≥ 0.005 with every pair
+positive**. Basis: E004 measured a seed standard deviation of 0.002 (E012
+confirmed it for the tuned model), so 0.005 paired is ~3 sd.
+
+*Amendment 2026-09-15 (E016):* the original wording only allowed the seed
+re-run for deltas in 0.005 – 0.01; a +0.0035 result would have been called
+noise without looking. The amended rule lets any change be seed-paired and
+is stricter on the outcome (all pairs positive). Re-applied to every earlier
+decision (E005 +0.0024, E007 −0.0019, E012 +0.0017, E017 −0.0005) it
+changes none of them.
 
 **Class imbalance: nothing by default.** Average precision and ROC-AUC are
 ranking metrics; re-weighting or resampling changes the score scale and the

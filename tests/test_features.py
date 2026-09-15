@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -44,7 +45,7 @@ def test_derive_step_is_stateless_and_rejects_unknown_groups() -> None:
     assert set(step.transform(df).columns) == {schema.TIME_COL, "hour", "weekday"}
     with pytest.raises(ValueError, match="unknown derived"):
         Derive(("nope",)).fit(df)
-    assert set(DERIVERS) == {"time"}
+    assert set(DERIVERS) == {"time", "missingness", "amount", "email", "interactions"}
 
 
 # --- frequency encoding (ADR 0005) ------------------------------------------------
@@ -173,3 +174,100 @@ def test_entity_key_is_not_emitted_as_a_feature() -> None:
     out = add_entity_history(_history_frame())
     new_cols = set(out.columns) - set(_history_frame().columns)
     assert new_cols == set(HISTORY_FEATURES)
+
+
+# --- row-local feature sets F1, F2, F4, F5 --------------------------------------------
+
+
+def _one_row(**overrides: object) -> pd.DataFrame:
+    row: dict[str, object] = {
+        c: float("nan") for c in schema.TRANSACTION_COLS + schema.IDENTITY_COLS[1:]
+    }
+    row.update(
+        {
+            schema.ID_COL: 1,
+            schema.TARGET_COL: 0,
+            schema.TIME_COL: 100_000,
+            "TransactionAmt": 125.99,
+            "ProductCD": "W",
+            "card1": 1000,
+            "addr1": 300.0,
+            "card4": "visa",
+            "card6": "debit",
+        }
+    )
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
+def test_missingness_counts() -> None:
+    from fraud.features.rowwise import add_missingness_counts
+
+    out = add_missingness_counts(_one_row())
+    # 392 counted transaction columns (id and label excluded), 7 filled; 40 identity columns
+    assert out["n_missing_transaction"].item() == 392 - 7
+    assert out["n_missing_identity"].item() == 40
+    assert out["n_missing_total"].item() == 392 - 7 + 40
+
+
+def test_amount_features_decompose_the_amount() -> None:
+    from fraud.features.rowwise import add_amount_features
+
+    out = add_amount_features(pd.DataFrame({"TransactionAmt": [125.99, 50.0, 12.5, 107.0, 0.251]}))
+    assert out["amt_integer_part"].tolist() == [125.0, 50.0, 12.0, 107.0, 0.0]
+    assert out["amt_fraction"].tolist() == [0.99, 0.0, 0.5, 0.0, 0.25]
+    assert out["amt_is_round"].tolist() == [0, 1, 0, 0, 0]
+    assert out["amt_cents_digits"].tolist() == [2, 0, 1, 0, 2]
+    assert out["amt_log"].iloc[0] == pytest.approx(np.log1p(125.99))
+
+
+def test_email_features_and_families() -> None:
+    from fraud.features.rowwise import add_email_features
+
+    df = pd.DataFrame(
+        {
+            "P_emaildomain": ["gmail.com", "hotmail.com", None, "weird.io"],
+            "R_emaildomain": ["gmail.com", "outlook.com", None, None],
+        }
+    )
+    out = add_email_features(df)
+    assert out["same_email_domain"].tolist() == [1, 0, 0, 0]
+    assert out["p_email_missing"].tolist() == [0, 0, 1, 0]
+    assert out["r_email_missing"].tolist() == [0, 0, 1, 1]
+    assert out["p_email_family"].tolist() == ["gmail", "microsoft", "missing", "other"]
+    assert out["r_email_family"].tolist() == ["gmail", "microsoft", "missing", "missing"]
+
+
+def test_interaction_keys_are_missing_when_any_part_is() -> None:
+    from fraud.features.rowwise import add_interaction_keys
+
+    out = add_interaction_keys(_one_row(P_emaildomain="gmail.com"))
+    assert out["card1_addr1"].item() == "1000|300"
+    assert out["card1_addr1_pemail"].item() == "1000|300|gmail.com"
+    assert out["card1_card4"].item() == "1000|visa"
+    assert pd.isna(add_interaction_keys(_one_row(addr1=float("nan")))["card1_addr1"].item())
+
+
+def test_all_derivers_are_row_local() -> None:
+    from fraud.features.derive import DERIVERS
+
+    a = _one_row(P_emaildomain="gmail.com")
+    b = pd.concat([a, _one_row(TransactionAmt=9999.0, card1=5, addr1=1.0)], ignore_index=True)
+    for name, fn in DERIVERS.items():
+        left = fn(a).iloc[0]
+        right = fn(b).iloc[0]
+        pd.testing.assert_series_equal(left, right, check_names=False, obj=name)
+
+
+def test_entity_history_std_max_and_alternate_key() -> None:
+    from fraud.features.history import ENTITY_DEFINITIONS, add_entity_history
+
+    out = add_entity_history(_history_frame(), ENTITY_DEFINITIONS["card_addr"])
+    a = out[out["card1"] == 1].sort_values(schema.TIME_COL)
+    # card_addr key ignores D1: row 7 (D1 missing) now joins card 1's entity as its 5th row
+    assert a["ent_prior_count"].tolist() == [0, 1, 2, 3, 4]
+    # earlier amounts for row 4: [10, 30] -> std 10, max 30; row 6: [10, 30, 20] -> max 30
+    assert a["ent_prior_amt_std"].tolist()[2] == pytest.approx(10.0)
+    assert a["ent_prior_amt_max"].tolist()[1:] == [10.0, 30.0, 30.0, 100.0]
+    assert a["ent_amt_vs_max"].tolist()[3] == pytest.approx(100.0 / 30.0)
+    assert pd.isna(a["ent_prior_amt_std"].iloc[0])

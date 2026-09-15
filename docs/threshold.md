@@ -1,6 +1,7 @@
 # Operating threshold
 
-Model: `xgb_v2_tuned` (E008) with sigmoid calibration (ADR 0007). Cost model
+Model: `xgb_v2_tuned` (E008) with sigmoid calibration (ADR 0007); re-checked
+for the shipped `xgb_f5_interactions` (E016) — see the last section. Cost model
 and procedure: ADR 0006. Evidence: `reports/threshold/`,
 `scripts/select_threshold.py`.
 
@@ -57,3 +58,14 @@ value in that band is defensible under the base assumptions.
 precision, recall, F1 and the confusion matrix at 0.08 on calibrated
 probabilities; the API applies the same value. The test window is evaluated
 at this threshold once.
+
+## Re-check for the shipped model (`xgb_f5_interactions`, E016)
+
+Same procedure, same costs (`reports/threshold/xgb_f5_interactions_*`):
+validation optimum **0.095** (cost 230,014), train-only OOF cross-check
+**0.070** (cost on validation 234,575), and the curve is within 5 % of its
+minimum from 0.06 to 0.145. The existing 0.08 lies between the two
+selections at 230,443 — 0.2 % above the minimum. ADR 0006 says a flat
+curve with disagreeing selections is reported as a range, not chased; the
+threshold **stays 0.08**. On the test window the same policy costs
+262,109 vs 275,225 for the previous model.

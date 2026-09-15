@@ -147,7 +147,7 @@ def test_index_page_is_served(client: TestClient) -> None:
 def test_real_model_parity_on_real_rows(full_raw_dir: Path) -> None:
     """The deployed artifact scores real validation rows identically via the API and offline."""
     cfg = ROOT / "configs" / "serving.yaml"
-    model_path = ROOT / "models" / "xgb_v2_tuned_calibrated.joblib"
+    model_path = ROOT / "models" / "xgb_f5_interactions_calibrated.joblib"
     if not model_path.exists():
         pytest.skip("served artifact not built")
     df = load_train(full_raw_dir, cache_dir=full_raw_dir.parent / "processed")

@@ -1,0 +1,65 @@
+# F5 (E016): v2_freq + card x address / e-mail / card-type keys, frequency-encoded on the training window.
+name: f5_interactions
+target: isFraud
+id_col: TransactionID
+time_col: TransactionDT
+numeric:
+  explicit:
+  - TransactionAmt
+  - card1
+  - card2
+  - card3
+  - card5
+  - addr1
+  - addr2
+  - dist1
+  - dist2
+  prefixes:
+  - C
+  - D
+  - V
+  identity_numeric: true
+  boolean:
+  - has_identity
+categorical:
+- ProductCD
+- card4
+- card6
+- M1
+- M2
+- M3
+- M4
+- M5
+- M6
+- M7
+- M8
+- M9
+- DeviceType
+- id_12
+- id_15
+- id_16
+- id_28
+- id_29
+- id_35
+- id_36
+- id_37
+- id_38
+frequency:
+- card1
+- card2
+- card3
+- card5
+- addr1
+- addr2
+- P_emaildomain
+- R_emaildomain
+- DeviceInfo
+- id_30
+- id_31
+- id_33
+- card1_addr1
+- card1_addr1_pemail
+- card1_card4
+- card1_card6
+derived:
+- interactions

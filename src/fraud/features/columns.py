@@ -28,6 +28,7 @@ class FeatureSpec:
     derived: tuple[str, ...] = ()
     frequency: tuple[str, ...] = ()
     history: bool = False
+    history_entity: str = "card_start"  # key in fraud.features.history.ENTITY_DEFINITIONS
     # One-hot levels seen fewer than this many times in training are grouped into one
     # "infrequent" column, which also receives unseen levels at transform time. None = off.
     rare_min_frequency: int | None = None
@@ -51,6 +52,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
     derived = tuple(str(d) for d in raw.get("derived", []))
     frequency = tuple(str(c) for c in raw.get("frequency", []))
     history = bool(raw.get("history", False))
+    history_entity = str(raw.get("history_entity", "card_start"))
     rare = raw.get("rare_min_frequency")
     rare_min_frequency = None if rare is None else int(rare)
     spec = FeatureSpec(
@@ -63,6 +65,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         derived=derived,
         frequency=frequency,
         history=history,
+        history_entity=history_entity,
         rare_min_frequency=rare_min_frequency,
     )
     forbidden = {spec.target, spec.id_col, spec.time_col}

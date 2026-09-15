@@ -13,10 +13,20 @@ from typing import Any
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from fraud.features.rowwise import (
+    add_amount_features,
+    add_email_features,
+    add_interaction_keys,
+    add_missingness_counts,
+)
 from fraud.features.time import add_time_features
 
 DERIVERS: dict[str, Callable[[pd.DataFrame], pd.DataFrame]] = {
     "time": add_time_features,
+    "missingness": add_missingness_counts,
+    "amount": add_amount_features,
+    "email": add_email_features,
+    "interactions": add_interaction_keys,
 }
 
 

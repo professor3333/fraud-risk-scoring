@@ -1,4 +1,6 @@
-# Experiment log
+# Experiment log (long form)
+
+The four-column summary is `docs/EXPERIMENT_LOG.md`.
 
 One entry per experiment. Hypothesis and expected direction are written
 **before** the run; results and interpretation after. All numbers are on the

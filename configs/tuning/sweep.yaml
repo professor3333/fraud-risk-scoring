@@ -1,0 +1,21 @@
+# E021: one-parameter-at-a-time sweeps around the shipped model (E016 parameters).
+# Each axis varies exactly one parameter; everything else stays at the anchor.
+# Trees are read post hoc from one long fit (iteration_range), not refit per point.
+experiment: fraud-sweeps
+model_config: configs/model/xgboost_f5_interactions.yaml
+axes:
+  max_depth: [3, 6, 8, 12]
+  learning_rate: [0.02, 0.05, 0.15]
+  min_child_weight: [1, 5, 20, 100]
+  subsample: [0.5, 0.8, 1.0]
+  colsample_bytree: [0.2, 0.5, 1.0]
+  reg_alpha: [0.0, 1.0, 10.0]
+  reg_lambda: [1.0, 10.0, 100.0]
+trees:
+  n_estimators: 2000     # one fit; the curve is read every `step` trees
+  step: 100
+# A deliberately over-capacity model, then the same with regularisation put back.
+overfit:
+  params: {max_depth: 12, min_child_weight: 1, subsample: 1.0, colsample_bytree: 1.0, learning_rate: 0.15, n_estimators: 800, reg_alpha: 0.0, reg_lambda: 1.0}
+regularised:
+  params: {max_depth: 12, min_child_weight: 20, subsample: 0.8, colsample_bytree: 0.5, learning_rate: 0.05, n_estimators: 800, reg_alpha: 1.0, reg_lambda: 10.0}

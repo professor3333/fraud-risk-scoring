@@ -13,6 +13,7 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_curve,
     roc_auc_score,
+    roc_curve,
 )
 
 matplotlib.use("Agg")
@@ -92,5 +93,22 @@ def plot_pr_curve(y_true: ArrayLike, y_score: ArrayLike, title: str) -> Any:
     ax.set_ylim(0, 1)
     ax.set_title(f"{title}  AP = {average_precision_score(y, s):.4f}")
     ax.legend(frameon=False, loc="upper right")
+    fig.tight_layout()
+    return fig
+
+
+def plot_roc_curve(y_true: ArrayLike, y_score: ArrayLike, title: str) -> Any:
+    y = np.asarray(y_true, dtype=int)
+    s = np.asarray(y_score, dtype=float)
+    fpr, tpr, _ = roc_curve(y, s)
+    fig, ax = plt.subplots(figsize=(4.5, 4))
+    ax.plot(fpr, tpr, color="#2a78d6", lw=2)
+    ax.plot([0, 1], [0, 1], color="#52514e", lw=1, ls="--", label="chance")
+    ax.set_xlabel("false positive rate")
+    ax.set_ylabel("true positive rate")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_title(f"{title}  ROC-AUC = {roc_auc_score(y, s):.4f}")
+    ax.legend(frameon=False, loc="lower right")
     fig.tight_layout()
     return fig

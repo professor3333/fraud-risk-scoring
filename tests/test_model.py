@@ -275,3 +275,41 @@ def test_ladder_and_cuts_build_expected_specs() -> None:
     assert cuts["raw transaction + identity (no V)"].frequency == ()
     no_vesta = cuts["shipped except Vesta-engineered (C, D, M, V)"].all_inputs
     assert not any(c[0] in "CDMV" and c[1:].isdigit() for c in no_vesta)
+
+
+def test_run_logs_provenance_and_artifacts(df: pd.DataFrame, tmp_path: Path) -> None:
+    import mlflow
+
+    tracking = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    result = run_experiment(
+        train_cfg_path=CONFIGS / "model" / "xgboost.yaml",
+        split_cfg_path=CONFIGS / "split.yaml",
+        raw_dir=tmp_path,
+        cache_dir=None,
+        models_dir=tmp_path / "models",
+        tracking_uri=tracking,
+        df=df,
+    )
+    mlflow.set_tracking_uri(tracking)
+    run = mlflow.get_run(result.run_id)
+    params, metrics = run.data.params, run.data.metrics
+    for key in ("git_commit", "data_version", "split_version", "features_version", "seed"):
+        assert key in params, key
+    assert params["data_version"].endswith(f"{len(df)}rows")
+    assert metrics["fit_seconds"] > 0
+    for key in ("val_pr_auc", "val_roc_auc", "val_precision", "val_recall", "val_f1", "val_tp"):
+        assert key in metrics, key
+    artifacts = {
+        a.path
+        for a in mlflow.artifacts.list_artifacts(run_id=result.run_id, artifact_path="evaluation")
+    }
+    assert {
+        "evaluation/pr_curve_validation.png",
+        "evaluation/roc_curve_validation.png",
+        "evaluation/confusion_matrix_validation.json",
+        "evaluation/feature_importance_gain.csv",
+        "evaluation/features.json",
+    } <= artifacts
+    assert {
+        a.path for a in mlflow.artifacts.list_artifacts(run_id=result.run_id, artifact_path="model")
+    }

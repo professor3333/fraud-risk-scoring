@@ -21,3 +21,6 @@ model_info:
   calibration: sigmoid
   training_window_days: [1, 122]
   validation_window_days: [123, 152]
+# Default analyst review capacity per batch / upload for the rank-based policy
+# (docs/review_policy.md: block by threshold, review the top N remaining, approve the rest).
+default_review_budget: 200

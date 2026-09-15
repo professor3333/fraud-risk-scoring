@@ -192,7 +192,11 @@ def test_batch_is_ranked_and_matches_single_predictions(
     for x in body["ranked"]:
         s = singles[x["transaction_id"]]
         assert x["fraud_probability"] == pytest.approx(s["fraud_probability"], abs=1e-9)
-        assert x["action"] == s["action"]
+    # single /predict uses the fixed bands; the batch matches it only under policy=threshold
+    r = client.post("/predict/batch", json={"transactions": payloads, "policy": "threshold"})
+    for x in r.json()["ranked"]:
+        assert x["action"] == singles[x["transaction_id"]]["action"]
+    assert r.json()["policy"]["policy"] == "threshold"
 
 
 def test_batch_rejects_empty_and_bad_rows(client: TestClient, served: dict[str, Any]) -> None:
@@ -260,3 +264,54 @@ def test_dashboard_and_sample_are_served(client: TestClient) -> None:
     assert r.status_code == 200 and r.text.startswith("TransactionID,")
     scored = client.post("/predict/csv", files={"file": ("s.csv", r.content, "text/csv")})
     assert scored.status_code == 200 and scored.json()["summary"]["analysed"] == 200
+
+
+def test_batch_rank_policy_reviews_exactly_the_budget(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    """Block by threshold, review the top-N remaining, approve the rest (docs/review_policy.md)."""
+    rows: pd.DataFrame = served["rows"].head(40)
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    for budget in (0, 5, 1000):
+        body = client.post(
+            "/predict/batch", json={"transactions": payloads, "review_budget": budget}
+        ).json()
+        ranked = body["ranked"]
+        n_block = sum(x["action"] == "block" for x in ranked)
+        n_review = sum(x["action"] == "review" for x in ranked)
+        assert n_block == sum(x["fraud_probability"] >= 0.42 for x in ranked)
+        assert n_review == min(budget, len(ranked) - n_block)
+        # reviewed rows are exactly the highest-probability non-blocked rows
+        non_blocked = [x for x in ranked if x["action"] != "block"]  # already sorted desc
+        assert [x["action"] for x in non_blocked] == ["review"] * n_review + ["approve"] * (
+            len(non_blocked) - n_review
+        )
+        pol = body["policy"]
+        assert pol["policy"] == "rank" and pol["review_budget"] == budget
+        if n_review:
+            assert pol["review_cutoff"] == pytest.approx(
+                min(x["fraud_probability"] for x in non_blocked[:n_review])
+            )
+        else:
+            assert pol["review_cutoff"] is None
+        assert body["counts"] == {"block": n_block, "review": n_review,
+                                  "approve": len(ranked) - n_block - n_review}  # fmt: skip
+    # default budget comes from the server config when the request omits it
+    body = client.post("/predict/batch", json={"transactions": payloads}).json()
+    assert body["policy"]["review_budget"] == 200
+    assert client.get("/model-info").json()["default_review_budget"] == 200
+    assert client.get("/model-info").json()["default_policy"] == "rank"
+
+
+def test_csv_upload_honours_review_budget(client: TestClient, served: dict[str, Any]) -> None:
+    rows: pd.DataFrame = served["rows"].head(30)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+    files = {"file": ("q.csv", csv, "text/csv")}
+    body = client.post("/predict/csv?review_budget=7", files=files).json()
+    s = body["summary"]
+    assert s["policy"]["policy"] == "rank" and s["policy"]["review_budget"] == 7
+    assert s["review"] == min(7, 30 - s["high_risk"])
+    assert s["flagged"] == s["review"] + s["high_risk"]
+    body_t = client.post("/predict/csv?policy=threshold", files=files).json()
+    assert body_t["summary"]["policy"]["policy"] == "threshold"
+    assert body_t["summary"]["policy"]["review_threshold"] == 0.062

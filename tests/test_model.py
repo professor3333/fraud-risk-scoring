@@ -364,3 +364,21 @@ def test_policy_bands_and_budget_sizing() -> None:
     assert curve.loc[curve.budget_per_day == 3, "recall_at_budget"].item() == 1.0
     at3 = curve[curve.budget_per_day == 3].iloc[0]
     assert at3["precision_at_budget"] == pytest.approx(4 / 6)
+
+
+def test_apply_rank_policy_blocks_by_threshold_and_reviews_top_n() -> None:
+    from fraud.evaluate.policy import apply_rank_policy
+
+    s = np.array([0.9, 0.5, 0.3, 0.2, 0.1, 0.05])
+    actions, cutoff = apply_rank_policy(s, block_threshold=0.42, review_budget=2)
+    assert actions.tolist() == ["block", "block", "review", "review", "approve", "approve"]
+    assert cutoff == 0.2
+    actions, cutoff = apply_rank_policy(s, 0.42, 0)
+    assert actions.tolist() == ["block", "block", "approve", "approve", "approve", "approve"]
+    assert cutoff is None
+    actions, _ = apply_rank_policy(s, 0.42, 99)
+    assert actions.tolist() == ["block", "block", "review", "review", "review", "review"]
+    # the budget is a count, so a shifted score distribution keeps the review volume
+    shifted = s + 0.05
+    actions, _ = apply_rank_policy(shifted, 0.42, 2)
+    assert (actions == "review").sum() == 2

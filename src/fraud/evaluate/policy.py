@@ -163,6 +163,27 @@ def apply_policy(y_score: ArrayLike, policy: Policy) -> np.ndarray:
     )
 
 
+def apply_rank_policy(
+    y_score: ArrayLike, block_threshold: float, review_budget: int
+) -> tuple[np.ndarray, float | None]:
+    """Block by threshold; review the ``review_budget`` highest remaining scores; approve the rest.
+
+    This is the deployment rule recommended in docs/review_policy.md: a fixed
+    probability threshold for blocking, a fixed *count* for reviewing, so the
+    review volume holds when the score distribution drifts. Returns the action
+    per row and the lowest probability that was reviewed (None if nothing was).
+    """
+    s = np.asarray(y_score, dtype=float)
+    action = np.where(s >= block_threshold, "block", "approve").astype(object)
+    candidates = np.flatnonzero(s < block_threshold)
+    budget = max(int(review_budget), 0)
+    if budget and len(candidates):
+        order = candidates[np.argsort(-s[candidates], kind="stable")][:budget]
+        action[order] = "review"
+        return action, float(s[order].min())
+    return action, None
+
+
 def evaluate_policy(
     y_true: ArrayLike,
     y_score: ArrayLike,

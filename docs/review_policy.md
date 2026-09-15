@@ -127,3 +127,15 @@ review threshold is 0.062; validation recall block + review **0.776**, cost
 precision 0.727 (0.710), 273 reviewed/day at the "200" sizing (E016: 250).
 The same two drifts as before, slightly larger on the review volume; the
 rank-based review recommendation stands.
+
+## Implemented in the service
+
+`POST /predict/batch` and `POST /predict/csv` apply this policy by default
+(`policy: "rank"`, `review_budget` per request, server default 200): block
+at `bands.block`, review the highest-scored remaining rows up to the budget,
+approve the rest, and report the lowest probability actually reviewed
+(`policy.review_cutoff`). Live check, budget 200: validation day 130 →
+block 47 / review **200** / approve 2,560; test day 170 → block 54 / review
+**200** / approve 2,155. The fixed-threshold policy on the same two days
+reviews 141 and 222. `fraud.evaluate.policy.apply_rank_policy` is the
+function; `policy: "threshold"` keeps the fixed bands for comparison.

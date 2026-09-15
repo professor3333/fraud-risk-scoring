@@ -150,9 +150,12 @@ on E022 with the same profile.
 - **Fairness.** No demographic attributes exist in the data; disparate impact
   across, e.g., email domain or device type has not been assessed and would
   need an argument before this model made autonomous decline decisions.
-- **Serving is stateless** on purpose: every input is in the request. Any
+- **Serving keeps no feature state**: every input is in the request; any
   future history-based feature (ADR 0004) requires a feature store and a
-  parity test before it enters the served model.
+  parity test before it enters the served model. The only state is the
+  append-only prediction audit trail (what was scored, when, by which model
+  version, under which policy, with what result), which is what an
+  investigation or a drift check reads.
 
 ## Reproduce
 

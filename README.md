@@ -176,8 +176,9 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
   returning one authoritative `action` (approve / review / block) from the
-  rank-based review policy, `/model-info`; startup parity check against a
-  frozen golden.
+  rank-based review policy, `/model-info`, `/audit/recent`; startup parity
+  check against a frozen golden; every scored transaction persisted to a
+  SQLite audit trail with model version, policy, action and latency.
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
@@ -213,8 +214,9 @@ src/fraud/
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV)
   evaluate/       metrics, curves, calibration, threshold, importance
-  serve/          app, schemas, frames, parity (frozen-golden check),
-                  static/ (dashboard.html, index.html, synthetic sample CSV)
+  serve/          app, schemas, frames, parity (frozen-golden check), audit
+                  (SQLite prediction events), static/ (dashboard, single form,
+                  synthetic sample CSV)
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
 fly.toml          Fly.io app definition (public deployment)
@@ -232,7 +234,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 96 tests on the synthetic fixture; no data needed
+uv run pytest            # 99 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -284,7 +286,7 @@ uv run uvicorn fraud.serve.app:app --port 8000
 # http://127.0.0.1:8000/        analyst dashboard: upload a CSV, get a ranked review queue
 # http://127.0.0.1:8000/single  one transaction as JSON
 # http://127.0.0.1:8000/docs    OpenAPI
-curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","parity_rows":50}
+curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","parity_rows":50,"audit_events":201}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
        "card1":9500,"card4":"visa","card6":"debit","C1":1,"D1":120}'
@@ -341,6 +343,24 @@ the capacity re-applies the policy to the same file. "Try the sample" loads a **
 CSV (no Kaggle rows) with a few planted archetype transactions and sets the
 capacity to 25 so all three actions appear.
 
+**Audit trail** — every scored transaction is persisted (SQLite, standard
+library, one row per transaction): what was scored, when (UTC), by which
+model version, under which policy (block threshold, review budget or
+threshold, review cutoff), the probability, the action, the request id
+(from `X-Request-ID` or generated and echoed back), batch size and request
+latency. `GET /audit/recent?limit=50&transaction_id=…` reads the tail;
+`/health` reports the row count. Path: `audit_db` in `configs/serving.yaml`,
+overridden by `FRAUD_AUDIT_DB`; `null` disables it. In Docker the file lives
+on the `/app/audit` volume.
+
+```bash
+curl "http://127.0.0.1:8000/audit/recent?limit=1"
+# [{"id":201,"request_id":"1057101e…","endpoint":"/predict/csv","scored_at":"2026-09-15T16:27:43.597+00:00",
+#   "transaction_id":2987069,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813","fraud_probability":0.0172,
+#   "risk_level":"low","action":"approve","policy":"rank","block_threshold":0.42,"review_threshold":null,
+#   "review_budget":25,"review_cutoff":0.179,"batch_size":200,"latency_ms":577.7}]
+```
+
 **Model info** — what is being served:
 
 ```bash
@@ -355,7 +375,7 @@ curl http://127.0.0.1:8000/model-info
 
 ```bash
 docker build -t fraud-risk-scoring .            # needs the calibrated artifact + its frozen sample
-docker run --rm -p 8000:8000 fraud-risk-scoring
+docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring   # volume keeps the audit trail
 ```
 
 **Public deployment:** Fly.io, from the same image (`fly.toml`,
@@ -390,14 +410,15 @@ Column families and what was inferred about them: `docs/eda.md`.
 ## Data storage
 
 `data/raw/` (CSVs), `data/processed/train.parquet` (81 MB cache, safe to
-delete), `models/` (joblib artifacts), `mlflow.db` + `mlruns/` (experiment
-ledger), `reports/` (committed evidence). Everything except `reports/` is
-git-ignored.
+delete), `models/` (joblib artifacts, frozen goldens, the local audit
+trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
+(experiment ledger), `reports/` (committed evidence). Everything except
+`reports/` is git-ignored.
 
 ## Testing
 
 ```bash
-uv run pytest              # 96 fixture tests, no data, no network, ~15 s
+uv run pytest              # 99 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

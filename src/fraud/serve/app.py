@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import io
-from collections.abc import AsyncIterator
+import os
+import time
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,16 +16,18 @@ import joblib
 import numpy as np
 import pandas as pd
 import yaml
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
 from fraud.evaluate.policy import apply_rank_policy
 from fraud.pipeline.calibrated import CalibratedModel
+from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
 from fraud.serve.frames import payloads_to_frame, request_to_frame, table_to_frame
 from fraud.serve.parity import frozen_paths, verify
 from fraud.serve.schemas import (
     Action,
+    AuditEvent,
     Bands,
     BatchPredictionRequest,
     BatchPredictionResponse,
@@ -55,6 +59,7 @@ class ServingState:
     parity_rows: int
     info: dict[str, Any]
     default_review_budget: int
+    audit: AuditLog | None
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -72,6 +77,14 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         parity_rows = parity.n_rows
     else:
         parity_rows = 0 if not all(p.exists() for p in frozen_paths(model_path)) else -1
+    # Prediction audit trail: serving.yaml `audit_db` (relative to the repo root), overridden
+    # by FRAUD_AUDIT_DB; an explicit null disables it.
+    audit_path = os.environ.get("FRAUD_AUDIT_DB", raw.get("audit_db"))
+    audit = (
+        AuditLog(Path(audit_path) if Path(audit_path).is_absolute() else root / audit_path)
+        if audit_path
+        else None
+    )
     return ServingState(
         model=model,
         bands=bands,
@@ -79,6 +92,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         parity_rows=parity_rows,
         info=dict(raw.get("model_info", {})),
         default_review_budget=int(raw.get("default_review_budget", 200)),
+        audit=audit,
     )
 
 
@@ -216,6 +230,56 @@ def score_table(
     return CsvPredictionResponse(summary=summary, rows=rows)
 
 
+def record_events(
+    state: ServingState,
+    endpoint: str,
+    request_id: str,
+    applied: PolicyApplied,
+    rows: Sequence[tuple[int, float, str, str]],
+    latency_ms: float,
+) -> None:
+    """Persist one event per scored transaction (no-op when auditing is disabled)."""
+    if state.audit is None:
+        return
+    now = utc_now()
+    state.audit.record(
+        [
+            PredictionEvent(
+                request_id=request_id,
+                endpoint=endpoint,
+                scored_at=now,
+                transaction_id=tid,
+                model_version=state.model_version,
+                fraud_probability=p,
+                risk_level=level,
+                action=action,
+                policy=applied.policy,
+                block_threshold=applied.block_threshold,
+                review_threshold=applied.review_threshold,
+                review_budget=applied.review_budget,
+                review_cutoff=applied.review_cutoff,
+                batch_size=len(rows),
+                latency_ms=latency_ms,
+            )
+            for tid, p, level, action in rows
+        ]
+    )
+
+
+def threshold_policy_applied(state: ServingState) -> PolicyApplied:
+    return PolicyApplied(
+        policy="threshold",
+        block_threshold=state.bands.block,
+        review_budget=None,
+        review_threshold=state.bands.review,
+        review_cutoff=None,
+    )
+
+
+def request_id_of(request: Request) -> str:
+    return request.headers.get("x-request-id") or new_request_id()
+
+
 def model_info(state: ServingState) -> ModelInfoResponse:
     pipe = state.model.pipeline
     n_inputs = sum(len(cols) for _, _, cols in pipe.named_steps["features"].transformers)
@@ -266,6 +330,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             status="ok",
             model_version=s.model_version,
             parity_rows=s.parity_rows,
+            audit_events=s.audit.count() if s.audit is not None else None,
         )
 
     @app.get("/model-info", response_model=ModelInfoResponse)
@@ -273,21 +338,52 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         return model_info(request.app.state.serving)
 
     @app.post("/predict", response_model=PredictionResponse)
-    def predict(body: TransactionRequest, request: Request) -> PredictionResponse:  # type: ignore[valid-type]
-        return score(request.app.state.serving, body.model_dump())  # type: ignore[attr-defined]
+    def predict(
+        body: TransactionRequest,  # type: ignore[valid-type]
+        request: Request,
+        response: Response,
+    ) -> PredictionResponse:
+        state: ServingState = request.app.state.serving
+        rid = request_id_of(request)
+        t0 = time.perf_counter()
+        result = score(state, body.model_dump())  # type: ignore[attr-defined]
+        latency = (time.perf_counter() - t0) * 1000
+        record_events(
+            state, "/predict", rid, threshold_policy_applied(state),
+            [(result.transaction_id, result.fraud_probability, result.risk_level, result.action)],
+            latency,
+        )  # fmt: skip
+        response.headers["X-Request-ID"] = rid
+        return result
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
-    def predict_batch(body: BatchPredictionRequest, request: Request) -> BatchPredictionResponse:
+    def predict_batch(
+        body: BatchPredictionRequest, request: Request, response: Response
+    ) -> BatchPredictionResponse:
+        state: ServingState = request.app.state.serving
+        rid = request_id_of(request)
+        t0 = time.perf_counter()
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
-        return score_batch(request.app.state.serving, payloads, body.policy, body.review_budget)
+        result = score_batch(state, payloads, body.policy, body.review_budget)
+        latency = (time.perf_counter() - t0) * 1000
+        scored = [
+            (r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.ranked
+        ]
+        record_events(state, "/predict/batch", rid, result.policy, scored, latency)
+        response.headers["X-Request-ID"] = rid
+        return result
 
     @app.post("/predict/csv", response_model=CsvPredictionResponse)
     async def predict_csv(
         request: Request,
+        response: Response,
         file: UploadFile,
         review_budget: int | None = None,
         policy: Policy = "rank",
     ) -> CsvPredictionResponse:
+        state: ServingState = request.app.state.serving
+        rid = request_id_of(request)
+        t0 = time.perf_counter()
         raw = await file.read()
         try:
             table = pd.read_csv(io.BytesIO(raw), dtype="str", keep_default_na=False)
@@ -298,9 +394,26 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         if len(table) > MAX_CSV_ROWS:
             raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload (got {len(table)})")
         try:
-            return score_table(request.app.state.serving, table, policy, review_budget)
+            result = score_table(state, table, policy, review_budget)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        latency = (time.perf_counter() - t0) * 1000
+        record_events(
+            state, "/predict/csv", rid, result.summary.policy,
+            [(r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.rows],
+            latency,
+        )  # fmt: skip
+        response.headers["X-Request-ID"] = rid
+        return result
+
+    @app.get("/audit/recent", response_model=list[AuditEvent])
+    def audit_recent(
+        request: Request, limit: int = 50, transaction_id: int | None = None
+    ) -> list[AuditEvent]:
+        s: ServingState = request.app.state.serving
+        if s.audit is None:
+            raise HTTPException(404, "prediction auditing is disabled on this server")
+        return [AuditEvent(**e) for e in s.audit.recent(min(limit, 1000), transaction_id)]
 
     return app
 

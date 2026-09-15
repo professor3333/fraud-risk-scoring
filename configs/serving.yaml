@@ -26,3 +26,6 @@ model_info:
 # Default analyst review capacity per batch / upload for the rank-based policy
 # (docs/review_policy.md: block by threshold, review the top N remaining, approve the rest).
 default_review_budget: 200
+# Prediction audit trail (SQLite, one row per scored transaction). Path relative to the
+# repo root; FRAUD_AUDIT_DB overrides it; null disables auditing.
+audit_db: models/audit/prediction_events.sqlite

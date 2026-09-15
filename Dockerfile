@@ -1,5 +1,5 @@
 # Build:  docker build -t fraud-risk-scoring .
-# Run:    docker run --rm -p 8000:8000 fraud-risk-scoring
+# Run:    docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring
 # The model artifact (models/xgb_f5_capacity_calibrated.joblib) and its frozen
 # sample must exist locally before building: scripts/train.py, scripts/calibrate.py,
 # scripts/freeze_artifact.py.
@@ -32,7 +32,12 @@ COPY models/xgb_f5_capacity_calibrated.joblib \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-group train
 
-RUN useradd --create-home --uid 10001 app
+# Prediction audit trail: a writable directory for the service user; mount a
+# volume at /app/audit to keep events across container restarts.
+RUN useradd --create-home --uid 10001 app \
+    && mkdir -p /app/audit && chown app:app /app/audit
+ENV FRAUD_AUDIT_DB=/app/audit/prediction_events.sqlite
+VOLUME ["/app/audit"]
 USER app
 
 EXPOSE 8000

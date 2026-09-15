@@ -102,7 +102,8 @@ class Bands(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     model_version: str
-    parity_rows: int  # frozen rows re-scored at startup; the service refuses to start on a mismatch
+    parity_rows: int  # frozen rows re-scored at startup; startup fails on a mismatch
+    audit_events: int | None  # rows in the prediction audit trail; None when disabled
 
 
 class ModelInfoResponse(BaseModel):
@@ -151,3 +152,24 @@ class CsvSummary(BaseModel):
 class CsvPredictionResponse(BaseModel):
     summary: CsvSummary
     rows: list[ScoredRow]  # ranked, highest risk first
+
+
+class AuditEvent(BaseModel):
+    """One row of the prediction audit trail (GET /audit/recent)."""
+
+    id: int
+    request_id: str
+    endpoint: str
+    scored_at: str
+    transaction_id: int
+    model_version: str
+    fraud_probability: float
+    risk_level: RiskLevel
+    action: Action
+    policy: Policy
+    block_threshold: float
+    review_threshold: float | None
+    review_budget: int | None
+    review_cutoff: float | None
+    batch_size: int
+    latency_ms: float

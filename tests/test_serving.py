@@ -45,12 +45,18 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
     cfg = root / "configs" / "serving.yaml"
     cfg.write_text(
         "model_path: models/m.joblib\n"
+        "audit_db: models/audit.sqlite\n"
         "model_version: fixture-model\nbands: {review: 0.062, block: 0.42}\n"
         "model_info: {model: xgboost, experiment: fixture, feature_set: v2_freq, "
         "primary_metric: pr_auc, validation_pr_auc: 0.5, test_pr_auc: 0.4, calibration: sigmoid, "
         "training_window_days: [1, 122], validation_window_days: [123, 152]}\n"
     )
-    return {"config": cfg, "model": model, "rows": parts["test"]}
+    return {
+        "config": cfg,
+        "model": model,
+        "rows": parts["test"],
+        "audit_db": root / "models" / "audit.sqlite",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -310,3 +316,79 @@ def test_csv_upload_honours_review_budget(client: TestClient, served: dict[str, 
     body_t = client.post("/predict/csv?policy=threshold", files=files).json()
     assert body_t["summary"]["policy"]["policy"] == "threshold"
     assert body_t["summary"]["policy"]["review_threshold"] == 0.062
+
+
+# --- prediction audit trail --------------------------------------------------------------
+
+
+def test_predictions_are_audited(client: TestClient, served: dict[str, Any]) -> None:
+    import sqlite3
+
+    before = client.get("/health").json()["audit_events"]
+    assert before is not None
+    payload = _payload(served["rows"].iloc[0])
+    r = client.post("/predict", json=payload, headers={"X-Request-ID": "req-abc"})
+    assert r.headers["X-Request-ID"] == "req-abc"
+    single = r.json()
+    rows = [_payload(row) for _, row in served["rows"].head(6).iterrows()]
+    rb = client.post("/predict/batch", json={"transactions": rows, "review_budget": 2})
+    batch_rid = rb.headers["X-Request-ID"]
+    assert len(batch_rid) == 32  # generated when the caller sends none
+    assert client.get("/health").json()["audit_events"] == before + 1 + 6
+
+    recent = client.get("/audit/recent?limit=10").json()
+    assert len(recent) >= 7
+    batch_events = [e for e in recent if e["request_id"] == batch_rid]
+    assert len(batch_events) == 6 and {e["batch_size"] for e in batch_events} == {6}
+    assert {e["policy"] for e in batch_events} == {"rank"}
+    assert {e["review_budget"] for e in batch_events} == {2}
+    assert sum(e["action"] == "review" for e in batch_events) == min(
+        2, 6 - sum(e["action"] == "block" for e in batch_events)
+    )
+    mine = [e for e in recent if e["request_id"] == "req-abc"]
+    assert len(mine) == 1
+    e = mine[0]
+    assert e["endpoint"] == "/predict" and e["policy"] == "threshold"
+    assert e["transaction_id"] == single["transaction_id"]
+    assert e["fraud_probability"] == pytest.approx(single["fraud_probability"])
+    assert e["action"] == single["action"] and e["model_version"] == single["model_version"]
+    assert e["block_threshold"] == 0.42 and e["review_threshold"] == 0.062
+    assert e["latency_ms"] > 0 and e["scored_at"].endswith("+00:00")
+    # per-transaction lookup: what did we ever say about this transaction?
+    by_txn = client.get(f"/audit/recent?transaction_id={single['transaction_id']}").json()
+    assert all(x["transaction_id"] == single["transaction_id"] for x in by_txn) and by_txn
+    # the file is a plain SQLite database an investigator can open directly
+    db = sqlite3.connect(served["audit_db"])
+    n = db.execute("SELECT COUNT(*) FROM prediction_events").fetchone()[0]
+    assert n == before + 7
+
+
+def test_csv_upload_is_audited_with_one_request_id(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    rows: pd.DataFrame = served["rows"].head(15)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+    r = client.post("/predict/csv?review_budget=3", files={"file": ("q.csv", csv, "text/csv")})
+    rid = r.headers["X-Request-ID"]
+    events = [e for e in client.get("/audit/recent?limit=50").json() if e["request_id"] == rid]
+    assert len(events) == 15 and {e["endpoint"] for e in events} == {"/predict/csv"}
+    assert {e["review_budget"] for e in events} == {3}
+
+
+def test_audit_can_be_disabled(
+    fixture_raw_dir: Path, served: dict[str, Any], tmp_path: Path
+) -> None:
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    cfg.write_text(text + "audit_db: null\n")
+    with TestClient(create_app(cfg)) as c:
+        assert c.get("/health").json()["audit_events"] is None
+        assert c.get("/audit/recent").status_code == 404
+        assert c.post("/predict", json=_payload(served["rows"].iloc[0])).status_code == 200

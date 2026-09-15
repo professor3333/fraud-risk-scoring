@@ -84,6 +84,7 @@ once at the end.
 | E013–E015 | E008 + missing counts / amount structure / e-mail families | 0.615 / 0.615 / 0.610 · rejected | | |
 | **E016** | E008 + card × address / e-mail keys, frequency-encoded | **0.619** (+0.006 seed-paired) | **0.932** | 0.329 |
 | E017 | E016 + card+address history, earlier rows only | 0.619 · rejected | 0.931 | 0.329 |
+| E018–E020 | cumulative ladder + family cuts; F0–F6 cumulative and no-`V` seed-paired | 0.626→+0.000, 0.621→−0.003 · neutral | | |
 
 Final model (E016 + sigmoid calibration, threshold 0.08):
 
@@ -101,6 +102,16 @@ split of the same rows: it reports validation PR-AUC **0.810** against the
 temporal split's 0.616 — the random split hides both drift and the
 account-level label propagation, and would have promised performance the
 next month never delivers.
+
+**How much is Vesta's engineering and how much is mine?** (`docs/feature_sets.md`)
+With the tuned parameters on the frozen validation split: the provider's
+raw columns reach 0.601; my frequency tables and composite keys add ≈ 0.02
+wherever they are added (0.619 shipped); removing Vesta's `V` block from
+the shipped set costs nothing (0.621, seed-paired −0.003 — a 100-input
+model at the same score); removing all of Vesta's engineered families
+(`C`, `D`, `M`, `V`) costs **0.19** (0.433). The provider's history
+summaries carry the model; the work here adds a few points on top and shows
+the largest provider block is optional once entity frequency is modelled.
 
 Feature engineering was run as named sets, one experiment each: missing
 counts, amount structure, time of day, e-mail families and two definitions
@@ -142,12 +153,13 @@ configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   tuning/xgboost.yaml, threshold.yaml, serving.yaml
 data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), experiments.md,
-                  leakage_audit.md, threshold.md, ablation.md, model_card.md
+                  leakage_audit.md, threshold.md, ablation.md, feature_sets.md,
+                  model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, ablation, test
 scripts/          download_data, validate_data, eda, train, tune, learning_curve, calibrate,
-                  select_threshold, ablation, evaluate_test, split_comparison,
-                  make_fixture_artifact
+                  select_threshold, ablation, feature_ladder, evaluate_test,
+                  split_comparison, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -171,7 +183,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 71 tests on the synthetic fixture; no data needed
+uv run pytest            # 72 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -276,7 +288,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 71 fixture tests, no data, no network, ~10 s
+uv run pytest              # 72 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 3 tests against the real files, if present
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

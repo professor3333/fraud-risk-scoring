@@ -253,3 +253,25 @@ def test_top_k_per_day_reviews_the_highest_scores() -> None:
     assert out["precision_at_2_per_day"] == 0.5
     assert out["recall_at_2_per_day"] == pytest.approx(2 / 3)
     assert out["reviewed_per_day_2"] == 2.0
+
+
+def test_ladder_and_cuts_build_expected_specs() -> None:
+    from fraud.evaluate.feature_sets import LADDER, family_cuts, ladder
+
+    base = load_feature_spec(CONFIGS / "features" / "baseline.yaml")
+    steps = ladder(base)
+    assert list(steps) == list(LADDER)
+    sizes = [len(s.all_inputs) for s in steps.values()]
+    assert sizes == sorted(sizes) and sizes[0] == len(base.all_inputs)
+    assert steps["+F7"].history and steps["+F7"].history_entity == "card_addr"
+    assert set(steps["+F6"].frequency) >= {"card1", "card1_addr1"}
+    shipped = load_feature_spec(CONFIGS / "features" / "f5_interactions.yaml")
+    cuts = family_cuts(shipped, base)
+    assert not any(c.startswith("V") for c in cuts["shipped except V"].all_inputs)
+    tx_only = cuts["shipped, transaction only (no identity, no V)"]
+    assert not any(c.startswith("id_") for c in tx_only.all_inputs)
+    assert "id_30" not in tx_only.frequency
+    assert len(cuts["shipped (everything)"].all_inputs) == len(shipped.all_inputs)
+    assert cuts["raw transaction + identity (no V)"].frequency == ()
+    no_vesta = cuts["shipped except Vesta-engineered (C, D, M, V)"].all_inputs
+    assert not any(c[0] in "CDMV" and c[1:].isdigit() for c in no_vesta)

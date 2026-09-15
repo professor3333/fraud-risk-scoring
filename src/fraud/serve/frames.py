@@ -53,3 +53,41 @@ def row_to_payload(row: pd.Series) -> dict[str, Any]:
 
 def payloads_to_frame(payloads: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.concat([request_to_frame(p) for p in payloads], ignore_index=True)
+
+
+def table_to_frame(table: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """A whole uploaded table (e.g. a CSV read as strings) -> the frame the pipeline expects.
+
+    Vectorised twin of :func:`request_to_frame`: same columns, same dtypes, same
+    ``has_identity`` rule. Unknown columns are ignored and reported back; a
+    missing required column or an unparsable number raises ``ValueError``.
+    """
+    required = (schema.ID_COL, schema.TIME_COL, "TransactionAmt", "ProductCD", "card1")
+    missing = [c for c in required if c not in table.columns]
+    if missing:
+        raise ValueError(f"missing required column(s): {missing}")
+    ignored = sorted(c for c in table.columns if c not in INPUT_COLUMNS)
+    columns: dict[str, pd.Series] = {}
+    for col in INPUT_COLUMNS:
+        raw = table[col] if col in table.columns else pd.Series([None] * len(table))
+        raw = raw.where(raw.notna() & (raw.astype("str").str.strip() != ""), other=None)
+        if col in _STR_COLS:
+            columns[col] = pd.Series(raw.to_numpy(), dtype="str")
+            continue
+        try:
+            numeric = pd.to_numeric(raw, errors="raise")
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"column {col!r} has a non-numeric value: {exc}") from exc
+        if col in (schema.ID_COL, schema.TIME_COL):
+            if numeric.isna().any():
+                raise ValueError(f"column {col!r} has empty values")
+            columns[col] = pd.Series(numeric.to_numpy(), dtype="float64").astype("int64")
+        else:
+            columns[col] = pd.Series(numeric.to_numpy(), dtype="float64")
+    frame = pd.DataFrame(columns)
+    frame[schema.HAS_IDENTITY_COL] = frame[list(IDENTITY_FIELDS)].notna().any(axis=1)
+    if (frame["TransactionAmt"] <= 0).any():
+        raise ValueError("TransactionAmt must be positive")
+    if not frame[schema.ID_COL].is_unique:
+        raise ValueError(f"{schema.ID_COL} must be unique within an upload")
+    return frame, ignored

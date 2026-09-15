@@ -135,14 +135,22 @@ def _key(*parts: pd.Series) -> pd.Series:
     return joined.where(complete, other=None).astype("str")
 
 
+def _numeric_key(s: pd.Series) -> pd.Series:
+    """Integer-valued numbers as ``"1000"``, others as their float repr; NaN stays NaN."""
+    out = s.map(
+        lambda v: None if pd.isna(v) else (str(int(v)) if float(v).is_integer() else repr(float(v)))
+    )
+    return pd.Series(out, index=s.index, dtype="object")
+
+
 def add_interaction_keys(df: pd.DataFrame) -> pd.DataFrame:
     """String identifiers for card × address / e-mail / card-type combinations.
 
     They are never used raw; the feature spec lists them under ``frequency`` so
     they enter as training-window shares (ADR 0005).
     """
-    c1 = df["card1"].astype("Int64")
-    a1 = df["addr1"].astype("Int64")
+    c1 = _numeric_key(df["card1"])
+    a1 = _numeric_key(df["addr1"])
     return df.assign(
         card1_addr1=_key(c1, a1),
         card1_addr1_pemail=_key(c1, a1, df["P_emaildomain"]),

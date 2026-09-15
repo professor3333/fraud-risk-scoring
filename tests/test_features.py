@@ -246,6 +246,9 @@ def test_interaction_keys_are_missing_when_any_part_is() -> None:
     assert out["card1_addr1_pemail"].item() == "1000|300|gmail.com"
     assert out["card1_card4"].item() == "1000|visa"
     assert pd.isna(add_interaction_keys(_one_row(addr1=float("nan")))["card1_addr1"].item())
+    # non-integer numbers must not break the key (integer-valued ones keep the same string)
+    assert add_interaction_keys(_one_row(addr1=300.5))["card1_addr1"].item() == "1000|300.5"
+    assert add_interaction_keys(_one_row(card1=1000.0))["card1_addr1"].item() == "1000|300"
 
 
 def test_all_derivers_are_row_local() -> None:

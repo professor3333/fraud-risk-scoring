@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -11,27 +12,33 @@ from typing import Any
 
 import joblib
 import numpy as np
+import pandas as pd
 import yaml
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
 from fraud.evaluate.threshold import load_threshold_config
 from fraud.pipeline.calibrated import CalibratedModel
-from fraud.serve.frames import payloads_to_frame, request_to_frame
+from fraud.serve.frames import payloads_to_frame, request_to_frame, table_to_frame
 from fraud.serve.parity import frozen_paths, verify
 from fraud.serve.schemas import (
     Action,
     Bands,
     BatchPredictionRequest,
     BatchPredictionResponse,
+    CsvPredictionResponse,
+    CsvSummary,
     HealthResponse,
     ModelInfoResponse,
     PredictionResponse,
     RankedPrediction,
     RiskLevel,
+    ScoredRow,
     TransactionRequest,
 )
+
+MAX_CSV_ROWS = 5_000
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -119,6 +126,53 @@ def score_batch(state: ServingState, payloads: list[dict[str, Any]]) -> BatchPre
     return BatchPredictionResponse(n=len(ranked), ranked=ranked, counts=counts)
 
 
+def score_table(state: ServingState, table: pd.DataFrame) -> CsvPredictionResponse:
+    """Score an uploaded table; rank rows and summarise for the analyst view."""
+    frame, ignored = table_to_frame(table)
+    probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
+    order = np.argsort(-probabilities, kind="stable")
+    rows: list[ScoredRow] = []
+    counts = {"approve": 0, "review": 0, "block": 0}
+    for rank, i in enumerate(order.tolist(), start=1):
+        p = float(probabilities[i])
+        level, action = classify(p, state.bands)
+        counts[action] += 1
+        record = frame.iloc[i]
+        details = {
+            str(k): (v.item() if hasattr(v, "item") else v)
+            for k, v in record.items()
+            if not (isinstance(v, float) and np.isnan(v)) and v is not None and v == v
+        }
+        card_type = record["card6"]
+        rows.append(
+            ScoredRow(
+                rank=rank,
+                transaction_id=int(record[schema.ID_COL]),
+                fraud_probability=p,
+                risk_level=level,
+                action=action,
+                amount=float(record["TransactionAmt"]),
+                product=str(record["ProductCD"]),
+                card_type=None if pd.isna(card_type) else str(card_type),
+                has_identity=bool(record[schema.HAS_IDENTITY_COL]),
+                details=details,
+            )
+        )
+    summary = CsvSummary(
+        analysed=len(rows),
+        flagged=counts["review"] + counts["block"],
+        high_risk=counts["block"],
+        review=counts["review"],
+        approve=counts["approve"],
+        average_fraud_probability=float(probabilities.mean()) if len(rows) else 0.0,
+        ignored_columns=ignored,
+        model_version=state.model_version,
+        threshold=state.threshold,
+        bands=state.bands,
+    )
+    return CsvPredictionResponse(summary=summary, rows=rows)
+
+
 def model_info(state: ServingState) -> ModelInfoResponse:
     pipe = state.model.pipeline
     n_inputs = sum(len(cols) for _, _, cols in pipe.named_steps["features"].transformers)
@@ -151,7 +205,15 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
+        return (STATIC / "dashboard.html").read_text()
+
+    @app.get("/single", response_class=HTMLResponse, include_in_schema=False)
+    def single() -> str:
         return (STATIC / "index.html").read_text()
+
+    @app.get("/sample.csv", include_in_schema=False)
+    def sample_csv() -> FileResponse:
+        return FileResponse(STATIC / "sample_transactions.csv", media_type="text/csv")
 
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
@@ -175,6 +237,22 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     def predict_batch(body: BatchPredictionRequest, request: Request) -> BatchPredictionResponse:
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
         return score_batch(request.app.state.serving, payloads)
+
+    @app.post("/predict/csv", response_model=CsvPredictionResponse)
+    async def predict_csv(request: Request, file: UploadFile) -> CsvPredictionResponse:
+        raw = await file.read()
+        try:
+            table = pd.read_csv(io.BytesIO(raw), dtype="str", keep_default_na=False)
+        except (ValueError, pd.errors.ParserError) as exc:
+            raise HTTPException(422, f"could not parse CSV: {exc}") from exc
+        if len(table) == 0:
+            raise HTTPException(422, "the CSV has no rows")
+        if len(table) > MAX_CSV_ROWS:
+            raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload (got {len(table)})")
+        try:
+            return score_table(request.app.state.serving, table)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     return app
 

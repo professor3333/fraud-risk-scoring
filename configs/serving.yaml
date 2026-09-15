@@ -5,3 +5,19 @@ threshold_config: configs/threshold.yaml
 model_version: xgb_f5_capacity+sigmoid
 # Startup parity check against the frozen sample next to the artifact (G8).
 require_parity: true
+# Risk bands from docs/review_policy.md (validation, 200 reviews/day budget):
+# block at the 80 % precision bar; review down to the budget; approve the rest.
+bands:
+  review: 0.062
+  block: 0.42
+# Facts about the served model, for /model-info (numbers from reports/ and MLflow).
+model_info:
+  model: xgboost
+  experiment: E022
+  feature_set: f5_interactions
+  primary_metric: pr_auc
+  validation_pr_auc: 0.6367
+  test_pr_auc: 0.5610
+  calibration: sigmoid
+  training_window_days: [1, 122]
+  validation_window_days: [123, 152]

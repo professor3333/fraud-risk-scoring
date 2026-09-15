@@ -18,7 +18,9 @@
   level; missing numerics are left to the trees. `TransactionDT` and
   `TransactionID` are never inputs.
 - **Output:** calibrated probability that the transaction is, or belongs to
-  an account that becomes, reported as fraud; and a decision at 0.08.
+  an account that becomes, reported as fraud; a decision at 0.08; and the
+  review-policy band (approve < 0.062, review < 0.42, block ≥ 0.42) as
+  `risk_level` / `action`. `/predict/batch` returns a ranked queue.
 - **Version:** `xgb_f5_capacity+sigmoid@<sha256 prefix of the artifact>`,
   returned by `/health` and `/predict`. MLflow: `xgb_f5_capacity` in
   `fraud-xgboost` (model), `fraud-calibration` (map), `fraud-final` (test

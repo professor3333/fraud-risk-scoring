@@ -52,7 +52,10 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
     cfg = root / "configs" / "serving.yaml"
     cfg.write_text(
         "model_path: models/m.joblib\nthreshold_config: configs/threshold.yaml\n"
-        "model_version: fixture-model\n"
+        "model_version: fixture-model\nbands: {review: 0.062, block: 0.42}\n"
+        "model_info: {model: xgboost, experiment: fixture, feature_set: v2_freq, "
+        "primary_metric: pr_auc, validation_pr_auc: 0.5, test_pr_auc: 0.4, calibration: sigmoid, "
+        "training_window_days: [1, 122], validation_window_days: [123, 152]}\n"
     )
     return {"config": cfg, "model": model, "rows": parts["test"]}
 
@@ -162,3 +165,50 @@ def test_real_model_parity_on_real_rows(full_raw_dir: Path) -> None:
         for (_, row), expected in zip(sample.iterrows(), offline, strict=True):
             body = c.post("/predict", json=_payload(row)).json()
             assert body["fraud_probability"] == pytest.approx(expected, abs=1e-9)
+
+
+def test_predict_returns_risk_level_and_action(client: TestClient, served: dict[str, Any]) -> None:
+    r = client.post("/predict", json=_payload(served["rows"].iloc[0])).json()
+    assert r["risk_level"] in ("low", "medium", "high")
+    assert r["action"] in ("approve", "review", "block")
+    p = r["fraud_probability"]
+    expected = "block" if p >= 0.42 else "review" if p >= 0.062 else "approve"
+    assert r["action"] == expected
+
+
+def test_batch_is_ranked_and_matches_single_predictions(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    rows: pd.DataFrame = served["rows"].head(12)
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    r = client.post("/predict/batch", json={"transactions": payloads})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["n"] == 12 and [x["rank"] for x in body["ranked"]] == list(range(1, 13))
+    probs = [x["fraud_probability"] for x in body["ranked"]]
+    assert probs == sorted(probs, reverse=True)
+    assert sum(body["counts"].values()) == 12
+    singles = {p["TransactionID"]: client.post("/predict", json=p).json() for p in payloads}
+    for x in body["ranked"]:
+        s = singles[x["transaction_id"]]
+        assert x["fraud_probability"] == pytest.approx(s["fraud_probability"], abs=1e-9)
+        assert x["action"] == s["action"]
+
+
+def test_batch_rejects_empty_and_bad_rows(client: TestClient, served: dict[str, Any]) -> None:
+    assert client.post("/predict/batch", json={"transactions": []}).status_code == 422
+    bad = _payload(served["rows"].iloc[0])
+    bad.pop("TransactionAmt")
+    r = client.post("/predict/batch", json={"transactions": [bad]})
+    assert r.status_code == 422 and "TransactionAmt" in r.text
+
+
+def test_model_info(client: TestClient) -> None:
+    r = client.get("/model-info")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] == "xgboost" and body["primary_metric"] == "pr_auc"
+    assert body["version"].startswith("fixture-model@")
+    assert body["threshold"] == THRESHOLD
+    assert body["bands"] == {"review": 0.062, "block": 0.42}
+    assert body["n_inputs"] > 400 and body["parity_rows"] == 10

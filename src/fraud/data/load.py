@@ -1,7 +1,7 @@
-"""Load, validate, and join the raw IEEE-CIS training tables.
+"""Load and join the raw IEEE-CIS training tables.
 
-Functions here read files and check the data contract in :mod:`fraud.data.schema`.
-They never fit anything and never drop or impute values.
+Reads files, applies the checks in :mod:`fraud.data.validate`, and left-joins
+identity onto transactions. Nothing here is fit; nothing is dropped or imputed.
 """
 
 from __future__ import annotations
@@ -11,14 +11,29 @@ from pathlib import Path
 import pandas as pd
 
 from fraud.data import schema
+from fraud.data.validate import (
+    IDENTITY_FILE,
+    TRANSACTION_FILE,
+    SchemaError,
+    validate_identity,
+    validate_join,
+    validate_transactions,
+)
 
-TRANSACTION_FILE = "train_transaction.csv"
-IDENTITY_FILE = "train_identity.csv"
+__all__ = [
+    "CACHE_FILE",
+    "IDENTITY_FILE",
+    "TRANSACTION_FILE",
+    "SchemaError",
+    "join_transaction_identity",
+    "load_identity",
+    "load_train",
+    "load_transactions",
+    "validate_identity",
+    "validate_transactions",
+]
+
 CACHE_FILE = "train.parquet"
-
-
-class SchemaError(ValueError):
-    """Raised when a raw table violates the data contract."""
 
 
 def _read_csv(path: Path, str_cols: frozenset[str]) -> pd.DataFrame:
@@ -38,65 +53,6 @@ def load_identity(raw_dir: Path) -> pd.DataFrame:
     return df
 
 
-def _check_columns(df: pd.DataFrame, expected: tuple[str, ...], name: str) -> None:
-    actual = tuple(df.columns)
-    if actual != expected:
-        missing = sorted(set(expected) - set(actual))
-        extra = sorted(set(actual) - set(expected))
-        raise SchemaError(f"{name}: columns differ; missing={missing} extra={extra}")
-
-
-def _check_dtypes(df: pd.DataFrame, str_cols: frozenset[str], name: str) -> None:
-    bad: list[str] = []
-    for col in df.columns:
-        dt = df[col].dtype
-        expect_str = col in str_cols
-        is_str = pd.api.types.is_string_dtype(dt)
-        is_num = pd.api.types.is_numeric_dtype(dt)
-        if (expect_str and not is_str) or (not expect_str and not is_num):
-            bad.append(f"{col}={dt}")
-    if bad:
-        raise SchemaError(f"{name}: unexpected dtypes: {bad[:10]}")
-
-
-def _check_non_null(df: pd.DataFrame, cols: frozenset[str], name: str) -> None:
-    nulls = {c: int(df[c].isna().sum()) for c in cols if df[c].isna().any()}
-    if nulls:
-        raise SchemaError(f"{name}: nulls in columns expected non-null: {nulls}")
-
-
-def _check_unique_id(df: pd.DataFrame, name: str) -> None:
-    if not df[schema.ID_COL].is_unique:
-        raise SchemaError(f"{name}: {schema.ID_COL} is not unique")
-
-
-def validate_transactions(df: pd.DataFrame) -> None:
-    name = TRANSACTION_FILE
-    _check_columns(df, schema.TRANSACTION_COLS, name)
-    _check_dtypes(df, schema.TRANSACTION_STR_COLS, name)
-    _check_non_null(df, schema.TRANSACTION_NON_NULL, name)
-    _check_unique_id(df, name)
-    labels = set(df[schema.TARGET_COL].unique())
-    if not labels <= {0, 1}:
-        raise SchemaError(f"{name}: {schema.TARGET_COL} has values outside {{0, 1}}: {labels}")
-    rate = float(df[schema.TARGET_COL].mean())
-    lo, hi = schema.LABEL_RATE_BOUNDS
-    if not lo <= rate <= hi:
-        raise SchemaError(f"{name}: label rate {rate:.4f} outside [{lo}, {hi}]")
-    if (df[schema.TIME_COL] <= 0).any():
-        raise SchemaError(f"{name}: {schema.TIME_COL} must be positive")
-    if (df["TransactionAmt"] <= 0).any():
-        raise SchemaError(f"{name}: TransactionAmt must be positive")
-
-
-def validate_identity(df: pd.DataFrame) -> None:
-    name = IDENTITY_FILE
-    _check_columns(df, schema.IDENTITY_COLS, name)
-    _check_dtypes(df, schema.IDENTITY_STR_COLS, name)
-    _check_non_null(df, schema.IDENTITY_NON_NULL, name)
-    _check_unique_id(df, name)
-
-
 def join_transaction_identity(tx: pd.DataFrame, idn: pd.DataFrame) -> pd.DataFrame:
     """Left-join identity onto transactions, keeping every transaction.
 
@@ -107,14 +63,9 @@ def join_transaction_identity(tx: pd.DataFrame, idn: pd.DataFrame) -> pd.DataFra
     if orphan.any():
         raise SchemaError(f"{int(orphan.sum())} identity rows have no matching transaction")
     merged = tx.merge(idn, on=schema.ID_COL, how="left", validate="one_to_one")
-    if len(merged) != len(tx):
-        raise SchemaError(f"join changed row count: {len(tx)} -> {len(merged)}")
     flag = merged[schema.ID_COL].isin(idn[schema.ID_COL]).rename(schema.HAS_IDENTITY_COL)
     merged = pd.concat([merged, flag], axis=1)
-    coverage = float(merged[schema.HAS_IDENTITY_COL].mean())
-    lo, hi = schema.IDENTITY_COVERAGE_BOUNDS
-    if not lo <= coverage <= hi:
-        raise SchemaError(f"identity coverage {coverage:.3f} outside [{lo}, {hi}]")
+    validate_join(tx, idn, merged)
     return merged
 
 

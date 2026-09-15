@@ -113,7 +113,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service (`/health`, `/predict`, demo page at `/`), Dockerfile.
-- 61 fixture-based tests (no data, no network) + 3 slow real-data tests.
+- 63 fixture-based tests (no data, no network) + 3 slow real-data tests.
 
 ## Tech stack
 
@@ -130,10 +130,10 @@ docs/             eda.md, decisions/ (ADR 0001–0007), experiments.md,
                   leakage_audit.md, threshold.md, ablation.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, ablation, test
-scripts/          download_data, eda, train, tune, learning_curve, calibrate,
+scripts/          download_data, validate_data, eda, train, tune, learning_curve, calibrate,
                   select_threshold, ablation, evaluate_test, make_fixture_artifact
 src/fraud/
-  data/           schema (contract), load, split
+  data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, encoders, history
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV)
@@ -155,7 +155,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 61 tests on the synthetic fixture; no data needed
+uv run pytest            # 63 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -168,6 +168,7 @@ rules and an API token; see `data/README.md`):
 ```bash
 export KAGGLE_API_TOKEN=$(cat ~/.kaggle/access_token)
 uv run python scripts/download_data.py
+uv run python scripts/validate_data.py     # contract report: columns, dtypes, ids, label, join, row counts
 ```
 
 **Reproduce the model** (from raw CSVs to the served artifact):
@@ -257,7 +258,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 61 fixture tests, no data, no network, ~10 s
+uv run pytest              # 63 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 3 tests against the real files, if present
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

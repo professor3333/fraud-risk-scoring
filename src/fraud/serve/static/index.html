@@ -33,6 +33,7 @@
       <div>
         <button id="ex1">Example: card-present-like, no identity</button>
         <button id="ex2">Example: with identity record</button>
+        <button id="ex3">Example: batch of three</button>
         <button id="send" class="primary">Score</button>
       </div>
     </div>
@@ -40,6 +41,10 @@
       <div id="decision" class="decision">—</div>
       <div class="meter"><div id="bar" style="width:0%"></div></div>
       <small id="meta"></small>
+      <table id="batch" hidden style="width:100%;border-collapse:collapse;margin:8px 0;font-size:13px">
+        <thead><tr><th align="left">#</th><th align="left">transaction</th><th align="right">p(fraud)</th><th align="left">risk</th><th align="left">action</th></tr></thead>
+        <tbody></tbody>
+      </table>
       <pre id="resp">response will appear here</pre>
     </div>
   </div>
@@ -55,23 +60,43 @@ const ex2 = {TransactionID: 3000002, TransactionDT: 12000600, TransactionAmt: 44
   C1: 1, C2: 1, C3: 0, C4: 1, C5: 0, C6: 0, C7: 1, C8: 1, C9: 0, C10: 1, C11: 1, C12: 1, C13: 0, C14: 1, D1: 0,
   id_01: -5.0, id_02: 120000.0, id_12: "NotFound", id_15: "New", id_16: "NotFound", id_28: "New", id_29: "NotFound",
   id_31: "chrome 65.0", id_35: "F", id_36: "F", id_37: "T", id_38: "F", DeviceType: "mobile", DeviceInfo: "SAMSUNG"};
+const ex3 = [ex1, ex2, {...ex1, TransactionID: 3000003, TransactionAmt: 1250.0, ProductCD: "C", card6: "credit", addr1: undefined, R_emaildomain: "gmail.com", D1: 0}];
 const ta = document.getElementById("req");
 const show = (o) => { ta.value = JSON.stringify(o, null, 2); };
 document.getElementById("ex1").onclick = () => show(ex1);
 document.getElementById("ex2").onclick = () => show(ex2);
+document.getElementById("ex3").onclick = () => show(ex3);
 show(ex1);
+const colour = (a) => a === "block" ? "decline" : a === "approve" ? "approve" : "";
 document.getElementById("send").onclick = async () => {
   const out = document.getElementById("resp"), dec = document.getElementById("decision");
+  const table = document.getElementById("batch"), tbody = table.querySelector("tbody");
   let body;
   try { body = JSON.parse(ta.value); } catch (e) { out.textContent = "invalid JSON: " + e.message; return; }
-  const r = await fetch("/predict", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+  const isBatch = Array.isArray(body);
+  const r = await fetch(isBatch ? "/predict/batch" : "/predict", {method: "POST", headers: {"content-type": "application/json"},
+    body: JSON.stringify(isBatch ? {transactions: body} : body)});
   const j = await r.json();
   out.textContent = JSON.stringify(j, null, 2);
+  table.hidden = true; tbody.innerHTML = "";
   if (!r.ok) { dec.textContent = "rejected (" + r.status + ")"; dec.className = "decision"; return; }
-  dec.textContent = j.decision.toUpperCase() + "  ·  p = " + j.fraud_probability.toFixed(4);
-  dec.className = "decision " + j.decision;
+  if (isBatch) {
+    dec.textContent = j.n + " scored · " + j.counts.block + " block · " + j.counts.review + " review · " + j.counts.approve + " approve";
+    dec.className = "decision";
+    for (const x of j.ranked) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${x.rank}</td><td>${x.transaction_id}</td><td align="right">${x.fraud_probability.toFixed(4)}</td><td>${x.risk_level}</td><td class="${colour(x.action)}">${x.action}</td>`;
+      tbody.appendChild(tr);
+    }
+    table.hidden = false;
+    document.getElementById("bar").style.width = "0%";
+    document.getElementById("meta").textContent = "ranked by fraud probability · model " + j.ranked[0].model_version;
+    return;
+  }
+  dec.textContent = j.action.toUpperCase() + "  ·  " + j.risk_level + " risk  ·  p = " + j.fraud_probability.toFixed(4);
+  dec.className = "decision " + colour(j.action);
   document.getElementById("bar").style.width = Math.min(100, j.fraud_probability * 100) + "%";
-  document.getElementById("meta").textContent = "threshold " + j.threshold + " · model " + j.model_version;
+  document.getElementById("meta").textContent = "decision at " + j.threshold + ": " + j.decision + " · model " + j.model_version;
 };
 </script>
 </body>

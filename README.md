@@ -172,8 +172,9 @@ columns carry 76 % of split gain but are almost fully substitutable
   three-action review policy sized to an analyst budget.
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
-- FastAPI service (`/health`, `/predict`, demo page at `/`) with a startup
-  parity check against a frozen golden; Dockerfile.
+- FastAPI service: `/health`, `/predict` (probability + decision + risk band
+  + action), `/predict/batch` (ranked queue, up to 1,000), `/model-info`,
+  demo page at `/`; startup parity check against a frozen golden; Dockerfile.
 - 63 fixture-based tests (no data, no network) + 3 slow real-data tests.
 
 ## Tech stack
@@ -220,7 +221,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 79 tests on the synthetic fixture; no data needed
+uv run pytest            # 83 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -269,7 +270,7 @@ writes `models/<run_name>.joblib` and an MLflow run.
 
 ```bash
 uv run uvicorn fraud.serve.app:app --port 8000
-# then open http://127.0.0.1:8000/  (demo page)  ·  http://127.0.0.1:8000/docs  (OpenAPI)
+# then open http://127.0.0.1:8000/  (demo page, single or batch)  ·  http://127.0.0.1:8000/docs  (OpenAPI)
 curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","threshold":0.08,"parity_rows":50}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
@@ -279,13 +280,38 @@ curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
 Response:
 
 ```json
-{"transaction_id":3000001,"fraud_probability":0.1466,"decision":"decline","threshold":0.08,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
+{"transaction_id":3000001,"fraud_probability":0.1466,"decision":"decline","risk_level":"medium","action":"review","threshold":0.08,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
 ```
+
+`decision` is the single-threshold decline/approve (ADR 0006);
+`risk_level` / `action` are the three-band review policy (approve < 0.062,
+review < 0.42, block ≥ 0.42 — `docs/review_policy.md`).
 
 Any of the 393 transaction and 40 identity columns may be sent; unknown
 fields are rejected; `TransactionID`, `TransactionDT`, `TransactionAmt`,
 `ProductCD` and `card1` are required. Omitting every identity field means
 "no identity record".
+
+**Batch** — up to 1,000 transactions in one call, returned ranked by fraud
+probability with per-action counts (what an analyst queue wants):
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict/batch -H 'content-type: application/json' \
+  -d '{"transactions":[{...},{...},{...}]}'
+# {"n":3,"ranked":[{"rank":1,"transaction_id":…,"fraud_probability":0.1466,"risk_level":"medium","action":"review",…},…],
+#  "counts":{"approve":0,"review":3,"block":0}}
+```
+
+**Model info** — what is being served:
+
+```bash
+curl http://127.0.0.1:8000/model-info
+# {"model":"xgboost","experiment":"E022","version":"xgb_f5_capacity+sigmoid@7af85ec92813",
+#  "feature_set":"f5_interactions","n_inputs":439,"primary_metric":"pr_auc",
+#  "validation_pr_auc":0.6367,"test_pr_auc":0.561,"calibration":"sigmoid","threshold":0.08,
+#  "bands":{"review":0.062,"block":0.42},"training_window_days":[1,122],
+#  "validation_window_days":[123,152],"parity_rows":50}
+```
 
 **Docker:**
 
@@ -330,7 +356,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 79 fixture tests, no data, no network, ~10 s
+uv run pytest              # 83 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

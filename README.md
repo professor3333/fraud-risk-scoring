@@ -131,8 +131,10 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Temporal split from YAML; dev config with a seeded 10 % sample.
 - sklearn pipeline with in-pipeline derived features, `<missing>` one-hot
   levels, and frequency encoding fit on the training window.
-- Training CLI logging params, split, feature list, full metric set,
-  PR curve, confusion matrix and the fitted pipeline to MLflow.
+- Training CLI logging git commit, data / split / feature-set / config
+  content hashes, all hyperparameters, the full metric set, training time,
+  PR and ROC curves, confusion matrix, gain importance and the fitted
+  pipeline to MLflow; reasoning in `docs/EXPERIMENT_LOG.md`.
 - Expanding-window random search; post-hoc learning curves.
 - Sigmoid / isotonic calibration on out-of-fold scores, chosen by rule.
 - Amount-weighted cost curve, sensitivity table, train-only cross-check.
@@ -152,9 +154,9 @@ Python 3.12 · uv · pandas 3 · scikit-learn · XGBoost 3 · MLflow 3 (SQLite)
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   tuning/xgboost.yaml, threshold.yaml, serving.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0007), experiments.md,
-                  leakage_audit.md, threshold.md, ablation.md, feature_sets.md,
-                  model_card.md
+docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
+                  ledger), experiments.md (long form), leakage_audit.md,
+                  threshold.md, ablation.md, feature_sets.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, ablation, test
 scripts/          download_data, validate_data, eda, train, tune, learning_curve, calibrate,
@@ -183,7 +185,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 72 tests on the synthetic fixture; no data needed
+uv run pytest            # 73 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -288,7 +290,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 72 fixture tests, no data, no network, ~10 s
+uv run pytest              # 73 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 3 tests against the real files, if present
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

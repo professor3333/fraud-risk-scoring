@@ -174,7 +174,7 @@ uv run python scripts/validate_data.py     # contract report: columns, dtypes, i
 **Reproduce the model** (from raw CSVs to the served artifact):
 
 ```bash
-uv run python scripts/eda.py                                                  # ~15 s, figures + stats
+uv run python scripts/eda.py                                                  # ~20 s: summary JSON, CSVs, figures
 uv run python scripts/train.py --model configs/model/constant.yaml            # E001
 uv run python scripts/train.py --model configs/model/logreg.yaml              # E002, ~16 min
 uv run python scripts/train.py --model configs/model/xgboost.yaml             # E003, ~45 s

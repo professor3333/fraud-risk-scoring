@@ -1,0 +1,19 @@
+# E019: E008 parameters + the cumulative F0-F6 set from the ladder.
+experiment: fraud-xgboost
+run_name: xgb_f6_cumulative
+features: configs/features/f6_cumulative.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: xgboost
+  params:
+    n_estimators: 800
+    learning_rate: 0.05
+    max_depth: 8
+    min_child_weight: 5
+    subsample: 0.8
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 1.0
+    eval_metric: aucpr
+    n_jobs: 8

@@ -437,3 +437,50 @@ derived columns are row-local and computed inside the pipeline
 | F6 frequency encoding | E006 | +0.009 paired | accepted |
 | F7 entity history (two definitions) | E007, E017 | −0.002, −0.001 | rejected |
 
+
+## E018 — Cumulative feature ladder and family cuts
+
+- **Hypothesis (ladder):** accumulating every set in order F0 → F7 with the
+  tuned parameters should track the per-set results: flat through F1 – F4,
+  a step up at F5/F6, flat at F7. If "everything" lands *below* F0+F5+F6,
+  accumulation is costing something (extra split candidates at depth 8).
+- **Hypothesis (cuts):** most of the score is Vesta's engineering. Removing
+  `V` from the shipped set costs ≈ 0.005 (as in E009's ablation); removing
+  all of `C`, `D`, `M`, `V` costs far more; a transaction-only model without
+  identity and without `V` loses a further ≈ 0.01. My own contribution
+  (frequency tables and composite keys) is the E006 + E016 total ≈ 0.015.
+- **Config:** `scripts/feature_ladder.py --model configs/model/xgboost_f5_interactions.yaml`
+  (E008 parameters throughout; MLflow `fraud-feature-sets`).
+- **Result:** `docs/feature_sets.md`. Ladder: F1 – F4 within ±0.004, F5
+  +0.013, F6 +0.009, F7 −0.006; cumulative "+F6" 0.6255. Cuts: raw
+  transaction-only 0.586 → raw +identity 0.591 → F0 0.601; shipped
+  transaction-only 0.604, shipped-minus-`V` 0.621, shipped 0.619,
+  shipped-minus-`C/D/M/V` **0.433**.
+- **Interpretation:** the ladder confirms the one-at-a-time verdicts; the
+  cuts put numbers on the question: Vesta's `C`/`D`/`M`/`V` are worth 0.19,
+  my frequency / key features 0.02 – 0.03, and `V` specifically is worth
+  0.01 on raw columns and nothing on the shipped set. Two apparent
+  improvements were seed-paired next (E019, E020).
+
+## E019 — Cumulative F0 – F6 as a candidate
+
+- **Hypothesis:** the ladder's "+F6" (0.6255) beats E016 (0.6190) by more
+  than the band; if real, accumulating F1 – F4 is worth keeping.
+- **Config:** `configs/model/xgboost_f6_cumulative.yaml`, seeds 42 / 1 / 2.
+- **Result:** 0.6255 / 0.6156 / 0.6214 vs E016 0.6190 / 0.6221 / 0.6205 →
+  paired **+0.0003**.
+- **Interpretation:** rejected; a lucky seed. Consistent with E013 – E015.
+
+## E020 — Shipped set without `V` as a candidate (compact model)
+
+- **Hypothesis:** with frequency tables and composite keys present, the
+  339 `V` columns are replaceable; a 100-input model matches the shipped
+  score.
+- **Config:** `configs/model/xgboost_f5_noV.yaml`, seeds 42 / 1 / 2.
+- **Result:** 0.6214 / 0.6159 / 0.6168 vs E016 → paired **−0.0025**; ROC-AUC
+  0.931; fit time roughly a quarter.
+- **Interpretation:** score-neutral (within noise, slightly negative), so
+  not shipped under the acceptance rule; recorded as the compact option
+  for when serving cost matters. This is the strongest statement the
+  project can make about `V`: optional once entity frequency is modelled.
+

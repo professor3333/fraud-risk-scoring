@@ -36,7 +36,7 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
 - [x] Small UI (demo page at `/`); local-only, reason in README
-- [ ] README complete and verified from a clean clone
+- [x] README complete and verified from a clean clone (v0.1.0 tagged)
 
 ## Current stage: **3 — Feature engineering + XGBoost**
 ADR 0004 written; E007 entity history rejected (no gain when restricted to legitimate computation).

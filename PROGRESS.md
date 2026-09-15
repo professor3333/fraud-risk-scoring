@@ -48,11 +48,11 @@ Next: Stage 4 — calibrate, choose the threshold, learning curves.
 |---|---|
 | Data | `scripts/download_data.py`, `scripts/validate_data.py`, validated left join, 18 data tests |
 | EDA | `scripts/eda.py` → `reports/eda/`; conclusions in `docs/eda.md` |
-| Validation | ADR 0002, `configs/split.yaml`, split tests; E010 random-split control |
+| Validation | ADR 0002 (frozen split), ADR 0008 (rolling backtests with horizons, `docs/backtest.md`); E010 random-split control |
 | Leakage | `docs/leakage_audit.md` |
 | Baseline | E001 dummy, E002b / E002 logistic regression |
 | Features | F0 → F7 (E005 – E017), ladder + family cuts (E018 – E020), `docs/feature_sets.md` |
-| Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped |
+| Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped and confirmed by E023; monthly lifecycle `scripts/retrain.py` (E024) |
 | Imbalance | ADR 0003 |
 | Evaluation | PR-AUC, ROC-AUC, threshold metrics, top-k/day, Brier/ECE; `reports/final/` |
 | Experiments | MLflow (`sqlite:///mlflow.db`), provenance hashes per run |

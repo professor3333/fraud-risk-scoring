@@ -531,3 +531,54 @@ derived columns are row-local and computed inside the pipeline
   ADR *before* any further model selection — not a re-decision of E022 on
   the test number.
 
+
+## E023 — Rolling temporal backtests: does the horizon change the winner? (ADR 0008)
+
+- **Hypothesis:** on the adjacent horizon (gap 0) the ranking is E022 >
+  depth-10 > E016, as on ADR 0002's window. At gaps ≥ 30 days E022's
+  advantage shrinks or reverses, because the higher-capacity model
+  memorises the training window harder and transfers worse — the pattern
+  the reporting window showed (+0.017 → +0.004). The decay
+  (adjacent − robust) is expected to be largest for E022.
+- **Config:** `scripts/backtest.py` with `configs/backtest.yaml` on
+  `xgboost_f5_interactions` (E016), `xgboost_f5_depth10`, `xgboost_f5_capacity`
+  (E022); MLflow `fraud-backtest`. Development days ≤ 152 only.
+- **Expected:** robust (gap ≥ 30) means within ~0.01 of each other, E022's
+  lead ≤ +0.005; if E016 or depth-10 wins the robust mean by the ADR 0003
+  rule (seed-paired), that candidate becomes the shipped model.
+- **Result** (`docs/backtest.md`, `reports/backtest/`): E022 wins all ten
+  windows at seed 42; its lead over E016 is +0.013 adjacent, +0.007 at gap
+  30, +0.006 at gap 60. Robust mean paired over seeds 42 / 1 / 2:
+  +0.0065 / +0.0042 / +0.0102 → **+0.0070**, all positive. Depth 10 sits
+  between the two everywhere.
+- **Interpretation:** the hypothesis was half right. The advantage of the
+  higher-capacity model *shrinks* with horizon (about halves), which is the
+  shape the reporting window showed; it does *not* reverse. **E022 stands
+  as the shipped model on validation-only evidence** under the protocol
+  that would have flagged the shrinkage before shipping. The decay column
+  is now part of every candidate comparison.
+
+## E024 — Monthly retraining lifecycle, simulated offline (`docs/retraining.md`)
+
+- **Hypothesis:** a model one month staler than the freshest possible
+  loses materially on the next month; a champion/challenger cycle with a
+  +0.005 promotion margin will promote the fresh challenger every month on
+  this data.
+- **Config:** `scripts/retrain.py` with `configs/retrain.yaml` — cut-offs at
+  days 120 and 150 (development data only), challenger recipe E022,
+  calibration on OOF folds inside the challenger's training data, block
+  threshold re-selected on the validation month at the 80 % precision bar,
+  artifact frozen with a golden.
+- **Expected:** the challenger beats the incumbent by ≥ 0.05 at cut-off 150.
+- **Result:** cut-off 120 (bootstrap): challenger trained through day 90
+  scores 0.6146 on days 91–120; block threshold 0.470. Cut-off 150: the
+  incumbent scores **0.5216** on days 121–150, the challenger trained
+  through day 120 scores **0.6467** → +0.125, promoted; block threshold
+  re-selected to 0.425.
+- **Interpretation:** one month of staleness costs 0.125 PR-AUC on the
+  next month — the same magnitude the backtest's gap-30 windows show
+  (~0.53 vs ~0.64). Monthly retraining is not a nicety on this data; it is
+  worth more than every feature experiment combined. The block threshold
+  moved 0.47 → 0.425 between cycles, which is why it is re-selected rather
+  than frozen.
+

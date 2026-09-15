@@ -39,9 +39,21 @@ exists if you look forward in time.
 **Strongest objection.** "Your validation window is adjacent to training;
 it measures one-month transfer and your deployment horizon may be longer."
 True, and it bit: E022's +0.017 validation gain became +0.004 on the test
-month. This is recorded as the first open follow-up — a drift-aware
-validation horizon, decided by ADR *before* any further selection — rather
-than patched after seeing the test number.
+month. The remedy is ADR 0008: rolling backtests with training cut-offs at
+days 60 / 90 / 120 scored 0–60 days out, selection on the mean over
+horizons ≥ 30 days. Under it E022's edge halves with distance but holds on
+all ten windows and all three seeds (+0.007 paired) — so the shipped model
+stands on validation-only, drift-aware evidence, and the protocol would
+have shown the shrinkage before shipping.
+
+### "What does one month of staleness cost?"
+
+0.125 PR-AUC on the next month (`docs/retraining.md`): an incumbent
+trained through day 90 scores 0.522 on days 121–150, a challenger trained
+through day 120 scores 0.647. That is larger than every feature and tuning
+gain in the project combined, which is why retraining is a pipeline
+(`scripts/retrain.py`) and not a recommendation, and why the block
+threshold is re-selected each cycle (0.47 → 0.425).
 
 ### "Is your test set really a one-look holdout?"
 

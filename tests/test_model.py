@@ -382,3 +382,35 @@ def test_apply_rank_policy_blocks_by_threshold_and_reviews_top_n() -> None:
     shifted = s + 0.05
     actions, _ = apply_rank_policy(shifted, 0.42, 2)
     assert (actions == "review").sum() == 2
+
+
+def test_monthly_lifecycle_runs_on_fixture(df: pd.DataFrame, tmp_path: Path) -> None:
+    """Champion/challenger cycles: no cycle reads past its cut-off; artifacts are frozen."""
+    import json
+
+    from fraud.train.lifecycle import RetrainConfig, run_lifecycle
+
+    cfg = RetrainConfig(
+        model_config=CONFIGS / "model" / "xgboost.yaml",
+        month_days=30,
+        cutoffs=(120, 150),
+        calibration_folds=(1,),
+        promotion_margin=0.005,
+        block_min_precision=0.5,
+    )
+    table = run_lifecycle(df, cfg, tmp_path / "retrain", seed=0)
+    assert table["cutoff"].tolist() == [120, 150]
+    assert table.loc[0, "promoted"] and "bootstrap" in table.loc[0, "reason"]
+    assert table.loc[1, "incumbent"] == table.loc[0, "serving"]
+    assert table["serving_pr_auc"].between(0, 1).all()
+    for t in (120, 150):
+        d = json.loads((tmp_path / "retrain" / f"cutoff_{t}" / "decision.json").read_text())
+        assert d["cutoff"] == t and 0 < d["block_threshold"] < 1
+        art = Path(table.loc[table.cutoff == t, "artifact"].item())
+        assert art.exists()
+        assert art.with_name(art.stem + "_frozen_expected.json").exists()
+    # the second cycle either promoted (delta >= margin) or kept the incumbent
+    if table.loc[1, "promoted"]:
+        assert table.loc[1, "delta"] >= 0.005
+    else:
+        assert table.loc[1, "serving"] == table.loc[0, "serving"]

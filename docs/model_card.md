@@ -77,8 +77,11 @@ slightly *worse* than E016's (precision 0.262 vs 0.275 at 0.08, cost 275k vs
 262k). More capacity memorises the training window harder and transfers a
 little worse over two months; the validation window, adjacent to training,
 could not see it. The decision rule (validation decides, test reports) was
-applied as written; the follow-up is a drift-aware validation horizon,
-decided in an ADR before any further selection.
+applied as written. The follow-up — a drift-aware validation horizon — is
+now ADR 0008: rolling backtests confirm E022 on every horizon (its edge
+halves with distance but never reverses; +0.007 paired at ≥ 30 days), and
+the same backtests measure one month of staleness at ~0.1 PR-AUC, which
+the retraining lifecycle (`docs/retraining.md`) recovers.
 
 Baselines on validation: constant 0.034 PR-AUC; logistic regression 0.288
 (26 columns) / 0.402 (all raw columns); untuned XGBoost on raw columns

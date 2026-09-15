@@ -111,3 +111,26 @@ def test_full_dataset_honours_contract(full_raw_dir: Path) -> None:
     assert merged[schema.HAS_IDENTITY_COL].sum() == 144_233
     assert 0.03 <= merged[schema.TARGET_COL].mean() <= 0.04
     assert merged[schema.TIME_COL].is_monotonic_increasing
+
+
+def test_validate_join_catches_duplication_and_wrong_flag(
+    tx: pd.DataFrame, idn: pd.DataFrame
+) -> None:
+    from fraud.data.validate import validate_join
+
+    merged = join_transaction_identity(tx, idn)
+    duplicated = pd.concat([merged, merged.iloc[:1]], ignore_index=True)
+    with pytest.raises(SchemaError, match="row count|duplicated"):
+        validate_join(tx, idn, duplicated)
+    wrong_flag = merged.copy()
+    wrong_flag[schema.HAS_IDENTITY_COL] = False
+    with pytest.raises(SchemaError, match="has_identity"):
+        validate_join(tx, idn, wrong_flag)
+
+
+def test_row_count_check_uses_published_counts(tx: pd.DataFrame) -> None:
+    from fraud.data.validate import EXPECTED_ROWS, check_row_count
+
+    assert EXPECTED_ROWS == {"train_transaction.csv": 590_540, "train_identity.csv": 144_233}
+    with pytest.raises(SchemaError, match="expected 590,540"):
+        check_row_count(tx, "train_transaction.csv")

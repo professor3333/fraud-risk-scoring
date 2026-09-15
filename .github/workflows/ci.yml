@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Types
+        run: uv run mypy
+      - name: Tests (fixture only, no data or network)
+        run: uv run pytest -q
+      - name: Docker image builds
+        run: |
+          # The served artifact is not committed; build against a fixture-trained
+          # stand-in so the Dockerfile itself is exercised on every change.
+          uv run python scripts/make_fixture_artifact.py
+          docker build -t fraud-risk-scoring:ci .

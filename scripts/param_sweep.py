@@ -1,4 +1,4 @@
-"""E021: deliberate one-parameter-at-a-time XGBoost sweeps (underfit -> capacity -> overfit -> regularise).
+"""E021: one-parameter-at-a-time XGBoost sweeps (underfit -> capacity -> overfit -> regularise).
 
 Anchored on a model config; each axis varies one parameter with the rest fixed.
 Reports train and validation PR-AUC and the gap so the arc is visible. The

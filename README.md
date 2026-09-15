@@ -113,6 +113,16 @@ model at the same score); removing all of Vesta's engineered families
 summaries carry the model; the work here adds a few points on top and shows
 the largest provider block is optional once entity frequency is modelled.
 
+**From probability to action** (`docs/review_policy.md`). With three
+actions — block when the calibrated probability is ≥ 0.42 (four in five
+such transactions are fraud on validation), review the next-highest scores
+down to the analyst budget, approve the rest — a 200-review/day team
+catches 77 % of fraud at a validation cost 30 % below the best single
+decline threshold and 67 % below approving everything. One month later the
+ranking holds (75 % recall at the same budget) while the probability scale
+drifts (block precision 0.80 → 0.71), so the recommended deployment rule is
+threshold-based blocking and **rank-based** reviewing.
+
 Feature engineering was run as named sets, one experiment each: missing
 counts, amount structure, time of day, e-mail families and two definitions
 of card history all added nothing (E005, E007, E013 – E015, E017); only
@@ -137,7 +147,8 @@ columns carry 76 % of split gain but are almost fully substitutable
   pipeline to MLflow; reasoning in `docs/EXPERIMENT_LOG.md`.
 - Expanding-window random search; post-hoc learning curves.
 - Sigmoid / isotonic calibration on out-of-fold scores, chosen by rule.
-- Amount-weighted cost curve, sensitivity table, train-only cross-check.
+- Amount-weighted cost curve, sensitivity table, train-only cross-check;
+  three-action review policy sized to an analyst budget.
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service (`/health`, `/predict`, demo page at `/`), Dockerfile.
@@ -152,16 +163,18 @@ Python 3.12 · uv · pandas 3 · scikit-learn · XGBoost 3 · MLflow 3 (SQLite)
 
 ```
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
-                  tuning/xgboost.yaml, threshold.yaml, serving.yaml
+                  tuning/*.yaml, threshold.yaml, policy.yaml, serving.yaml
 data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
-                  threshold.md, ablation.md, feature_sets.md, model_card.md
+                  threshold.md, review_policy.md, ablation.md, feature_sets.md,
+                  model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, ablation, test
-scripts/          download_data, validate_data, eda, train, tune, learning_curve, calibrate,
-                  select_threshold, ablation, feature_ladder, evaluate_test,
-                  split_comparison, make_fixture_artifact
+scripts/          download_data, validate_data, eda, train, tune, param_sweep,
+                  learning_curve, calibrate, select_threshold, review_policy,
+                  ablation, feature_ladder, evaluate_test, split_comparison,
+                  make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -185,7 +198,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 73 tests on the synthetic fixture; no data needed
+uv run pytest            # 74 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -216,6 +229,7 @@ uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yam
 uv run python scripts/learning_curve.py --model models/xgb_v2_tuned.joblib
 uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_interactions.yaml
 uv run python scripts/select_threshold.py --run-name xgb_f5_interactions
+uv run python scripts/review_policy.py --run-name xgb_f5_interactions --with-test
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
 uv run python scripts/evaluate_test.py --run-name xgb_f5_interactions          # once per candidate
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
@@ -290,7 +304,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 73 fixture tests, no data, no network, ~10 s
+uv run pytest              # 74 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 3 tests against the real files, if present
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

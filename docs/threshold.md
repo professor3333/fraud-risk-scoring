@@ -69,3 +69,11 @@ selections at 230,443 — 0.2 % above the minimum. ADR 0006 says a flat
 curve with disagreeing selections is reported as a range, not chased; the
 threshold **stays 0.08**. On the test window the same policy costs
 262,109 vs 275,225 for the previous model.
+
+## Re-check for the current shipped model (`xgb_f5_capacity`, E022)
+
+Validation optimum **0.085** (cost 216,907), train-only OOF cross-check
+**0.08**, flat band 0.065 – 0.135. The cost at 0.08 on validation is
+218,075 (0.5 % above the minimum). Threshold **stays 0.08**. Test cost at
+0.08: 275,410 (E016: 262,109 — the higher-capacity model is slightly worse
+at the operating point two months out, see the model card).

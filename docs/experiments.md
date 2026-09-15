@@ -486,3 +486,48 @@ derived columns are row-local and computed inside the pipeline
   for when serving cost matters. This is the strongest statement the
   project can make about `V`: optional once entity frequency is modelled.
 
+
+## E022 — More capacity, as the sweep points (depth 12, mcw 1, 1600 trees)
+
+- **Hypothesis:** E021 shows validation PR-AUC rising monotonically with
+  depth (to 12), with smaller `min_child_weight` (to 1) and with trees (to
+  ~1,700) despite a widening train/validation gap. Combining those three
+  moves should beat E016 by more than any single one (+0.0098 for depth 12
+  alone).
+- **Config:** `configs/model/xgboost_f5_capacity.yaml`; seeds 42 / 1 / 2 vs
+  E016 (0.6190 / 0.6221 / 0.6205).
+- **Expected:** +0.01 – 0.02 paired; fit time ≈ 3× the anchor.
+- **Result:** validation PR-AUC **0.6367 / 0.6359 / 0.6399** vs E016
+  0.6190 / 0.6221 / 0.6205 → paired **+0.017**, every seed positive. ROC-AUC
+  0.9325, recall at P ≥ 0.90 0.334, Brier 0.0185 / ECE 0.0037 after sigmoid
+  calibration (raw 0.0202 / 0.0167). Threshold re-check: validation 0.085,
+  OOF 0.08, flat band 0.065 – 0.135 → **0.08 stays**. Policy re-check: block
+  0.42 unchanged, 200/day review threshold 0.062, recall 0.776, cost 157k.
+  Artifact 41 MB; fit ≈ 4 min.
+- **Interpretation:** **accepted and shipped (v0.3.0).** The advantage over
+  E016 holds across the whole validation month (+0.020 / +0.014 / +0.018 by
+  10-day block), so there was no validation-side reason to doubt it. Its
+  single test look (below) is a caveat, recorded, not a selection.
+
+## Final — single test-window evaluation of E022 + calibration + threshold 0.08
+
+- **Procedure:** `scripts/evaluate_test.py`, once (MLflow `fraud-final`).
+- **Result:** test PR-AUC **0.5610** (E016: 0.5566), ROC-AUC 0.907 (0.910);
+  at 0.08 precision 0.262 / recall 0.691 / F1 0.380 (E016: 0.275 / 0.717 /
+  0.397); recall at P ≥ 0.90 0.243 (0.256); top-500-per-day recall 0.801
+  (0.816); Brier 0.0214, ECE 0.0059; cost 275k vs 481k approve-all (E016:
+  262k). Policy at 200/day: recall 0.727, block precision 0.727, 273
+  reviewed/day.
+- **Interpretation:** the +0.017 validation gain became +0.004 on the
+  ranking metric two months out, and the operating-point metrics moved
+  slightly the other way. The higher-capacity model memorises the training
+  window harder and transfers a little worse — the caveat written into the
+  progression document before this number existed. The decision rule was
+  applied as written (validation decides; test reports). What this exposes
+  is a *methodology* limit: a validation window adjacent to training
+  measures one-month transfer, and the second month is where capacity's
+  cost appears. Recorded as the first item in `PROGRESS.md`'s follow-ups: a
+  drift-aware validation protocol (a gap, or a later window) decided in an
+  ADR *before* any further model selection — not a re-decision of E022 on
+  the test number.
+

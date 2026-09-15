@@ -1,12 +1,14 @@
-# Model card — fraud risk scoring, `xgb_f5_interactions` + sigmoid calibration
+# Model card — fraud risk scoring, `xgb_f5_capacity` + sigmoid calibration
 
 ## Model details
 
-- **Type:** gradient-boosted trees (XGBoost 3.4, `hist`), 800 trees, depth 8,
-  η 0.05, min_child_weight 5, subsample 0.8, colsample 0.5, L2 1, L1 1;
+- **Type:** gradient-boosted trees (XGBoost 3.4, `hist`), 1,600 trees, depth
+  12, η 0.05, min_child_weight 1, subsample 0.8, colsample 0.5, L2 1, L1 1
+  (E022, from the one-axis sweeps in `docs/xgboost_progression.md`);
   wrapped with a Platt (sigmoid-on-logit) calibrator. One sklearn object
-  (`models/xgb_f5_interactions_calibrated.joblib`) does preprocessing,
-  scoring and calibration; the API loads exactly that object.
+  (`models/xgb_f5_capacity_calibrated.joblib`, 41 MB) does preprocessing,
+  scoring and calibration; the API loads exactly that object and refuses to
+  start unless it reproduces a frozen 50-row golden (`fraud.serve.parity`).
 - **Inputs:** the IEEE-CIS transaction record (393 provider columns) plus the
   identity record (40 columns) when one exists. Twelve high-cardinality
   columns and four row-local composite keys (`card1+addr1`,
@@ -17,8 +19,8 @@
   `TransactionID` are never inputs.
 - **Output:** calibrated probability that the transaction is, or belongs to
   an account that becomes, reported as fraud; and a decision at 0.08.
-- **Version:** `xgb_f5_interactions+sigmoid@<sha256 prefix of the artifact>`,
-  returned by `/health` and `/predict`. MLflow: `xgb_f5_interactions` in
+- **Version:** `xgb_f5_capacity+sigmoid@<sha256 prefix of the artifact>`,
+  returned by `/health` and `/predict`. MLflow: `xgb_f5_capacity` in
   `fraud-xgboost` (model), `fraud-calibration` (map), `fraud-final` (test
   evaluation).
 
@@ -47,30 +49,37 @@ calibration choice). The test window was scored **once**, at the end.
 
 | metric | validation | test |
 |---|---:|---:|
-| PR-AUC (primary) | 0.619 | **0.557** |
-| ROC-AUC | 0.932 | 0.910 |
-| precision / recall / F1 at 0.08 | 0.335 / 0.730 / 0.459 | 0.275 / 0.717 / 0.397 |
-| confusion at 0.08 (tp / fp / fn / tn) | 2,106 / 4,185 / 778 / 77,975 | 2,148 / 5,678 / 846 / 76,758 |
-| recall at precision ≥ 0.90 | 0.329 | 0.256 |
-| precision / recall reviewing top 100 per day | 0.552 / 0.574 | 0.521 / 0.522 |
-| precision / recall reviewing top 500 per day | 0.165 / 0.860 | 0.163 / 0.816 |
-| Brier (prior: 0.033) / ECE | 0.0191 / 0.0049 | 0.0217 / 0.0067 |
-| cost at 0.08 / at 0.5 / approve-all | 230k / 342k / 484k | 262k / 358k / 478k |
+| PR-AUC (primary) | 0.637 | **0.561** |
+| ROC-AUC | 0.933 | 0.907 |
+| precision / recall / F1 at 0.08 | 0.346 / 0.743 / 0.472 | 0.262 / 0.691 / 0.380 |
+| confusion at 0.08 (tp / fp / fn / tn) | 2,142 / 4,053 / 742 / 78,107 | 2,070 / 5,826 / 924 / 76,610 |
+| recall at precision ≥ 0.90 | 0.334 | 0.243 |
+| precision / recall reviewing top 100 per day | 0.571 / 0.594 | 0.529 / 0.530 |
+| precision / recall reviewing top 500 per day | 0.168 / 0.873 | 0.160 / 0.801 |
+| Brier (prior: 0.033) / ECE | 0.0185 / 0.0037 | 0.0214 / 0.0059 |
+| cost at 0.08 / at 0.5 / approve-all | 218k / 332k / 487k | 275k / 371k / 481k |
 
-The previous candidate (E008, without the composite keys) scored 0.616 /
-0.553; it was also evaluated once on test, before E016 was accepted.
+Earlier candidates, each evaluated once on test before the next was
+accepted: E008 0.616 / 0.553, E016 0.619 / 0.557. E022's +0.017 validation
+gain over E016 became +0.004 on test, and its operating-point numbers are
+slightly *worse* than E016's (precision 0.262 vs 0.275 at 0.08, cost 275k vs
+262k). More capacity memorises the training window harder and transfers a
+little worse over two months; the validation window, adjacent to training,
+could not see it. The decision rule (validation decides, test reports) was
+applied as written; the follow-up is a drift-aware validation horizon,
+decided in an ADR before any further selection.
 
 Baselines on validation: constant 0.034 PR-AUC; logistic regression 0.288
 (26 columns) / 0.402 (all raw columns); untuned XGBoost on raw columns
 0.570; tuned without composite keys 0.616.
 
-**Reading the test column.** PR-AUC falls 0.06 from validation to test. The
+**Reading the test column.** PR-AUC falls 0.08 from validation to test. The
 test month is one month further from the training window, and every
 experiment shows the data drifts (`docs/eda.md` §5). Recall at the threshold
-holds (0.73 → 0.72) while precision drops (0.33 → 0.27): the model still
+mostly holds (0.74 → 0.69) while precision drops (0.35 → 0.26): the model still
 finds the fraud, but the score scale has moved — the calibration error
 grows from 0.0046 to 0.0060 in the same direction. The chosen policy still
-cuts cost by 45 % against approving everything (52 % on validation). A
+cuts cost by 43 % against approving everything (55 % on validation). A
 deployed version would retrain on a schedule and re-select the threshold;
 the drift rate here says monthly.
 
@@ -92,12 +101,13 @@ frequency-encoded composite keys.
 
 Confident false positives are the fraud archetype (new card, product `C`,
 no billing address, self-addressed e-mail) performed by legitimate
-customers — 29 % of what the policy would block on test, indistinguishable
-row by row. Confident false negatives (25 % of test fraud) are two things:
-propagated labels on ordinary purchases of reported accounts (68 % share an
+customers — 27 % of what the policy would block on test, indistinguishable
+row by row. Confident false negatives (28 % of test fraud) are two things:
+propagated labels on ordinary purchases of reported accounts (71 % share an
 entity with other labelled fraud; not recoverable at authorization) and
 established cards used for the mainstream product (recoverable only via
-per-entity deviation features on that slice).
+per-entity deviation features on that slice). Analysed on E016, re-checked
+on E022 with the same profile.
 
 ## Limitations and known risks
 
@@ -110,8 +120,9 @@ per-entity deviation features on that slice).
 - **Provider features as point-in-time.** `C*`, `D*`, `M*`, `V*`, `id_*` are
   accepted as available at authorization on the host's statement; this
   cannot be verified from anonymised data (`docs/leakage_audit.md`).
-- **Drift.** One extra month costs 0.06 PR-AUC and 0.06 precision at the
-  threshold. The frequency tables and the calibration map are frozen to the
+- **Drift.** One extra month costs 0.08 PR-AUC and 0.08 precision at the
+  threshold, and the higher-capacity model loses more of its validation
+  advantage than its predecessor did. The frequency tables and the calibration map are frozen to the
   training population and age with it.
 - **Cost model is assumed.** FN = amount + 15, FP = 0.10 · amount + 2. The
   threshold moves between 0.055 and 0.165 under ±50 % changes
@@ -134,9 +145,10 @@ per-entity deviation features on that slice).
 
 ```bash
 uv run python scripts/download_data.py
-uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yaml
-uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_interactions.yaml
-uv run python scripts/select_threshold.py --run-name xgb_f5_interactions
+uv run python scripts/train.py --model configs/model/xgboost_f5_capacity.yaml
+uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_capacity.yaml
+uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
+uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
-uv run python scripts/evaluate_test.py --run-name xgb_f5_interactions
+uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity
 ```

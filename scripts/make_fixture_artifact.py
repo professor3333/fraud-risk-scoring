@@ -15,9 +15,10 @@ from fraud.data.split import load_split_config, split
 from fraud.features.columns import load_feature_spec
 from fraud.pipeline.build import build_pipeline
 from fraud.pipeline.calibrated import CalibratedModel
+from fraud.serve.parity import choose_sample, freeze
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "models" / "xgb_f5_interactions_calibrated.joblib"
+OUT = ROOT / "models" / "xgb_f5_capacity_calibrated.joblib"
 
 
 def main() -> None:
@@ -37,7 +38,8 @@ def main() -> None:
     )
     OUT.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, OUT)
-    print(f"wrote fixture-trained stand-in artifact to {OUT}")
+    freeze(model, OUT, choose_sample(parts["test"], n_per_group=5))
+    print(f"wrote fixture-trained stand-in artifact to {OUT} (+ frozen sample)")
 
 
 if __name__ == "__main__":

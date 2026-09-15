@@ -117,3 +117,13 @@ fraud it sees, and analyst capacity is treated as free below the budget.
 Any of these would move the optimal budget; the *shape* — a clean top of the
 ranking, a flat cost floor across a wide band of budgets, and drift that
 hurts thresholds more than ranks — is the durable finding.
+
+## Re-check for the current shipped model (`xgb_f5_capacity`, E022)
+
+`reports/policy/xgb_f5_capacity_*`. Block threshold at the 80 % precision bar
+is again **0.42** (56 blocks/day, 45 fraud). For a 200-review/day team the
+review threshold is 0.062; validation recall block + review **0.776**, cost
+157k (E016: 0.767, 161k). On test: recall 0.727 (E016 0.746), block
+precision 0.727 (0.710), 273 reviewed/day at the "200" sizing (E016: 250).
+The same two drifts as before, slightly larger on the review volume; the
+rank-based review recommendation stands.

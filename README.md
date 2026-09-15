@@ -42,8 +42,10 @@ Design rules that shaped it (all enforced by tests):
   the training window; every fitted statistic (one-hot vocabularies,
   frequency tables, calibration map) is learned from training rows only.
 - **One preprocessing path.** The object that produced the validation
-  metrics is the object the API loads. A test asserts API scores equal the
-  offline object's on the same raw rows.
+  metrics is the object the API loads. A frozen 50-row golden is checked at
+  service startup and in tests: training pipeline == saved artifact == API
+  == stored probabilities, or the service refuses to start
+  (`fraud.serve.parity`).
 - **Every change is an experiment.** Hypothesis written first, one change at
   a time, logged to MLflow, accepted only if it clears a measured noise floor
   (`docs/experiments.md`).
@@ -85,17 +87,26 @@ once at the end.
 | **E016** | E008 + card × address / e-mail keys, frequency-encoded | **0.619** (+0.006 seed-paired) | **0.932** | 0.329 |
 | E017 | E016 + card+address history, earlier rows only | 0.619 · rejected | 0.931 | 0.329 |
 | E018–E020 | cumulative ladder + family cuts; F0–F6 cumulative and no-`V` seed-paired | 0.626→+0.000, 0.621→−0.003 · neutral | | |
+| E021 | one-axis sweeps around E016 | validation never turns over: depth 12 0.629, train-1.000 model 0.627 | | |
+| **E022** | depth 12, min_child_weight 1, 1,600 trees | **0.637** (+0.017 seed-paired) | **0.933** | **0.334** |
 
-Final model (E016 + sigmoid calibration, threshold 0.08):
+Final model (E022 + sigmoid calibration, threshold 0.08):
 
 | metric | validation | test |
 |---|---:|---:|
-| PR-AUC | 0.619 | **0.557** |
-| ROC-AUC | 0.932 | 0.910 |
-| precision / recall / F1 at 0.08 | 0.335 / 0.730 / 0.459 | 0.275 / 0.717 / 0.397 |
-| recall reviewing the top 500 transactions per day | 0.860 | 0.816 |
-| Brier (prior 0.033) / ECE | 0.0191 / 0.0049 | 0.0217 / 0.0067 |
-| cost at 0.08 vs approve-all | 230k vs 484k (−52 %) | 262k vs 478k (−45 %) |
+| PR-AUC | 0.637 | **0.561** |
+| ROC-AUC | 0.933 | 0.907 |
+| precision / recall / F1 at 0.08 | 0.346 / 0.743 / 0.472 | 0.262 / 0.691 / 0.380 |
+| recall reviewing the top 500 transactions per day | 0.873 | 0.801 |
+| Brier (prior 0.033) / ECE | 0.0185 / 0.0037 | 0.0214 / 0.0059 |
+| cost at 0.08 vs approve-all | 218k vs 487k (−55 %) | 275k vs 481k (−43 %) |
+
+The previous shipped model (E016) scored 0.619 / 0.557. E022's +0.017 on
+validation became +0.004 on the test month and its operating-point numbers
+moved slightly the other way: more capacity memorises the training window
+harder and transfers a little worse. It shipped because validation decides
+and test reports (`docs/experiments.md`); the open methodology item is a
+drift-aware validation horizon.
 
 A control experiment (E010) trains the same model on a random stratified
 split of the same rows: it reports validation PR-AUC **0.810** against the
@@ -161,7 +172,8 @@ columns carry 76 % of split gain but are almost fully substitutable
   three-action review policy sized to an analyst budget.
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
-- FastAPI service (`/health`, `/predict`, demo page at `/`), Dockerfile.
+- FastAPI service (`/health`, `/predict`, demo page at `/`) with a startup
+  parity check against a frozen golden; Dockerfile.
 - 63 fixture-based tests (no data, no network) + 3 slow real-data tests.
 
 ## Tech stack
@@ -178,20 +190,20 @@ data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
-                  error_analysis.md, model_card.md
+                  error_analysis.md, xgboost_progression.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   learning_curve, calibrate, select_threshold, review_policy,
-                  ablation, feature_ladder, evaluate_test, final_report,
-                  split_comparison, make_fixture_artifact
+                  freeze_artifact, ablation, feature_ladder, evaluate_test,
+                  final_report, split_comparison, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV)
   evaluate/       metrics, curves, calibration, threshold, importance
-  serve/          app, schemas, static/index.html
+  serve/          app, schemas, frames, parity (frozen-golden check), static/index.html
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
 ```
@@ -208,7 +220,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 74 tests on the synthetic fixture; no data needed
+uv run pytest            # 79 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -235,14 +247,17 @@ uv run python scripts/train.py --model configs/model/xgboost.yaml             # 
 uv run python scripts/train.py --model configs/model/xgboost_v2_freq.yaml     # E006
 uv run python scripts/tune.py  --config configs/tuning/xgboost.yaml           # E008 search, ~2 h on 8 GB
 uv run python scripts/train.py --model configs/model/xgboost_v2_tuned.yaml    # E008 refit, ~90 s
-uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yaml  # E016, shipped
+uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yaml  # E016
+uv run python scripts/param_sweep.py --config configs/tuning/sweep.yaml           # E021, ~1 h
+uv run python scripts/train.py --model configs/model/xgboost_f5_capacity.yaml      # E022, shipped, ~4 min
 uv run python scripts/learning_curve.py --model models/xgb_v2_tuned.joblib
-uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_interactions.yaml
-uv run python scripts/select_threshold.py --run-name xgb_f5_interactions
-uv run python scripts/review_policy.py --run-name xgb_f5_interactions --with-test
+uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_capacity.yaml
+uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
+uv run python scripts/review_policy.py --run-name xgb_f5_capacity --with-test
+uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity            # frozen golden for parity
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
-uv run python scripts/evaluate_test.py --run-name xgb_f5_interactions          # once per candidate
-uv run python scripts/final_report.py --run-name xgb_f5_interactions           # reports/final/ + error table
+uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # once per candidate
+uv run python scripts/final_report.py --run-name xgb_f5_capacity               # reports/final/ + error table
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
 ```
 
@@ -255,7 +270,7 @@ writes `models/<run_name>.joblib` and an MLflow run.
 ```bash
 uv run uvicorn fraud.serve.app:app --port 8000
 # then open http://127.0.0.1:8000/  (demo page)  ·  http://127.0.0.1:8000/docs  (OpenAPI)
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","threshold":0.08,"parity_rows":50}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
        "card1":9500,"card4":"visa","card6":"debit","C1":1,"D1":120}'
@@ -264,7 +279,7 @@ curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
 Response:
 
 ```json
-{"transaction_id":3000001,"fraud_probability":0.072,"decision":"approve","threshold":0.08,"model_version":"xgb_f5_interactions+sigmoid@9c33a1cdc4db"}
+{"transaction_id":3000001,"fraud_probability":0.1466,"decision":"decline","threshold":0.08,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
 ```
 
 Any of the 393 transaction and 40 identity columns may be sent; unknown
@@ -275,7 +290,7 @@ fields are rejected; `TransactionID`, `TransactionDT`, `TransactionAmt`,
 **Docker:**
 
 ```bash
-docker build -t fraud-risk-scoring .            # needs models/xgb_f5_interactions_calibrated.joblib
+docker build -t fraud-risk-scoring .            # needs the calibrated artifact + its frozen sample
 docker run --rm -p 8000:8000 fraud-risk-scoring
 ```
 
@@ -315,8 +330,8 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 74 fixture tests, no data, no network, ~10 s
-uv run pytest -m slow      # 3 tests against the real files, if present
+uv run pytest              # 79 fixture tests, no data, no network, ~10 s
+uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
@@ -324,7 +339,8 @@ Tests are grouped by what they protect: data contract, split ordering and
 sizes, leakage (nothing fit on validation; history features depend on no
 later row), pipeline (unseen categories, missing identity, save/load
 parity), model (beats the prior, probabilities in [0, 1], reproducible),
-threshold/calibration arithmetic, serving (validation, API = offline).
+threshold/calibration arithmetic, serving (validation, API = offline),
+parity (training path = artifact = API = frozen golden; tampering refused).
 
 ## Development setup
 

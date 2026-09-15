@@ -1,7 +1,8 @@
 # Build:  docker build -t fraud-risk-scoring .
 # Run:    docker run --rm -p 8000:8000 fraud-risk-scoring
-# The model artifact (models/xgb_f5_interactions_calibrated.joblib) must exist locally
-# before building; it is produced by scripts/train.py + scripts/calibrate.py.
+# The model artifact (models/xgb_f5_capacity_calibrated.joblib) and its frozen
+# sample must exist locally before building: scripts/train.py, scripts/calibrate.py,
+# scripts/freeze_artifact.py.
 FROM python:3.12-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
@@ -22,7 +23,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Project code, configs and the served artifact.
 COPY src ./src
 COPY configs ./configs
-COPY models/xgb_f5_interactions_calibrated.joblib ./models/xgb_f5_interactions_calibrated.joblib
+# The artifact and its frozen sample: the service refuses to start unless the
+# artifact reproduces the frozen probabilities (G8).
+COPY models/xgb_f5_capacity_calibrated.joblib \
+     models/xgb_f5_capacity_calibrated_frozen_sample.json \
+     models/xgb_f5_capacity_calibrated_frozen_expected.json \
+     ./models/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-group train
 

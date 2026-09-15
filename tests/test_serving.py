@@ -392,3 +392,29 @@ def test_audit_can_be_disabled(
         assert c.get("/health").json()["audit_events"] is None
         assert c.get("/audit/recent").status_code == 404
         assert c.post("/predict", json=_payload(served["rows"].iloc[0])).status_code == 200
+
+
+def test_requests_and_inputs_are_recorded_for_monitoring(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    import sqlite3
+
+    db = sqlite3.connect(served["audit_db"])
+    before_req = db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+    before_in = db.execute("SELECT COUNT(*) FROM input_features").fetchone()[0]
+    rows = [_payload(row) for _, row in served["rows"].head(4).iterrows()]
+    r = client.post("/predict/batch", json={"transactions": rows})
+    rid = r.headers["X-Request-ID"]
+    bad = client.post("/predict", json={"TransactionID": 1})  # 422, still a request row
+    assert bad.status_code == 422
+    req = db.execute(
+        "SELECT endpoint, status_code, n_rows FROM requests ORDER BY id DESC LIMIT 2"
+    ).fetchall()
+    assert req[0] == ("/predict", 422, 0) and req[1] == ("/predict/batch", 200, 4)
+    assert db.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == before_req + 2
+    assert db.execute("SELECT COUNT(*) FROM input_features").fetchone()[0] == before_in + 4
+    snap = db.execute(
+        "SELECT product, has_identity, hour, n_missing_transaction FROM input_features "
+        "WHERE request_id = ?", (rid,)
+    ).fetchall()  # fmt: skip
+    assert len(snap) == 4 and all(0 <= h <= 23 for _, _, h, _ in snap)

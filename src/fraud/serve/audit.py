@@ -37,7 +37,46 @@ CREATE TABLE IF NOT EXISTS prediction_events (
 );
 CREATE INDEX IF NOT EXISTS ix_prediction_events_txn ON prediction_events (transaction_id);
 CREATE INDEX IF NOT EXISTS ix_prediction_events_time ON prediction_events (scored_at);
+
+-- every API call to a scoring endpoint, successful or not (monitoring: rate, latency, errors)
+CREATE TABLE IF NOT EXISTS requests (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id  TEXT    NOT NULL,
+    endpoint    TEXT    NOT NULL,
+    started_at  TEXT    NOT NULL,
+    status_code INTEGER NOT NULL,
+    latency_ms  REAL    NOT NULL,
+    n_rows      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_requests_time ON requests (started_at);
+
+-- a compact snapshot of each scored row's inputs (monitoring: data drift)
+CREATE TABLE IF NOT EXISTS input_features (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id            TEXT    NOT NULL,
+    transaction_id        INTEGER NOT NULL,
+    scored_at             TEXT    NOT NULL,
+    amount                REAL    NOT NULL,
+    product               TEXT    NOT NULL,
+    card4                 TEXT,
+    card6                 TEXT,
+    device_type           TEXT,
+    has_identity          INTEGER NOT NULL,
+    addr1_missing         INTEGER NOT NULL,
+    p_email_present       INTEGER NOT NULL,
+    r_email_present       INTEGER NOT NULL,
+    n_missing_transaction INTEGER NOT NULL,
+    n_missing_identity    INTEGER NOT NULL,
+    hour                  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_input_features_time ON input_features (scored_at);
 """
+
+INPUT_COLUMNS = (
+    "request_id", "transaction_id", "scored_at", "amount", "product", "card4", "card6",
+    "device_type", "has_identity", "addr1_missing", "p_email_present", "r_email_present",
+    "n_missing_transaction", "n_missing_identity", "hour",
+)  # fmt: skip
 
 COLUMNS = (
     "request_id", "endpoint", "scored_at", "transaction_id", "model_version",
@@ -95,6 +134,47 @@ class AuditLog:
             self._conn.executemany(sql, rows)
             self._conn.commit()
         return len(rows)
+
+    def record_request(
+        self, request_id: str, endpoint: str, started_at: str, status_code: int,
+        latency_ms: float, n_rows: int,
+    ) -> None:  # fmt: skip
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO requests "
+                "(request_id, endpoint, started_at, status_code, latency_ms, n_rows) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (request_id, endpoint, started_at, status_code, latency_ms, n_rows),
+            )
+            self._conn.commit()
+
+    def record_inputs(self, rows: list[dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+        placeholders = ", ".join("?" for _ in INPUT_COLUMNS)
+        sql = f"INSERT INTO input_features ({', '.join(INPUT_COLUMNS)}) VALUES ({placeholders})"
+        with self._lock:
+            self._conn.executemany(sql, [tuple(r[c] for c in INPUT_COLUMNS) for r in rows])
+            self._conn.commit()
+        return len(rows)
+
+    def frame(self, table: str, since: str | None = None, until: str | None = None) -> Any:
+        """A pandas frame of one table within a time window (monitoring reads)."""
+        import pandas as pd
+
+        time_col = "started_at" if table == "requests" else "scored_at"
+        clauses, params = [], []
+        if since:
+            clauses.append(f"{time_col} >= ?")
+            params.append(since)
+        if until:
+            clauses.append(f"{time_col} < ?")
+            params.append(until)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            return pd.read_sql_query(
+                f"SELECT * FROM {table}{where}", self._conn, params=tuple(params)
+            )
 
     def count(self) -> int:
         with self._lock:

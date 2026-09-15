@@ -91,3 +91,40 @@ def table_to_frame(table: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     if not frame[schema.ID_COL].is_unique:
         raise ValueError(f"{schema.ID_COL} must be unique within an upload")
     return frame, ignored
+
+
+_SKIP = (schema.ID_COL, schema.TARGET_COL)
+MONITORED_TX = tuple(c for c in schema.TRANSACTION_COLS if c not in _SKIP)
+MONITORED_ID = tuple(c for c in schema.IDENTITY_COLS if c != schema.ID_COL)
+
+
+def _text(value: Any) -> str | None:
+    return None if pd.isna(value) else str(value)
+
+
+def monitored_fields(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """The compact per-row input snapshot the monitor compares against its reference."""
+    hour = (frame[schema.TIME_COL] % 86_400) // 3600
+    n_tx_missing = frame[list(MONITORED_TX)].isna().sum(axis=1)
+    n_id_missing = frame[list(MONITORED_ID)].isna().sum(axis=1)
+    out: list[dict[str, Any]] = []
+    for i in range(len(frame)):
+        row = frame.iloc[i]
+        out.append(
+            {
+                "transaction_id": int(row[schema.ID_COL]),
+                "amount": float(row["TransactionAmt"]),
+                "product": str(row["ProductCD"]),
+                "card4": _text(row["card4"]),
+                "card6": _text(row["card6"]),
+                "device_type": _text(row["DeviceType"]),
+                "has_identity": int(bool(row[schema.HAS_IDENTITY_COL])),
+                "addr1_missing": int(pd.isna(row["addr1"])),
+                "p_email_present": int(not pd.isna(row["P_emaildomain"])),
+                "r_email_present": int(not pd.isna(row["R_emaildomain"])),
+                "n_missing_transaction": int(n_tx_missing.iloc[i]),
+                "n_missing_identity": int(n_id_missing.iloc[i]),
+                "hour": int(hour.iloc[i]),
+            }
+        )
+    return out

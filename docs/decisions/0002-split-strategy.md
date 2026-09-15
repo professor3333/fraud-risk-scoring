@@ -113,6 +113,7 @@ Every consultation, in order (all on the same 85,430 rows, days 153–183):
 | 5 | after E022 accepted | `evaluate_test` for `xgb_f5_capacity` | no — and E022 was shipped *despite* a weaker test transfer, precisely to avoid selecting on test |
 | 6 | E022 re-ship | `review_policy --with-test`, `final_report` for E022 (same predictions as #5) | no |
 | 7 | rank-policy work | one test day (day 170) scored through the API to show review-volume drift | no |
+| 8 | monitoring demo | one test day (day 175) scored through the API and reported with labels (`reports/monitoring/demo_test_day175.md`) | no |
 
 Three model candidates and two policy checks, so the window has been seen
 in five distinct forms. The one place test evidence changed *documentation*

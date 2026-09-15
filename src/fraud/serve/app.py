@@ -23,7 +23,12 @@ from fraud.data import schema
 from fraud.evaluate.policy import apply_rank_policy
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
-from fraud.serve.frames import payloads_to_frame, request_to_frame, table_to_frame
+from fraud.serve.frames import (
+    monitored_fields,
+    payloads_to_frame,
+    request_to_frame,
+    table_to_frame,
+)
 from fraud.serve.parity import frozen_paths, verify
 from fraud.serve.schemas import (
     Action,
@@ -151,7 +156,8 @@ def assign_actions(
 
 
 def score(state: ServingState, payload: dict[str, Any]) -> PredictionResponse:
-    p = float(state.model.predict_proba(request_to_frame(payload))[0, 1])
+    frame = request_to_frame(payload)
+    p = float(state.model.predict_proba(frame)[0, 1])
     return _response(state, int(payload[schema.ID_COL]), p)
 
 
@@ -237,11 +243,16 @@ def record_events(
     applied: PolicyApplied,
     rows: Sequence[tuple[int, float, str, str]],
     latency_ms: float,
+    frame: pd.DataFrame | None = None,
 ) -> None:
-    """Persist one event per scored transaction (no-op when auditing is disabled)."""
+    """Persist one event per scored transaction, plus the monitored input snapshot."""
     if state.audit is None:
         return
     now = utc_now()
+    if frame is not None:
+        state.audit.record_inputs(
+            [{"request_id": request_id, "scored_at": now, **f} for f in monitored_fields(frame)]
+        )
     state.audit.record(
         [
             PredictionEvent(
@@ -309,7 +320,26 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         app.state.serving = load_state(config_path)
         yield
 
-    app = FastAPI(title="fraud-risk-scoring", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="fraud-risk-scoring", version="0.5.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def record_request(request: Request, call_next: Any) -> Any:
+        """Every scoring call — success or error — lands in the requests table."""
+        if not request.url.path.startswith("/predict"):
+            return await call_next(request)
+        started = utc_now()
+        t0 = time.perf_counter()
+        rid = request_id_of(request)
+        response = await call_next(request)
+        state = getattr(request.app.state, "serving", None)
+        if state is not None and state.audit is not None:
+            rid = response.headers.get("X-Request-ID", rid)
+            state.audit.record_request(
+                rid, request.url.path, started, response.status_code,
+                (time.perf_counter() - t0) * 1000, int(response.headers.get("X-Rows", "0")),
+            )  # fmt: skip
+        response.headers.setdefault("X-Request-ID", rid)
+        return response
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
@@ -346,14 +376,19 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         state: ServingState = request.app.state.serving
         rid = request_id_of(request)
         t0 = time.perf_counter()
-        result = score(state, body.model_dump())  # type: ignore[attr-defined]
+        payload = body.model_dump()  # type: ignore[attr-defined]
+        frame = request_to_frame(payload)
+        result = _response(
+            state, int(payload[schema.ID_COL]), float(state.model.predict_proba(frame)[0, 1])
+        )
         latency = (time.perf_counter() - t0) * 1000
         record_events(
             state, "/predict", rid, threshold_policy_applied(state),
             [(result.transaction_id, result.fraud_probability, result.risk_level, result.action)],
-            latency,
+            latency, frame,
         )  # fmt: skip
         response.headers["X-Request-ID"] = rid
+        response.headers["X-Rows"] = "1"
         return result
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
@@ -369,8 +404,17 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         scored = [
             (r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.ranked
         ]
-        record_events(state, "/predict/batch", rid, result.policy, scored, latency)
+        record_events(
+            state,
+            "/predict/batch",
+            rid,
+            result.policy,
+            scored,
+            latency,
+            payloads_to_frame(payloads),
+        )
         response.headers["X-Request-ID"] = rid
+        response.headers["X-Rows"] = str(result.n)
         return result
 
     @app.post("/predict/csv", response_model=CsvPredictionResponse)
@@ -394,6 +438,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         if len(table) > MAX_CSV_ROWS:
             raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload (got {len(table)})")
         try:
+            frame, _ = table_to_frame(table)
             result = score_table(state, table, policy, review_budget)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -401,9 +446,10 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         record_events(
             state, "/predict/csv", rid, result.summary.policy,
             [(r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.rows],
-            latency,
+            latency, frame,
         )  # fmt: skip
         response.headers["X-Request-ID"] = rid
+        response.headers["X-Rows"] = str(len(result.rows))
         return result
 
     @app.get("/audit/recent", response_model=list[AuditEvent])

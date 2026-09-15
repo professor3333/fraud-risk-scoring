@@ -177,8 +177,11 @@ columns carry 76 % of split gain but are almost fully substitutable
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
   returning one authoritative `action` (approve / review / block) from the
   rank-based review policy, `/model-info`, `/audit/recent`; startup parity
-  check against a frozen golden; every scored transaction persisted to a
-  SQLite audit trail with model version, policy, action and latency.
+  check against a frozen golden; every scored transaction, every request
+  and an input snapshot persisted to a SQLite audit trail.
+- Monitoring: a frozen reference per artifact and a report over any window
+  of stored predictions — API rate / latency / errors, score and action
+  PSI, per-feature drift, eventual performance and calibration with labels.
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
@@ -200,14 +203,15 @@ docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-col
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
-                  deployment.md, defending_the_decisions.md, model_card.md
+                  deployment.md, monitoring.md, defending_the_decisions.md,
+                  model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   learning_curve, calibrate, select_threshold, review_policy,
-                  freeze_artifact, ablation, feature_ladder, evaluate_test,
-                  final_report, split_comparison, deploy_check,
-                  make_fixture_artifact
+                  freeze_artifact, monitor_reference, monitor, ablation,
+                  feature_ladder, evaluate_test, final_report, split_comparison,
+                  deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -215,8 +219,8 @@ src/fraud/
   train/          run (MLflow), tune (expanding-window CV)
   evaluate/       metrics, curves, calibration, threshold, importance
   serve/          app, schemas, frames, parity (frozen-golden check), audit
-                  (SQLite prediction events), static/ (dashboard, single form,
-                  synthetic sample CSV)
+                  (SQLite events, requests, input snapshots), static/
+  monitor/        drift (PSI, bins), reference (frozen 'normal'), report
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
 fly.toml          Fly.io app definition (public deployment)
@@ -234,7 +238,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 99 tests on the synthetic fixture; no data needed
+uv run pytest            # 107 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -269,6 +273,7 @@ uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_capac
 uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
 uv run python scripts/review_policy.py --run-name xgb_f5_capacity --with-test
 uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity            # frozen golden for parity
+uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity          # frozen monitoring reference
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
 uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # reporting window; logged in ADR 0002
 uv run python scripts/final_report.py --run-name xgb_f5_capacity               # reports/final/ + error table
@@ -361,6 +366,17 @@ curl "http://127.0.0.1:8000/audit/recent?limit=1"
 #   "review_budget":25,"review_cutoff":0.179,"batch_size":200,"latency_ms":577.7}]
 ```
 
+**Monitoring** (`docs/monitoring.md`) — the audit trail also stores every
+request (including errors, with latency) and a compact input snapshot per
+scored row. `scripts/monitor_reference.py` freezes what "normal" looked like
+(training-window features; validation-window scores, actions and
+performance) and `scripts/monitor.py --since … --until … [--labels …]`
+reports API rate / latency / errors, score and action drift (PSI),
+per-feature data drift, and — with matured labels — eventual PR-AUC, block
+precision, recall and calibration against the reference. Demonstrated on
+one validation day (eventual PR-AUC 0.655) and one reporting-window day
+(0.617, Brier worse) in `reports/monitoring/`.
+
 **Model info** — what is being served:
 
 ```bash
@@ -418,7 +434,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 99 fixture tests, no data, no network, ~20 s
+uv run pytest              # 107 fixture tests, no data, no network, ~30 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

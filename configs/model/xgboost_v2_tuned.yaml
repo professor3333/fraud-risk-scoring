@@ -1,0 +1,21 @@
+# E008: best trial of the expanding-window search (configs/tuning/xgboost.yaml,
+# trial_08, CV PR-AUC 0.626 vs 0.607 for the E006 parameters), refit on the
+# full training window. Feature set unchanged from E006.
+experiment: fraud-xgboost
+run_name: xgb_v2_tuned
+features: configs/features/v2_freq.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: xgboost
+  params:
+    n_estimators: 800
+    learning_rate: 0.05
+    max_depth: 8
+    min_child_weight: 5
+    subsample: 0.8
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 1.0
+    eval_metric: aucpr
+    n_jobs: 8

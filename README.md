@@ -18,7 +18,8 @@ uv run pytest                            # fixture-based tests, no data needed
 
 ```bash
 uv run python scripts/train.py --model configs/model/logreg.yaml --dev   # 10 % sample, seconds
-uv run python scripts/train.py --model configs/model/xgboost_v2_freq.yaml  # current best, ~50 s
+uv run python scripts/train.py --model configs/model/xgboost_v2_tuned.yaml # current best, ~90 s
+uv run python scripts/tune.py --config configs/tuning/xgboost.yaml          # 16-trial search, slow
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # browse runs
 ```
 
@@ -32,5 +33,6 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                 # brows
 | E005 | E003 + hour / weekday | 0.576 (noise: +0.002 seed-paired) | 0.912 | 0.284 |
 | E006 | E003 + frequency encoding (ADR 0005) | **0.578** (+0.009 seed-paired) | 0.919 | 0.294 |
 | E007 | E006 + entity history, strictly earlier rows (ADR 0004) | 0.582 (noise: −0.002 seed-paired) | 0.920 | 0.280 |
+| E008 | E006, tuned by expanding-window CV | **0.616** | 0.929 | 0.330 |
 
 Details and interpretation: `docs/experiments.md`. Decisions: `docs/decisions/`.

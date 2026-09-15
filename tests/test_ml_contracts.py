@@ -136,15 +136,10 @@ def test_api_contract_via_openapi(fixture_raw_dir: Path, tmp_path: Path) -> None
     artifact = tmp_path / "models" / "m.joblib"
     joblib.dump(model, artifact)
     freeze(model, artifact, choose_sample(parts["test"], 3))
-    (tmp_path / "configs" / "threshold.yaml").write_text(
-        "costs:\n  false_negative: {fixed: 15.0, amount_coef: 1.0}\n"
-        "  false_positive: {fixed: 2.0, amount_coef: 0.10}\n"
-        "sweep: {start: 0.01, stop: 0.99, step: 0.01}\nthreshold: 0.08\n"
-    )
     cfg = tmp_path / "configs" / "serving.yaml"
     cfg.write_text(
-        "model_path: models/m.joblib\nthreshold_config: configs/threshold.yaml\n"
-        "model_version: contract\nbands: {review: 0.062, block: 0.42}\n"
+        "model_path: models/m.joblib\nmodel_version: contract\n"
+        "bands: {review: 0.062, block: 0.42}\n"
     )
     with TestClient(create_app(cfg)) as client:
         spec_doc = client.get("/openapi.json").json()
@@ -155,10 +150,10 @@ def test_api_contract_via_openapi(fixture_raw_dir: Path, tmp_path: Path) -> None
         assert "get" in paths["/health"] and "post" in paths["/predict"]
         schemas = spec_doc["components"]["schemas"]
         pred = schemas["PredictionResponse"]
-        assert set(pred["required"]) >= {
-            "transaction_id", "fraud_probability", "decision", "risk_level", "action",
-            "threshold", "model_version",
+        assert set(pred["required"]) == {
+            "transaction_id", "fraud_probability", "risk_level", "action", "model_version",
         }  # fmt: skip
+        assert "decision" not in pred["properties"] and "threshold" not in pred["properties"]
         assert pred["properties"]["fraud_probability"]["minimum"] == 0.0
         assert pred["properties"]["fraud_probability"]["maximum"] == 1.0
         assert set(pred["properties"]["action"]["enum"]) == {"approve", "review", "block"}

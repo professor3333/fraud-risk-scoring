@@ -63,15 +63,10 @@ def frozen_fixture(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFacto
     joblib.dump(model, artifact)
     sample = choose_sample(parts["test"], n_per_group=5)
     freeze(model, artifact, sample)
-    (root / "configs" / "threshold.yaml").write_text(
-        "costs:\n  false_negative: {fixed: 15.0, amount_coef: 1.0}\n"
-        "  false_positive: {fixed: 2.0, amount_coef: 0.10}\n"
-        "sweep: {start: 0.01, stop: 0.99, step: 0.01}\nthreshold: 0.08\n"
-    )
     serving = root / "configs" / "serving.yaml"
     serving.write_text(
-        "model_path: models/m.joblib\nthreshold_config: configs/threshold.yaml\n"
-        "model_version: fixture\nrequire_parity: true\n"
+        "model_path: models/m.joblib\nmodel_version: fixture\nrequire_parity: true\n"
+        "bands: {review: 0.062, block: 0.42}\n"
     )
     return {
         "artifact": artifact,

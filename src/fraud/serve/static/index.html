@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>Fraud Risk Scoring — demo</h1>
-  <p class="sub">POSTs a transaction to <code>/predict</code> and shows the calibrated probability and the decision at the operating threshold. Field names follow the IEEE-CIS schema; omit identity fields to score a transaction without an identity record.</p>
+  <p class="sub">POSTs one transaction to <code>/predict</code> and shows the calibrated probability and the action (approve / review / block). A single transaction has no batch to rank within, so the fixed bands apply; the <a href="/">review queue</a> applies the rank-based policy. Field names follow the IEEE-CIS schema; omit identity fields to score a transaction without an identity record.</p>
   <div class="row">
     <div class="col">
       <textarea id="req" spellcheck="false"></textarea>
@@ -96,7 +96,7 @@ document.getElementById("send").onclick = async () => {
   dec.textContent = j.action.toUpperCase() + "  ·  " + j.risk_level + " risk  ·  p = " + j.fraud_probability.toFixed(4);
   dec.className = "decision " + colour(j.action);
   document.getElementById("bar").style.width = Math.min(100, j.fraud_probability * 100) + "%";
-  document.getElementById("meta").textContent = "decision at " + j.threshold + ": " + j.decision + " · model " + j.model_version;
+  document.getElementById("meta").textContent = "fixed bands (single transaction) · model " + j.model_version;
 };
 </script>
 </body>

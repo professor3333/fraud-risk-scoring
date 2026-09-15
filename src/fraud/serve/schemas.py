@@ -49,12 +49,16 @@ TransactionRequest = create_model("TransactionRequest", __base__=_Base, **_field
 
 
 class PredictionResponse(BaseModel):
+    """The authoritative output: one probability, one action, one risk level.
+
+    The evaluation threshold (0.08, ADR 0006) is reporting material only; the
+    three-action review policy is the production policy.
+    """
+
     transaction_id: int
     fraud_probability: float = Field(ge=0.0, le=1.0)
-    decision: Literal["approve", "decline"]  # single-threshold decision (ADR 0006)
-    risk_level: RiskLevel  # low / medium / high from the review-policy bands
-    action: Action  # approve / review / block
-    threshold: float
+    risk_level: RiskLevel  # low / medium / high
+    action: Action  # approve / review / block — the one command for the payment system
     model_version: str
 
 
@@ -98,7 +102,6 @@ class Bands(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     model_version: str
-    threshold: float
     parity_rows: int  # frozen rows re-scored at startup; the service refuses to start on a mismatch
 
 
@@ -114,8 +117,7 @@ class ModelInfoResponse(BaseModel):
     validation_pr_auc: float
     test_pr_auc: float
     calibration: str
-    threshold: float
-    bands: Bands
+    bands: Bands  # production policy: block at .block; review by budget (rank) or down to .review
     training_window_days: tuple[int, int]
     validation_window_days: tuple[int, int]
     parity_rows: int
@@ -143,8 +145,6 @@ class CsvSummary(BaseModel):
     average_fraud_probability: float
     ignored_columns: list[str]
     model_version: str
-    threshold: float
-    bands: Bands
     policy: PolicyApplied
 
 

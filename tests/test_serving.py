@@ -23,7 +23,6 @@ from fraud.serve.parity import choose_sample, freeze
 from fraud.serve.schemas import IDENTITY_FIELDS
 
 ROOT = Path(__file__).resolve().parents[1]
-THRESHOLD = 0.08
 
 
 @pytest.fixture(scope="module")
@@ -43,15 +42,9 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
     )
     joblib.dump(model, root / "models" / "m.joblib")
     freeze(model, root / "models" / "m.joblib", choose_sample(parts["test"], n_per_group=5))
-    (root / "configs" / "threshold.yaml").write_text(
-        "costs:\n  false_negative: {fixed: 15.0, amount_coef: 1.0}\n"
-        "  false_positive: {fixed: 2.0, amount_coef: 0.10}\n"
-        "sweep: {start: 0.01, stop: 0.99, step: 0.01}\n"
-        f"threshold: {THRESHOLD}\n"
-    )
     cfg = root / "configs" / "serving.yaml"
     cfg.write_text(
-        "model_path: models/m.joblib\nthreshold_config: configs/threshold.yaml\n"
+        "model_path: models/m.joblib\n"
         "model_version: fixture-model\nbands: {review: 0.062, block: 0.42}\n"
         "model_info: {model: xgboost, experiment: fixture, feature_set: v2_freq, "
         "primary_metric: pr_auc, validation_pr_auc: 0.5, test_pr_auc: 0.4, calibration: sigmoid, "
@@ -90,7 +83,7 @@ def test_health_is_cheap_and_reports_version(client: TestClient) -> None:
     body = r.json()
     assert body["status"] == "ok"
     assert body["model_version"].startswith("fixture-model@")
-    assert body["threshold"] == THRESHOLD
+    assert "threshold" not in body and "decision" not in body
 
 
 def test_predict_matches_offline_pipeline(client: TestClient, served: dict[str, Any]) -> None:
@@ -108,8 +101,10 @@ def test_predict_matches_offline_pipeline(client: TestClient, served: dict[str, 
         body = r.json()
         assert body["transaction_id"] == int(row[schema.ID_COL])
         assert body["fraud_probability"] == pytest.approx(expected, abs=1e-9)
-        assert body["decision"] == ("decline" if expected >= THRESHOLD else "approve")
-        assert body["threshold"] == THRESHOLD
+        assert body["action"] == (
+            "block" if expected >= 0.42 else "review" if expected >= 0.062 else "approve"
+        )
+        assert "decision" not in body and "threshold" not in body
 
 
 def test_request_to_frame_reconstructs_has_identity(served: dict[str, Any]) -> None:
@@ -213,7 +208,7 @@ def test_model_info(client: TestClient) -> None:
     body = r.json()
     assert body["model"] == "xgboost" and body["primary_metric"] == "pr_auc"
     assert body["version"].startswith("fixture-model@")
-    assert body["threshold"] == THRESHOLD
+    assert "threshold" not in body
     assert body["bands"] == {"review": 0.062, "block": 0.42}
     assert body["n_inputs"] > 400 and body["parity_rows"] == 10
 

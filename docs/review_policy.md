@@ -139,3 +139,9 @@ block 47 / review **200** / approve 2,560; test day 170 → block 54 / review
 **200** / approve 2,155. The fixed-threshold policy on the same two days
 reviews 141 and 222. `fraud.evaluate.policy.apply_rank_policy` is the
 function; `policy: "threshold"` keeps the fixed bands for comparison.
+
+The service returns **one** command per transaction (`action`) with its
+`risk_level`; the single-threshold `decision` at 0.08 was removed from the
+API (v0.4.1) because a response carrying both `decision: decline` and
+`action: review` gave the payment system two competing instructions. The
+0.08 threshold remains the evaluation operating point in the reports.

@@ -1,12 +1,14 @@
 # Serving configuration (§6). The API loads exactly the calibrated pipeline
 # object that produced the validation metrics (G8).
 model_path: models/xgb_f5_capacity_calibrated.joblib
-threshold_config: configs/threshold.yaml
 model_version: xgb_f5_capacity+sigmoid
 # Startup parity check against the frozen sample next to the artifact (G8).
 require_parity: true
-# Risk bands from docs/review_policy.md (validation, 200 reviews/day budget):
-# block at the 80 % precision bar; review down to the budget; approve the rest.
+# Production policy (docs/review_policy.md): block at bands.block (the 80 % precision
+# bar on validation); review the highest remaining scores up to the analyst budget
+# (rank policy) or down to bands.review (threshold policy); approve the rest.
+# The evaluation threshold 0.08 (ADR 0006, configs/threshold.yaml) is reporting
+# material only and is not served.
 bands:
   review: 0.062
   block: 0.42

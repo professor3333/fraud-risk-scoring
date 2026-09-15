@@ -137,6 +137,7 @@ let lastFile = null;
 $("file").onchange = () => { $("score").disabled = !$("file").files.length; };
 $("score").onclick = () => upload($("file").files[0]);
 $("sample").onclick = async () => {
+  $("budget").value = 25;  // 200 synthetic rows: a small capacity shows all three actions
   const blob = await (await fetch("/sample.csv")).blob();
   upload(new File([blob], "sample_transactions.csv", {type: "text/csv"}));
 };

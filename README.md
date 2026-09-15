@@ -173,9 +173,9 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
-  implementing the rank-based review policy (block by threshold, review the
-  top-N remaining by analyst budget, approve the rest), `/model-info`;
-  startup parity check against a frozen golden.
+  returning one authoritative `action` (approve / review / block) from the
+  rank-based review policy, `/model-info`; startup parity check against a
+  frozen golden.
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
@@ -282,7 +282,7 @@ uv run uvicorn fraud.serve.app:app --port 8000
 # http://127.0.0.1:8000/        analyst dashboard: upload a CSV, get a ranked review queue
 # http://127.0.0.1:8000/single  one transaction as JSON
 # http://127.0.0.1:8000/docs    OpenAPI
-curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","threshold":0.08,"parity_rows":50}
+curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","parity_rows":50}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
        "card1":9500,"card4":"visa","card6":"debit","C1":1,"D1":120}'
@@ -291,12 +291,14 @@ curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
 Response:
 
 ```json
-{"transaction_id":3000001,"fraud_probability":0.1466,"decision":"decline","risk_level":"medium","action":"review","threshold":0.08,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
+{"transaction_id":3000001,"fraud_probability":0.1466,"risk_level":"medium","action":"review","model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
 ```
 
-`decision` is the single-threshold decline/approve (ADR 0006);
-`risk_level` / `action` are the three-band review policy (approve < 0.062,
-review < 0.42, block ≥ 0.42 — `docs/review_policy.md`).
+`action` is the one command for the payment system (approve / review /
+block) and `risk_level` its low / medium / high reading, from the review
+policy (`docs/review_policy.md`). The evaluation threshold 0.08 (ADR 0006)
+is reporting material and is not served — the API never returns two
+competing decisions.
 
 Any of the 393 transaction and 40 identity columns may be sent; unknown
 fields are rejected; `TransactionID`, `TransactionDT`, `TransactionAmt`,
@@ -334,18 +336,17 @@ actually reviewed), a table ranked by fraud probability with sort, filter
 (flagged / high / review / low) and transaction-id search, a row inspector
 showing every non-empty field, and a download of the ranked queue. Changing
 the capacity re-applies the policy to the same file. "Try the sample" loads a **synthetic** 200-row
-CSV (no Kaggle rows) with a few planted archetype transactions so all three
-bands appear.
+CSV (no Kaggle rows) with a few planted archetype transactions and sets the
+capacity to 25 so all three actions appear.
 
 **Model info** — what is being served:
 
 ```bash
 curl http://127.0.0.1:8000/model-info
-# {"model":"xgboost","experiment":"E022","version":"xgb_f5_capacity+sigmoid@7af85ec92813",
-#  "feature_set":"f5_interactions","n_inputs":439,"primary_metric":"pr_auc",
-#  "validation_pr_auc":0.6367,"test_pr_auc":0.561,"calibration":"sigmoid","threshold":0.08,
-#  "bands":{"review":0.062,"block":0.42},"training_window_days":[1,122],
-#  "validation_window_days":[123,152],"parity_rows":50}
+# {"model":"xgboost","default_policy":"rank","default_review_budget":200,"experiment":"E022","version":"xgb_f5_capacity+sigmoid@7af85ec92813",
+#  "feature_set":"f5_interactions","n_inputs":439,"primary_metric":"pr_auc","validation_pr_auc":0.6367,"test_pr_auc":0.561,
+#  "calibration":"sigmoid","bands":{"review":0.062,"block":0.42},
+#  "training_window_days":[1,122],"validation_window_days":[123,152],"parity_rows":50}
 ```
 
 **Docker:**

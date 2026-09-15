@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Review Queue</title>
+<style>
+  :root { --ink:#0b0b0b; --muted:#52514e; --line:#d9d8d3; --blue:#2a78d6; --orange:#eb6834; --aqua:#1baf7a; --bg:#fcfcfb; --surface:#fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px 16px; font:14px/1.45 system-ui,sans-serif; color:var(--ink); background:var(--bg); }
+  main { max-width:1100px; margin:0 auto; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
+  h1 { font-size:20px; margin:0; }
+  header small { color:var(--muted); }
+  a { color:var(--blue); }
+  .upload { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; border:1px dashed var(--line); border-radius:8px; background:var(--surface); }
+  .upload input[type=file] { font:inherit; }
+  button { font:inherit; padding:7px 12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); cursor:pointer; }
+  button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+  button:disabled { opacity:.5; cursor:default; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:14px 0; }
+  .tile { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tile .label { color:var(--muted); font-size:12px; }
+  .tile .value { font-size:24px; font-weight:600; margin-top:2px; }
+  .tile .sub { color:var(--muted); font-size:12px; }
+  .tile.block .value { color:var(--orange); }
+  .tile.review .value { color:#c98500; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+  .controls label { color:var(--muted); }
+  select, input[type=search] { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
+  .tablewrap { overflow-x:auto; background:var(--surface); border:1px solid var(--line); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { text-align:left; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; position:sticky; top:0; background:var(--surface); }
+  th.num, td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:hover td { background:#f5f5f2; cursor:pointer; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; font-weight:600; }
+  .badge.high { background:#fde8e0; color:#b23a12; }
+  .badge.medium { background:#fff3d6; color:#8a5a00; }
+  .badge.low { background:#e3eefb; color:#1b4f9c; }
+  .bar { display:inline-block; width:70px; height:8px; background:var(--line); border-radius:4px; vertical-align:middle; margin-left:6px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--blue); }
+  .empty { padding:28px; text-align:center; color:var(--muted); }
+  .error { color:#b23a12; margin:8px 0; }
+  /* inspector */
+  #inspect { position:fixed; inset:0; background:rgba(11,11,11,.35); display:none; align-items:flex-start; justify-content:center; padding:24px 12px; overflow:auto; }
+  #inspect.open { display:flex; }
+  .panel { background:var(--surface); border-radius:10px; max-width:720px; width:100%; padding:16px 18px; }
+  .panel h2 { margin:0 0 4px; font-size:17px; }
+  .panel .meta { color:var(--muted); margin-bottom:10px; }
+  .kv { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:4px 14px; font-size:12.5px; max-height:55vh; overflow:auto; }
+  .kv div { border-bottom:1px solid var(--line); padding:3px 0; display:flex; justify-content:space-between; gap:8px; }
+  .kv b { color:var(--muted); font-weight:500; }
+  .panel .close { float:right; }
+  @media (max-width:600px) { th:nth-child(6), td:nth-child(6), th:nth-child(7), td:nth-child(7) { display:none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Fraud review queue</h1><small id="model">loading model info…</small></div>
+    <small><a href="/single">single transaction</a> · <a href="/docs">API</a></small>
+  </header>
+
+  <div class="upload">
+    <input id="file" type="file" accept=".csv,text/csv">
+    <button id="score" class="primary" disabled>Score CSV</button>
+    <button id="sample">Try the sample</button>
+    <small>Upload a CSV with the IEEE-CIS column names (up to 5,000 rows). Extra columns are ignored; a fraud label, if present, is ignored too. <a href="/sample.csv">sample.csv</a> is synthetic.</small>
+  </div>
+  <div id="error" class="error" hidden></div>
+
+  <div class="tiles" id="tiles" hidden>
+    <div class="tile"><div class="label">Transactions analysed</div><div class="value" id="t-n">—</div><div class="sub" id="t-ignored"></div></div>
+    <div class="tile"><div class="label">Flagged (review + block)</div><div class="value" id="t-flagged">—</div><div class="sub" id="t-flagged-pct"></div></div>
+    <div class="tile block"><div class="label">High risk (block)</div><div class="value" id="t-high">—</div><div class="sub">p ≥ <span id="t-block"></span></div></div>
+    <div class="tile review"><div class="label">Review</div><div class="value" id="t-review">—</div><div class="sub">p ≥ <span id="t-reviewt"></span></div></div>
+    <div class="tile"><div class="label">Average fraud probability</div><div class="value" id="t-avg">—</div><div class="sub">calibrated</div></div>
+  </div>
+
+  <div class="controls" id="controls" hidden>
+    <label>Show</label>
+    <select id="filter">
+      <option value="all">all</option>
+      <option value="flagged">flagged (review + block)</option>
+      <option value="high">high risk only</option>
+      <option value="medium">review only</option>
+      <option value="low">low risk only</option>
+    </select>
+    <input id="search" type="search" placeholder="transaction id">
+    <span id="shown" style="color:var(--muted)"></span>
+    <span style="flex:1"></span>
+    <button id="download">Download ranked CSV</button>
+  </div>
+
+  <div class="tablewrap">
+    <table id="table">
+      <thead><tr>
+        <th data-key="rank" class="num">#</th>
+        <th data-key="transaction_id">Transaction</th>
+        <th data-key="fraud_probability" class="num">Fraud probability</th>
+        <th data-key="risk_level">Risk</th>
+        <th data-key="action">Action</th>
+        <th data-key="amount" class="num">Amount</th>
+        <th data-key="product">Product</th>
+        <th data-key="card_type">Card</th>
+        <th data-key="has_identity">Identity</th>
+      </tr></thead>
+      <tbody><tr><td colspan="9" class="empty">Upload a CSV or try the sample to build the queue.</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<div id="inspect" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="panel">
+    <button class="close" onclick="document.getElementById('inspect').classList.remove('open')">close</button>
+    <h2 id="i-title"></h2>
+    <div class="meta" id="i-meta"></div>
+    <div class="kv" id="i-kv"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let rows = [], summary = null, sortKey = "rank", sortDir = 1;
+const riskOrder = {high: 3, medium: 2, low: 1};
+const fmt = (p) => p.toFixed(4);
+const pct = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "";
+
+fetch("/model-info").then(r => r.json()).then(m => {
+  $("model").textContent = `${m.model} · ${m.experiment} · ${m.version} · validation PR-AUC ${m.validation_pr_auc} · test ${m.test_pr_auc}`;
+}).catch(() => { $("model").textContent = "model info unavailable"; });
+
+$("file").onchange = () => { $("score").disabled = !$("file").files.length; };
+$("score").onclick = () => upload($("file").files[0]);
+$("sample").onclick = async () => {
+  const blob = await (await fetch("/sample.csv")).blob();
+  upload(new File([blob], "sample_transactions.csv", {type: "text/csv"}));
+};
+
+async function upload(file) {
+  $("error").hidden = true; $("score").disabled = true;
+  const form = new FormData(); form.append("file", file);
+  const r = await fetch("/predict/csv", {method: "POST", body: form});
+  $("score").disabled = !$("file").files.length;
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({detail: r.statusText}));
+    $("error").textContent = "Rejected: " + (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail));
+    $("error").hidden = false; return;
+  }
+  const j = await r.json();
+  rows = j.rows; summary = j.summary;
+  renderTiles(); $("controls").hidden = false; sortKey = "rank"; sortDir = 1; render();
+}
+
+function renderTiles() {
+  const s = summary;
+  $("tiles").hidden = false;
+  $("t-n").textContent = s.analysed.toLocaleString();
+  $("t-ignored").textContent = s.ignored_columns.length ? `${s.ignored_columns.length} column(s) ignored: ${s.ignored_columns.slice(0, 4).join(", ")}${s.ignored_columns.length > 4 ? "…" : ""}` : "";
+  $("t-flagged").textContent = s.flagged.toLocaleString();
+  $("t-flagged-pct").textContent = pct(s.flagged, s.analysed) + " of analysed";
+  $("t-high").textContent = s.high_risk.toLocaleString();
+  $("t-review").textContent = s.review.toLocaleString();
+  $("t-block").textContent = s.bands.block; $("t-reviewt").textContent = s.bands.review;
+  $("t-avg").textContent = fmt(s.average_fraud_probability);
+}
+
+function visible() {
+  const f = $("filter").value, q = $("search").value.trim();
+  let out = rows.filter(r => f === "all" || (f === "flagged" && r.action !== "approve") || r.risk_level === f);
+  if (q) out = out.filter(r => String(r.transaction_id).includes(q));
+  const key = sortKey;
+  out.sort((a, b) => {
+    let x = a[key], y = b[key];
+    if (key === "risk_level") { x = riskOrder[x]; y = riskOrder[y]; }
+    if (typeof x === "string") return sortDir * x.localeCompare(String(y));
+    return sortDir * ((x > y) - (x < y));
+  });
+  return out;
+}
+
+function render() {
+  const tbody = $("table").querySelector("tbody"); tbody.innerHTML = "";
+  const out = visible();
+  $("shown").textContent = `${out.length.toLocaleString()} of ${rows.length.toLocaleString()} shown`;
+  if (!out.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">Nothing matches the filter.</td></tr>'; return; }
+  const frag = document.createDocumentFragment();
+  for (const r of out) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="num">${r.rank}</td><td>${r.transaction_id}</td>
+      <td class="num">${fmt(r.fraud_probability)}<span class="bar"><i style="width:${Math.min(100, r.fraud_probability * 100)}%"></i></span></td>
+      <td><span class="badge ${r.risk_level}">${r.risk_level === "medium" ? "review" : r.risk_level}</span></td>
+      <td>${r.action}</td><td class="num">${r.amount.toFixed(2)}</td><td>${r.product}</td><td>${r.card_type ?? "—"}</td><td>${r.has_identity ? "yes" : "no"}</td>`;
+    tr.onclick = () => inspect(r);
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+  document.querySelectorAll("th").forEach(th => th.textContent = th.textContent.replace(/ [▲▼]$/, "") + (th.dataset.key === sortKey ? (sortDir > 0 ? " ▲" : " ▼") : ""));
+}
+
+document.querySelectorAll("th").forEach(th => th.onclick = () => {
+  const k = th.dataset.key;
+  if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = (k === "fraud_probability" || k === "risk_level" || k === "amount") ? -1 : 1; }
+  render();
+});
+$("filter").onchange = render; $("search").oninput = render;
+
+function inspect(r) {
+  $("i-title").textContent = `Transaction ${r.transaction_id} — ${r.action.toUpperCase()} (${r.risk_level} risk)`;
+  $("i-meta").textContent = `fraud probability ${fmt(r.fraud_probability)} · rank ${r.rank} of ${rows.length} · amount ${r.amount.toFixed(2)} · product ${r.product}`;
+  const kv = $("i-kv"); kv.innerHTML = "";
+  const keys = Object.keys(r.details).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+  for (const k of keys) { const d = document.createElement("div"); d.innerHTML = `<b>${k}</b><span>${r.details[k]}</span>`; kv.appendChild(d); }
+  $("inspect").classList.add("open");
+}
+
+$("download").onclick = () => {
+  const out = visible();
+  const header = ["rank", "transaction_id", "fraud_probability", "risk_level", "action", "amount", "product", "card_type", "has_identity"];
+  const csv = [header.join(","), ...out.map(r => header.map(h => r[h] ?? "").join(","))].join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"})); a.download = "ranked_transactions.csv"; a.click();
+};
+</script>
+</body>
+</html>

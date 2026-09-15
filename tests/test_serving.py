@@ -145,7 +145,7 @@ def test_bad_input_is_rejected_with_a_useful_body(
 def test_index_page_is_served(client: TestClient) -> None:
     r = client.get("/")
     assert r.status_code == 200
-    assert "Fraud Risk Scoring" in r.text and "/predict" in r.text
+    assert "Fraud review queue" in r.text and "/predict/csv" in r.text
 
 
 @pytest.mark.slow
@@ -212,3 +212,51 @@ def test_model_info(client: TestClient) -> None:
     assert body["threshold"] == THRESHOLD
     assert body["bands"] == {"review": 0.062, "block": 0.42}
     assert body["n_inputs"] > 400 and body["parity_rows"] == 10
+
+
+def test_csv_upload_scores_ranks_and_summarises(client: TestClient, served: dict[str, Any]) -> None:
+    rows: pd.DataFrame = served["rows"].head(30)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).assign(extra_col=1)
+    r = client.post("/predict/csv", files={"file": ("q.csv", csv.to_csv(index=False), "text/csv")})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    s = body["summary"]
+    assert s["analysed"] == 30 and s["ignored_columns"] == ["extra_col"]
+    assert s["flagged"] == s["review"] + s["high_risk"]
+    assert s["approve"] + s["flagged"] == 30
+    probs = [x["fraud_probability"] for x in body["rows"]]
+    assert probs == sorted(probs, reverse=True)
+    assert [x["rank"] for x in body["rows"]] == list(range(1, 31))
+    # CSV path == request path, row by row (the two frame builders agree)
+    single = {
+        p["TransactionID"]: client.post("/predict", json=p).json()
+        for p in (_payload(row) for _, row in rows.iterrows())
+    }
+    for x in body["rows"]:
+        assert x["fraud_probability"] == pytest.approx(
+            single[x["transaction_id"]]["fraud_probability"], abs=1e-9
+        )
+        assert "TransactionAmt" in x["details"] and "isFraud" not in x["details"]
+
+
+def test_csv_upload_rejects_bad_files(client: TestClient, served: dict[str, Any]) -> None:
+    rows: pd.DataFrame = served["rows"].head(3).drop(columns=[schema.TARGET_COL])
+    r = client.post("/predict/csv", files={"file": ("q.csv", "", "text/csv")})
+    assert r.status_code == 422
+    no_amount = rows.drop(columns=["TransactionAmt"]).to_csv(index=False)
+    r = client.post("/predict/csv", files={"file": ("q.csv", no_amount, "text/csv")})
+    assert r.status_code == 422 and "TransactionAmt" in r.text
+    bad_number = rows.astype("str")
+    bad_number.loc[bad_number.index[0], "card2"] = "abc"
+    text = bad_number.to_csv(index=False)
+    r = client.post("/predict/csv", files={"file": ("q.csv", text, "text/csv")})
+    assert r.status_code == 422 and "card2" in r.text
+
+
+def test_dashboard_and_sample_are_served(client: TestClient) -> None:
+    assert "Fraud review queue" in client.get("/").text
+    assert "/predict" in client.get("/single").text
+    r = client.get("/sample.csv")
+    assert r.status_code == 200 and r.text.startswith("TransactionID,")
+    scored = client.post("/predict/csv", files={"file": ("s.csv", r.content, "text/csv")})
+    assert scored.status_code == 200 and scored.json()["summary"]["analysed"] == 200

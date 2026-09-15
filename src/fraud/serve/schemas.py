@@ -100,3 +100,34 @@ class ModelInfoResponse(BaseModel):
     training_window_days: tuple[int, int]
     validation_window_days: tuple[int, int]
     parity_rows: int
+
+
+class ScoredRow(BaseModel):
+    rank: int
+    transaction_id: int
+    fraud_probability: float
+    risk_level: RiskLevel
+    action: Action
+    amount: float
+    product: str
+    card_type: str | None
+    has_identity: bool
+    details: dict[str, str | float | int | bool]  # the non-empty fields, for inspection
+
+
+class CsvSummary(BaseModel):
+    analysed: int
+    flagged: int  # review + block
+    high_risk: int  # block
+    review: int
+    approve: int
+    average_fraud_probability: float
+    ignored_columns: list[str]
+    model_version: str
+    threshold: float
+    bands: Bands
+
+
+class CsvPredictionResponse(BaseModel):
+    summary: CsvSummary
+    rows: list[ScoredRow]  # ranked, highest risk first

@@ -173,14 +173,18 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict` (probability + decision + risk band
-  + action), `/predict/batch` (ranked queue, up to 1,000), `/model-info`,
-  demo page at `/`; startup parity check against a frozen golden; Dockerfile.
+  + action), `/predict/batch` (ranked, up to 1,000), `/predict/csv` (upload,
+  up to 5,000), `/model-info`; startup parity check against a frozen golden.
+- Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
+  sort / filter / search, row inspector, ranked-CSV download; single-
+  transaction form at `/single`. Dockerfile.
 - 63 fixture-based tests (no data, no network) + 3 slow real-data tests.
 
 ## Tech stack
 
 Python 3.12 · uv · pandas 3 · scikit-learn · XGBoost 3 · MLflow 3 (SQLite)
-· FastAPI + Pydantic + uvicorn · matplotlib · pytest · ruff · mypy · Docker.
+· FastAPI + Pydantic + uvicorn · a dependency-free HTML/JS dashboard ·
+matplotlib · pytest · ruff · mypy · Docker.
 
 ## Project structure
 
@@ -204,7 +208,8 @@ src/fraud/
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV)
   evaluate/       metrics, curves, calibration, threshold, importance
-  serve/          app, schemas, frames, parity (frozen-golden check), static/index.html
+  serve/          app, schemas, frames, parity (frozen-golden check),
+                  static/ (dashboard.html, index.html, synthetic sample CSV)
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
 ```
@@ -221,7 +226,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 83 tests on the synthetic fixture; no data needed
+uv run pytest            # 86 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -270,7 +275,9 @@ writes `models/<run_name>.joblib` and an MLflow run.
 
 ```bash
 uv run uvicorn fraud.serve.app:app --port 8000
-# then open http://127.0.0.1:8000/  (demo page, single or batch)  ·  http://127.0.0.1:8000/docs  (OpenAPI)
+# http://127.0.0.1:8000/        analyst dashboard: upload a CSV, get a ranked review queue
+# http://127.0.0.1:8000/single  one transaction as JSON
+# http://127.0.0.1:8000/docs    OpenAPI
 curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","threshold":0.08,"parity_rows":50}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
@@ -301,6 +308,17 @@ curl -X POST http://127.0.0.1:8000/predict/batch -H 'content-type: application/j
 # {"n":3,"ranked":[{"rank":1,"transaction_id":…,"fraud_probability":0.1466,"risk_level":"medium","action":"review",…},…],
 #  "counts":{"approve":0,"review":3,"block":0}}
 ```
+
+**Analyst dashboard** (`/`): upload a CSV of transactions with the IEEE-CIS
+column names (up to 5,000 rows; extra columns such as a label are ignored and
+reported). The server scores it in one pass through the same input path the
+parity check uses (`POST /predict/csv`) and the page shows summary tiles —
+analysed, flagged, high-risk, review, average probability — a table ranked by
+fraud probability with sort, filter (flagged / high / review / low) and
+transaction-id search, a row inspector showing every non-empty field, and a
+download of the ranked queue. "Try the sample" loads a **synthetic** 200-row
+CSV (no Kaggle rows) with a few planted archetype transactions so all three
+bands appear.
 
 **Model info** — what is being served:
 
@@ -356,7 +374,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 83 fixture tests, no data, no network, ~10 s
+uv run pytest              # 86 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

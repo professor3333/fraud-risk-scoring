@@ -113,6 +113,16 @@ model at the same score); removing all of Vesta's engineered families
 summaries carry the model; the work here adds a few points on top and shows
 the largest provider block is optional once entity frequency is modelled.
 
+**What fools the model** (`docs/error_analysis.md`, from `reports/final/`).
+The confident false positives are the fraud archetype performed by real
+customers — new card, product `C`, no billing address, self-addressed
+e-mail — indistinguishable row by row (hence review, not block). The
+confident false negatives are fraud that looks like everyone else: two
+thirds share an account with other labelled fraud (label propagation, not
+recoverable at authorization) and the rest are established cards used for
+the mainstream product (recoverable only through per-entity deviation
+features on that slice).
+
 **From probability to action** (`docs/review_policy.md`). With three
 actions — block when the calibrated probability is ≥ 0.42 (four in five
 such transactions are fraud on validation), review the next-highest scores
@@ -168,13 +178,13 @@ data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
-                  model_card.md
+                  error_analysis.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
-                  threshold, ablation, test
+                  threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   learning_curve, calibrate, select_threshold, review_policy,
-                  ablation, feature_ladder, evaluate_test, split_comparison,
-                  make_fixture_artifact
+                  ablation, feature_ladder, evaluate_test, final_report,
+                  split_comparison, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -232,6 +242,7 @@ uv run python scripts/select_threshold.py --run-name xgb_f5_interactions
 uv run python scripts/review_policy.py --run-name xgb_f5_interactions --with-test
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
 uv run python scripts/evaluate_test.py --run-name xgb_f5_interactions          # once per candidate
+uv run python scripts/final_report.py --run-name xgb_f5_interactions           # reports/final/ + error table
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
 ```
 

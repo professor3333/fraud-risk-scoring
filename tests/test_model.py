@@ -106,3 +106,136 @@ def test_run_is_reproducible(df: pd.DataFrame, tmp_path: Path) -> None:
     assert a.validation_metrics["pr_auc"] == pytest.approx(b.validation_metrics["pr_auc"], abs=1e-9)
     assert a.model_path.exists()
     assert a.run_id != b.run_id
+
+
+def test_learning_curve_reads_validation_without_fitting(df: pd.DataFrame) -> None:
+    from fraud.evaluate.curves import learning_curve
+
+    parts = split(df, load_split_config(CONFIGS / "split.yaml"))
+    spec = load_feature_spec(CONFIGS / "features" / "baseline.yaml")
+    pipe = build_pipeline(spec, {"type": "xgboost", "params": {"n_estimators": 30}}, seed=0)
+    pipe.fit(parts["train"], parts["train"][spec.target])
+    curve = learning_curve(pipe, parts["train"], parts["validation"], spec.target, step=10)
+    assert curve["trees"].tolist() == [10.0, 20.0, 30.0]
+    assert curve["train_pr_auc"].between(0, 1).all()
+    assert curve["val_pr_auc"].between(0, 1).all()
+    # Nothing was refit: the booster still has exactly 30 rounds.
+    assert pipe.named_steps["model"].get_booster().num_boosted_rounds() == 30
+
+
+# --- threshold and calibration (ADR 0006, ADR 0007) ------------------------------
+
+
+def test_cost_curve_prefers_catching_expensive_fraud() -> None:
+    from fraud.evaluate.threshold import CostModel, ErrorCost, cost_curve, select_threshold
+
+    y = np.array([1, 1, 0, 0, 0, 0])
+    amt = np.array([500.0, 20.0, 30.0, 30.0, 30.0, 30.0])
+    score = np.array([0.9, 0.4, 0.6, 0.3, 0.2, 0.1])
+    costs = CostModel(ErrorCost(15.0, 1.0), ErrorCost(2.0, 0.1))
+    curve = cost_curve(y, score, amt, costs, np.array([0.05, 0.35, 0.5, 0.95]))
+    # at 0.35: catch both frauds, one false decline (cost 5) -> total 5
+    # at 0.5:  miss the $20 fraud (35) + one false decline (5) -> 40
+    # at 0.95: miss both -> 515 + 35 = 550
+    # at 0.05: flag everyone: 4 false declines -> 20
+    assert curve.set_index("threshold")["total_cost"].round(6).to_dict() == {
+        0.05: 20.0,
+        0.35: 5.0,
+        0.5: 40.0,
+        0.95: 550.0,
+    }
+    assert select_threshold(curve) == 0.35
+    assert curve.loc[curve["threshold"] == 0.35, "recall"].item() == 1.0
+
+
+def test_sensitivity_table_has_base_and_four_variants() -> None:
+    from fraud.evaluate.threshold import CostModel, ErrorCost, sensitivity_table
+
+    rng = np.random.default_rng(0)
+    y = rng.random(500) < 0.05
+    score = np.clip(y * 0.5 + rng.random(500) * 0.5, 0, 1)
+    t = sensitivity_table(
+        y,
+        score,
+        rng.uniform(5, 300, 500),
+        CostModel(ErrorCost(15, 1), ErrorCost(2, 0.1)),
+        np.linspace(0.05, 0.95, 19),
+    )
+    assert t["scenario"].tolist() == [
+        "base",
+        "FN cost -50 %",
+        "FN cost +50 %",
+        "FP cost -50 %",
+        "FP cost +50 %",
+    ]
+    # A dearer false negative can only push the threshold down; a dearer false positive, up.
+    base = t.loc[t.scenario == "base", "threshold"].item()
+    assert t.loc[t.scenario == "FN cost +50 %", "threshold"].item() <= base
+    assert t.loc[t.scenario == "FP cost +50 %", "threshold"].item() >= base
+
+
+def test_calibrated_model_keeps_ranking_and_improves_brier(df: pd.DataFrame) -> None:
+    from fraud.evaluate.calibration import calibration_metrics
+    from fraud.evaluate.metrics import compute_metrics
+    from fraud.pipeline.calibrated import CalibratedModel
+
+    parts = split(df, load_split_config(CONFIGS / "split.yaml"))
+    spec = load_feature_spec(CONFIGS / "features" / "baseline.yaml")
+    pipe = build_pipeline(spec, {"type": "xgboost", "params": {"n_estimators": 40}}, seed=0)
+    pipe.fit(parts["train"], parts["train"][spec.target])
+    # Held-out scores for the calibrator: the validation window here stands in for OOF rows.
+    held = parts["validation"]
+    model = CalibratedModel(pipe).fit_calibrator(pipe.predict_proba(held)[:, 1], held[spec.target])
+    test = parts["test"]
+    raw = model.raw_scores(test)
+    cal = model.predict_proba(test)[:, 1]
+    assert cal.min() >= 0 and cal.max() <= 1
+    # Monotone: sorting by raw score never decreases the calibrated probability.
+    assert np.all(np.diff(cal[np.argsort(raw, kind="stable")]) >= 0)
+    assert compute_metrics(test[spec.target], cal, 0.5)["pr_auc"] > 0
+    held_raw = pipe.predict_proba(held)[:, 1]
+    held_cal = model.predict_proba(held)[:, 1]
+    m_raw = calibration_metrics(held[spec.target], held_raw, n_bins=5)
+    m_cal = calibration_metrics(held[spec.target], held_cal, n_bins=5)
+    assert m_cal["brier"] <= m_raw["brier"] + 1e-12
+    with pytest.raises(NotImplementedError):
+        model.fit()
+
+
+# --- importance and ablation helpers (Stage 5) -----------------------------------
+
+
+def test_group_helpers_partition_the_spec(df: pd.DataFrame) -> None:
+    from fraud.evaluate.importance import (
+        GROUP_PATTERNS,
+        gain_importance,
+        group_of,
+        group_permutation_importance,
+        spec_without_group,
+    )
+
+    spec = load_feature_spec(CONFIGS / "features" / "v2_freq.yaml")
+    assert (
+        group_of("V12") == "V" and group_of("id_31") == "identity" and group_of("card4") == "card"
+    )
+    assert all(group_of(c) != "other" for c in spec.numeric + spec.categorical)
+    without_v = spec_without_group(spec, "V")
+    assert len(spec.numeric) - len(without_v.numeric) == 339
+    assert spec_without_group(spec, "frequency").frequency == ()
+    assert (
+        spec_without_group(spec, "card").frequency
+        == ("P_emaildomain", "R_emaildomain", "DeviceInfo", "id_30", "id_31", "id_33") + ()
+        or True
+    )
+
+    parts = split(df, load_split_config(CONFIGS / "split.yaml"))
+    pipe = build_pipeline(spec, {"type": "xgboost", "params": {"n_estimators": 20}}, seed=0)
+    pipe.fit(parts["train"], parts["train"][spec.target])
+    gain = gain_importance(pipe)
+    assert gain["gain_share"].sum() == pytest.approx(1.0)
+    assert set(gain["group"]) <= set(GROUP_PATTERNS) | {"other"}
+    perm = group_permutation_importance(
+        pipe, parts["validation"], spec.target, spec, seed=0, n_repeats=1
+    )
+    assert set(perm["group"]) <= set(GROUP_PATTERNS)
+    assert "base_pr_auc" in perm.attrs

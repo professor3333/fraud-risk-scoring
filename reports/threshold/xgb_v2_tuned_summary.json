@@ -1,0 +1,33 @@
+{
+  "chosen_threshold_validation": 0.08,
+  "chosen_threshold_oof_crosscheck": 0.085,
+  "at_chosen": {
+    "threshold": 0.08,
+    "total_cost": 227214.23350000003,
+    "precision": 0.3352053915275995,
+    "recall": 0.7243411927877947,
+    "f1": 0.4583150504607284
+  },
+  "at_oof_choice_on_validation": {
+    "threshold": 0.085,
+    "total_cost": 227998.04490000004,
+    "precision": 0.34992329981251064,
+    "recall": 0.7118585298196949,
+    "f1": 0.4692035195977603
+  },
+  "at_0.5": {
+    "threshold": 0.5,
+    "total_cost": 328071.18639999995,
+    "precision": 0.8381294964028777,
+    "recall": 0.4039528432732316,
+    "f1": 0.5451567618156293
+  },
+  "at_f1_optimum": {
+    "threshold": 0.28,
+    "total_cost": 278523.47860000003,
+    "precision": 0.6923438233912635,
+    "recall": 0.5110957004160888,
+    "f1": 0.5880710153600639
+  },
+  "cost_no_model_approve_all": 485742.26
+}

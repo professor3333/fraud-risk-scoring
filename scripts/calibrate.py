@@ -73,49 +73,64 @@ def main() -> None:
     oof_df = pd.concat(oof, ignore_index=True)
 
     pipeline = joblib.load(args.models_dir / f"{cfg.run_name}.joblib")
-    model = CalibratedModel(pipeline).fit_calibrator(oof_df["score"], oof_df["y"])
-
-    raw = model.raw_scores(val)
-    cal = model.predict_proba(val)[:, 1]
     y = val[spec.target].to_numpy()
-    raw_m, cal_m = calibration_metrics(y, raw), calibration_metrics(y, cal)
-    rank_raw, rank_cal = (
-        compute_metrics(y, raw, 0.5)["pr_auc"],
-        compute_metrics(y, cal, 0.5)["pr_auc"],
-    )
-    # Isotonic steps tie some scores, so ranking metrics may move slightly; large moves are a bug.
-    if abs(rank_raw - rank_cal) > 0.01:
-        raise RuntimeError(f"calibration changed the ranking too much: {rank_raw} vs {rank_cal}")
+    raw = pipeline.predict_proba(val)[:, 1]
+    raw_m = calibration_metrics(y, raw)
+    rank_raw = compute_metrics(y, raw, 0.5)["pr_auc"]
+
+    candidates: dict[str, CalibratedModel] = {}
+    results: dict[str, dict[str, float]] = {"raw": {**raw_m, "val_pr_auc": rank_raw}}
+    tables = {"raw": reliability_table(y, raw)}
+    for method in ("sigmoid", "isotonic"):
+        m = CalibratedModel(pipeline, method=method).fit_calibrator(oof_df["score"], oof_df["y"])
+        cal = m.calibrate_scores(raw)
+        results[method] = {
+            **calibration_metrics(y, cal),
+            "val_pr_auc": compute_metrics(y, cal, 0.5)["pr_auc"],
+        }
+        tables[method] = reliability_table(y, cal)
+        candidates[method] = m
+
+    # ADR 0007 rule: better Brier and ECE than raw, and PR-AUC within 0.01 of raw.
+    passing = [
+        m
+        for m in ("sigmoid", "isotonic")
+        if results[m]["brier"] < raw_m["brier"]
+        and results[m]["ece"] < raw_m["ece"]
+        and abs(results[m]["val_pr_auc"] - rank_raw) <= 0.01
+    ]
+    chosen = min(passing, key=lambda m: results[m]["brier"]) if passing else None
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     oof_df.to_csv(args.out_dir / f"{cfg.run_name}_oof.csv", index=False)
-    tables = {"raw": reliability_table(y, raw), "isotonic (OOF-fit)": reliability_table(y, cal)}
     fig = plot_reliability(tables, f"{cfg.run_name} / validation")
     fig.savefig(args.out_dir / f"{cfg.run_name}_reliability.png", dpi=120)
-    summary = {
-        "raw": raw_m,
-        "calibrated": cal_m,
-        "val_pr_auc_raw": rank_raw,
-        "val_pr_auc_calibrated": rank_cal,
-        "n_oof": int(len(oof_df)),
-    }
+    summary = {"results": results, "chosen": chosen, "n_oof": int(len(oof_df))}
     (args.out_dir / f"{cfg.run_name}_summary.json").write_text(json.dumps(summary, indent=2))
-    out_model = args.models_dir / f"{cfg.run_name}_calibrated.joblib"
-    joblib.dump(model, out_model)
 
     mlflow.set_tracking_uri(args.tracking_uri)
     mlflow.set_experiment("fraud-calibration")
-    with mlflow.start_run(run_name=f"{cfg.run_name}_isotonic"):
+    with mlflow.start_run(run_name=f"{cfg.run_name}_calibration"):
         mlflow.log_params(
-            {"git_commit": git_commit(), "base_run_name": cfg.run_name, "n_oof": len(oof_df)}
+            {
+                "git_commit": git_commit(),
+                "base_run_name": cfg.run_name,
+                "n_oof": len(oof_df),
+                "chosen": str(chosen),
+            }
         )
-        mlflow.log_metrics({f"raw_{k}": v for k, v in raw_m.items()})
-        mlflow.log_metrics({f"cal_{k}": v for k, v in cal_m.items()})
+        for name, m in results.items():
+            mlflow.log_metrics({f"{name}_{k}": v for k, v in m.items()})
         mlflow.log_artifacts(str(args.out_dir), "calibration")
-        mlflow.log_artifact(str(out_model), "model")
+        if chosen is not None:
+            out_model = args.models_dir / f"{cfg.run_name}_calibrated.joblib"
+            joblib.dump(candidates[chosen], out_model)
+            mlflow.log_artifact(str(out_model), "model")
+            print(f"saved {out_model} ({chosen})")
+        else:
+            print("no calibration method passed the ADR 0007 rule; raw scores stay")
 
     print(json.dumps(summary, indent=2))
-    print(f"saved {out_model}")
 
 
 if __name__ == "__main__":

@@ -25,8 +25,8 @@ Stage checklist. Each stage is a working system before the next begins.
 - [ ] Tuning run compared to untuned
 
 ## Stage 4 — Threshold policy and calibration
-- [ ] Cost-model ADR, threshold document
-- [ ] Calibration evaluated (reliability diagram, Brier); applied only if needed
+- [x] Cost-model ADR, threshold document (threshold 0.08; `docs/threshold.md`)
+- [x] Calibration evaluated (reliability diagram, Brier); sigmoid applied (ADR 0007)
 
 ## Stage 5 — Ablation, importance, model card
 - [ ] Ablation per feature group; importance from two methods

@@ -42,12 +42,28 @@ Where to fit the calibrator matters more than which one:
 
 ## Decision
 
-**Isotonic regression fit on out-of-fold training-window scores, wrapped with
-the fitted pipeline as one served object (`fraud.pipeline.calibrated.
-CalibratedModel`).** Applied only if it improves Brier score and expected
-calibration error on the validation window without moving PR-AUC by more
-than 0.01; otherwise option 1 (raw score, labelled as such) and the reason
-recorded here.
+**A monotone map fit on out-of-fold training-window scores, wrapped with the
+fitted pipeline as one served object (`fraud.pipeline.calibrated.
+CalibratedModel`).** Two candidates are fit — isotonic (option 3) and Platt
+scaling on the logit of the score (option 2) — and one is applied only if it
+improves Brier score and expected calibration error on the validation window
+without moving PR-AUC by more than 0.01; among those that pass, the better
+Brier wins. If none passes: option 1 (raw score, labelled as such).
+
+**Outcome for `xgb_v2_tuned` (2026-09-15, `reports/calibration/`):** on
+190,160 out-of-fold rows and assessed on validation —
+
+| | Brier | ECE | validation PR-AUC |
+|---|---:|---:|---:|
+| raw | 0.01958 | 0.0073 | 0.6155 |
+| **sigmoid (chosen)** | 0.01921 | 0.0046 | 0.6155 |
+| isotonic | 0.01921 | 0.0037 | 0.6049 |
+
+Isotonic is marginally better calibrated but its steps tie enough scores to
+cost 0.011 PR-AUC, failing the rule; sigmoid is strictly monotone, so the
+ranking is untouched. The raw model under-predicts in the 1 – 10 % band
+(mean raw score 0.027 vs a 0.034 positive rate); the map corrects it. The
+prior's Brier is 0.0328, so the model explains about 41 % of the Brier score.
 
 Assessment on validation reports, for raw and calibrated: Brier score (and
 the prior's Brier as the floor), ECE over 15 quantile bins, and a reliability

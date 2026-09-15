@@ -59,7 +59,7 @@ def main() -> None:
     sens = sensitivity_table(y, p, amt, tcfg.costs, tcfg.thresholds)
 
     oof = pd.read_csv(ROOT / "reports" / "calibration" / f"{args.run_name}_oof.csv")
-    oof_p = model.calibrator_.predict(oof["score"].to_numpy())
+    oof_p = model.calibrate_scores(oof["score"].to_numpy())
     oof_curve = cost_curve(oof["y"], oof_p, oof["TransactionAmt"], tcfg.costs, tcfg.thresholds)
     oof_chosen = select_threshold(oof_curve)
 

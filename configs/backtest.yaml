@@ -1,0 +1,8 @@
+# Rolling temporal backtests with horizons (ADR 0008). Development data only:
+# every scored window must end by max_day (the reporting window starts at 153).
+experiment: fraud-backtest
+max_day: 152
+window_days: 30
+train_ends: [60, 90, 120]
+gaps: [0, 7, 14, 30, 60]
+robust_min_gap: 30        # the selection horizon: mean PR-AUC over gaps >= this

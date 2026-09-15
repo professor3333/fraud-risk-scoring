@@ -1,0 +1,20 @@
+# E023 candidate between E016 (depth 8, 800 trees) and E022 (depth 12, 1600):
+# depth 10, min_child_weight 5, 1200 trees. Feature set unchanged.
+experiment: fraud-xgboost
+run_name: xgb_f5_depth10
+features: configs/features/f5_interactions.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: xgboost
+  params:
+    n_estimators: 1200
+    learning_rate: 0.05
+    max_depth: 10
+    min_child_weight: 5
+    subsample: 0.8
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 1.0
+    eval_metric: aucpr
+    n_jobs: 8

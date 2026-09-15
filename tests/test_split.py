@@ -159,3 +159,42 @@ def test_fold_frames_are_strictly_ordered(frame: pd.DataFrame, cfg: SplitConfig)
     assert not fit[schema.ID_COL].isin(score[schema.ID_COL]).any()
     with pytest.raises(ValueError, match="ordered"):
         Fold(70, 63, 92)
+
+
+# --- rolling backtests (ADR 0008) ----------------------------------------------------
+
+
+def test_backtest_horizons_stay_inside_development_data() -> None:
+    from fraud.evaluate.backtest import horizons, load_backtest_config
+
+    cfg = load_backtest_config(CONFIGS / "backtest.yaml")
+    hs = horizons(cfg)
+    assert cfg.max_day == 152  # the reporting window (153-183) is never scored
+    assert all(h.end <= cfg.max_day for h in hs)
+    assert all(h.start == h.train_end + h.gap + 1 for h in hs)
+    assert all(h.end - h.start + 1 == cfg.window_days for h in hs)
+    assert {(h.train_end, h.gap) for h in hs} == {
+        (60, 0), (60, 7), (60, 14), (60, 30), (60, 60),
+        (90, 0), (90, 7), (90, 14), (90, 30),
+        (120, 0),
+    }  # fmt: skip
+    assert sum(h.gap >= cfg.robust_min_gap for h in hs) == 3
+
+
+def test_backtest_runs_on_fixture_and_summarises(frame: pd.DataFrame) -> None:
+    from fraud.evaluate.backtest import load_backtest_config, run_candidate, summarise
+    from fraud.features.columns import load_feature_spec
+
+    cfg = load_backtest_config(CONFIGS / "backtest.yaml")
+    spec = load_feature_spec(CONFIGS / "features" / "baseline.yaml")
+    table = run_candidate(
+        "fx", frame, spec, {"type": "xgboost", "params": {"n_estimators": 5}}, 0, cfg
+    )
+    assert len(table) == 10 and table["pr_auc"].between(0, 1).all()
+    assert (table["window"].str.split("-").str[1].astype(int) <= 152).all()
+    s = summarise(table, cfg.robust_min_gap).iloc[0]
+    assert (
+        s["n_windows"] == 10
+        and abs(s["decay"] - (s["adjacent_pr_auc"] - s["robust_pr_auc"])) < 1e-12
+    )
+    assert {"gap_0", "gap_7", "gap_14", "gap_30", "gap_60"} <= set(s.index)

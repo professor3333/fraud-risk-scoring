@@ -1,0 +1,14 @@
+# Monthly retraining lifecycle, simulated offline (scripts/retrain.py).
+model_config: configs/model/xgboost_f5_capacity.yaml   # the challenger's recipe
+month_days: 30
+# Cut-offs at which "a new month has arrived" and its labels are mature. The
+# reporting window (153-183) is excluded by default; --include-reporting-window
+# adds a cut-off at 183 and is logged as a test-window consultation (ADR 0002).
+cutoffs: [120, 150]
+# Out-of-fold folds for calibration, relative to the training end E = T - month_days:
+# fit on days <= E - k*month_days, score the following month, for k in ...
+calibration_folds: [2, 1]
+# Promotion: challenger must beat the incumbent on the validation month by at least
+# this PR-AUC margin (single seed; monthly windows have ~3k positives).
+promotion_margin: 0.005
+block_min_precision: 0.80

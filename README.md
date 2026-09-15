@@ -104,11 +104,15 @@ Final model (E022 + sigmoid calibration, threshold 0.08):
 | cost at 0.08 vs approve-all | 218k vs 487k (−55 %) | 275k vs 481k (−43 %) |
 
 The previous shipped model (E016) scored 0.619 / 0.557. E022's +0.017 on
-validation became +0.004 on the test month and its operating-point numbers
-moved slightly the other way: more capacity memorises the training window
-harder and transfers a little worse. It shipped because validation decides
-and test reports (`docs/experiments.md`); the open methodology item is a
-drift-aware validation horizon.
+validation became +0.004 on the test month, so the validation protocol was
+extended (ADR 0008, `docs/backtest.md`): rolling backtests with training
+cut-offs at days 60 / 90 / 120 scored 0–60 days out. Under it E022's edge
+over E016 halves with horizon (+0.013 adjacent → +0.006 at 60 days) but
+holds on every one of ten windows and every seed (+0.007 paired), so it
+stands on validation-only evidence. The same backtests put a number on
+staleness: a model one month older loses ~0.1 PR-AUC on the next month,
+and the offline retraining lifecycle (`scripts/retrain.py`,
+`docs/retraining.md`) promotes a fresh challenger by +0.125.
 
 A control experiment (E010) trains the same model on a random stratified
 split of the same rows: it reports validation PR-AUC **0.810** against the
@@ -168,7 +172,10 @@ columns carry 76 % of split gain but are almost fully substitutable
   content hashes, all hyperparameters, the full metric set, training time,
   PR and ROC curves, confusion matrix, gain importance and the fitted
   pipeline to MLflow; reasoning in `docs/EXPERIMENT_LOG.md`.
-- Expanding-window random search; post-hoc learning curves.
+- Expanding-window random search; one-axis sweeps; post-hoc learning
+  curves; rolling temporal backtests with forecast horizons (ADR 0008).
+- Monthly retraining lifecycle simulated offline: retrain → calibrate →
+  re-select block threshold → champion/challenger → promote → freeze.
 - Sigmoid / isotonic calibration on out-of-fold scores, chosen by rule.
 - Amount-weighted cost curve, sensitivity table, train-only cross-check;
   three-action review policy sized to an analyst budget.
@@ -197,21 +204,22 @@ matplotlib · pytest · ruff · mypy · Docker.
 
 ```
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
-                  tuning/*.yaml, threshold.yaml, policy.yaml, serving.yaml
+                  tuning/*.yaml, backtest.yaml, retrain.yaml, threshold.yaml,
+                  policy.yaml, serving.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0008), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
-                  deployment.md, monitoring.md, defending_the_decisions.md,
-                  model_card.md
+                  backtest.md, retraining.md, deployment.md, monitoring.md,
+                  defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
-                  learning_curve, calibrate, select_threshold, review_policy,
-                  freeze_artifact, monitor_reference, monitor, ablation,
-                  feature_ladder, evaluate_test, final_report, split_comparison,
-                  deploy_check, make_fixture_artifact
+                  backtest, retrain, learning_curve, calibrate, select_threshold,
+                  review_policy, freeze_artifact, monitor_reference, monitor,
+                  ablation, feature_ladder, evaluate_test, final_report,
+                  split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -238,7 +246,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 107 tests on the synthetic fixture; no data needed
+uv run pytest            # 106 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -268,6 +276,8 @@ uv run python scripts/train.py --model configs/model/xgboost_v2_tuned.yaml    # 
 uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yaml  # E016
 uv run python scripts/param_sweep.py --config configs/tuning/sweep.yaml           # E021, ~1 h
 uv run python scripts/train.py --model configs/model/xgboost_f5_capacity.yaml      # E022, shipped, ~4 min
+uv run python scripts/backtest.py --candidates configs/model/xgboost_f5_capacity.yaml  # ADR 0008 horizons, ~15 min
+uv run python scripts/retrain.py                                               # monthly lifecycle, ~20 min
 uv run python scripts/learning_curve.py --model models/xgb_v2_tuned.joblib
 uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_capacity.yaml
 uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
@@ -434,7 +444,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 107 fixture tests, no data, no network, ~30 s
+uv run pytest              # 106 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

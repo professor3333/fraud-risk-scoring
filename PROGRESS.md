@@ -40,4 +40,4 @@ Stage checklist. Each stage is a working system before the next begins.
 
 ## Current stage: **3 — Feature engineering + XGBoost**
 ADR 0004 written; E007 entity history rejected (no gain when restricted to legitimate computation).
-Next: tuning with time-ordered CV inside the training window, compared to E006.
+Next: Stage 4 — calibrate, choose the threshold, learning curves.

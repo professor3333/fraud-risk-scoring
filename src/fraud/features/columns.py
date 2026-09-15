@@ -28,6 +28,9 @@ class FeatureSpec:
     derived: tuple[str, ...] = ()
     frequency: tuple[str, ...] = ()
     history: bool = False
+    # One-hot levels seen fewer than this many times in training are grouped into one
+    # "infrequent" column, which also receives unseen levels at transform time. None = off.
+    rare_min_frequency: int | None = None
 
     @property
     def all_inputs(self) -> tuple[str, ...]:
@@ -48,6 +51,8 @@ def load_feature_spec(path: Path) -> FeatureSpec:
     derived = tuple(str(d) for d in raw.get("derived", []))
     frequency = tuple(str(c) for c in raw.get("frequency", []))
     history = bool(raw.get("history", False))
+    rare = raw.get("rare_min_frequency")
+    rare_min_frequency = None if rare is None else int(rare)
     spec = FeatureSpec(
         name=str(raw["name"]),
         target=str(raw["target"]),
@@ -58,6 +63,7 @@ def load_feature_spec(path: Path) -> FeatureSpec:
         derived=derived,
         frequency=frequency,
         history=history,
+        rare_min_frequency=rare_min_frequency,
     )
     forbidden = {spec.target, spec.id_col, spec.time_col}
     leaked = forbidden & set(spec.all_inputs)

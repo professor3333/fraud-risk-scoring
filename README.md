@@ -79,6 +79,8 @@ once at the end.
 | E006 | + frequency encoding (ADR 0005) | 0.578 · accepted (+0.009 seed-paired) | 0.919 | 0.294 |
 | E007 | + card-history features, earlier rows only (ADR 0004) | 0.582 · rejected (−0.002 seed-paired) | 0.920 | 0.280 |
 | E008 | E006 tuned by expanding-window CV | **0.616** | **0.929** | **0.330** |
+| E011 | E008 + median imputation & indicators before the trees | 0.613 · neutral | 0.933 | 0.326 |
+| E012 | E008 + rare one-hot levels grouped | 0.621 · neutral (+0.002 seed-paired) | 0.930 | 0.326 |
 
 Final model (E008 + sigmoid calibration, threshold 0.08):
 

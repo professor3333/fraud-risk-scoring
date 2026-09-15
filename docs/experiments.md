@@ -292,3 +292,46 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   (`V` matters to models that can use it, but is replaceable). Neither
   linear model is a candidate; both are reference points for the trees.
 
+
+## E011 — Median imputation + missing indicators in front of the trees
+
+- **Hypothesis:** XGBoost's native missing-value routing already learns a
+  direction for NaN at every split, so replacing NaN by the training median
+  and adding indicator columns gives the trees the same information in a
+  clumsier form. Expect no gain; a small loss is possible because the
+  median hides *which* value was missing inside a `V` block that is 86 %
+  null.
+- **Config:** `configs/model/xgboost_v2_tuned_impute.yaml` = E008 with
+  `preprocessing: linear`. One change.
+- **Expected:** validation PR-AUC within ±0.005 of 0.6155. Not accepted
+  either way unless ≥ +0.01.
+- **Result:** validation PR-AUC **0.6129** (−0.0026), ROC-AUC 0.933, recall
+  at P ≥ 0.90 0.326. Wall time 3 min vs 1.5 min (the indicator columns
+  double the dense matrix).
+- **Interpretation:** as hypothesised — no gain, inside noise, twice the
+  cost. Trees do not need imputation here; NaN routing stays the default
+  for the tree path. The option remains available (`preprocessing: linear`
+  in a model config) so the claim can be re-checked on another dataset.
+
+
+## E012 — Rare one-hot levels grouped into one "infrequent" column
+
+- **Hypothesis:** the 22 one-hot columns have ≤ 5 levels each, and only
+  `card6` carries genuinely rare levels (`charge card` 15 rows, `debit or
+  credit` 30 rows). Grouping levels with < 100 training rows — and routing
+  unseen levels into the same column instead of all-zeros — is a safer
+  serving contract but should change the score by nothing measurable.
+- **Config:** `configs/model/xgboost_v2_tuned_rare.yaml`, feature set
+  `v2_freq_rare` (`rare_min_frequency: 100`). One change.
+- **Expected:** validation PR-AUC within ±0.003 of 0.6155.
+- **Result:** validation PR-AUC 0.6214 (+0.0059) at seed 42 — in the re-run
+  band. Seed pairs (E008 vs E012): seed 1 0.6160 vs 0.6144 (−0.0016), seed 2
+  0.6119 vs 0.6126 (+0.0007). Mean paired delta **+0.0017**.
+- **Interpretation:** noise, as expected. Rare grouping is score-neutral
+  here because the one-hot columns have almost no rare levels. It *is* the
+  better serving contract (unseen levels share a learned column instead of
+  vanishing), so it is the recommended setting at the next retrain; the
+  shipped model is not rebuilt for a zero-gain change. The E008 seed pairs
+  measured here (0.6155 / 0.6160 / 0.6119, sd 0.002) confirm the noise floor
+  from E004 for the tuned model.
+

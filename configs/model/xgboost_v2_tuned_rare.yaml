@@ -1,0 +1,19 @@
+# E012: E008 with rare one-hot levels grouped (configs/features/v2_freq_rare.yaml).
+experiment: fraud-xgboost
+run_name: xgb_v2_tuned_rare
+features: configs/features/v2_freq_rare.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: xgboost
+  params:
+    n_estimators: 800
+    learning_rate: 0.05
+    max_depth: 8
+    min_child_weight: 5
+    subsample: 0.8
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 1.0
+    eval_metric: aucpr
+    n_jobs: 8

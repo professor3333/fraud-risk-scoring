@@ -1,0 +1,63 @@
+# v2_freq_rare = v2_freq with rare one-hot levels (< 100 training rows) grouped into one
+# 'infrequent' column that also receives unseen levels (E012).
+# Fit-time statistics (one-hot vocabularies, frequency tables) are learned on
+# the training window inside the sklearn pipeline.
+name: v2_freq_rare
+target: isFraud
+id_col: TransactionID
+time_col: TransactionDT
+
+# Numeric: every numeric provider column except the id, the timestamp, and the label.
+numeric:
+  explicit: [TransactionAmt, card1, card2, card3, card5, addr1, addr2, dist1, dist2]
+  prefixes: [C, D, V]                   # C1-C14, D1-D15, V1-V339
+  identity_numeric: true                # id_01-id_11, id_13, id_14, id_17-id_22, id_24-id_26, id_32
+  boolean: [has_identity]
+
+# Low-cardinality categoricals, one-hot encoded with a "<missing>" level;
+# vocabulary learned on train, unseen levels ignored at transform time.
+categorical:
+  - ProductCD
+  - card4
+  - card6
+  - M1
+  - M2
+  - M3
+  - M4
+  - M5
+  - M6
+  - M7
+  - M8
+  - M9
+  - DeviceType
+  - id_12
+  - id_15
+  - id_16
+  - id_28
+  - id_29
+  - id_35
+  - id_36
+  - id_37
+  - id_38
+
+# Excluded on purpose (see audit): TransactionDT (raw time), TransactionID,
+# P_emaildomain / R_emaildomain / DeviceInfo / id_30 / id_31 / id_33 / id_23 /
+# id_27 / id_34 (high-cardinality strings; encoding strategy is a Stage 3 ADR).
+
+# Share of training-window rows per level, fit inside the pipeline (ADR 0005).
+frequency:
+  - card1
+  - card2
+  - card3
+  - card5
+  - addr1
+  - addr2
+  - P_emaildomain
+  - R_emaildomain
+  - DeviceInfo
+  - id_30
+  - id_31
+  - id_33
+
+# Group one-hot levels seen fewer than this many times in training; unseen levels join them.
+rare_min_frequency: 100

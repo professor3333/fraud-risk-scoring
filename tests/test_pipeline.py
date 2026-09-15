@@ -147,3 +147,40 @@ def test_v2_freq_pipeline_fits_tables_on_train_only(parts: dict[str, pd.DataFram
     assert "freq__freq_card1" in names
     p = pipe.predict_proba(parts["validation"])[:, 1]
     assert p.min() >= 0.0 and p.max() <= 1.0
+
+
+def test_rare_levels_and_unseen_levels_share_one_column(parts: dict[str, pd.DataFrame]) -> None:
+    from dataclasses import replace
+
+    spec_rare = replace(
+        load_feature_spec(ROOT / "configs" / "features" / "baseline.yaml"), rare_min_frequency=55
+    )
+    pipe = build_pipeline(spec_rare, {"type": "xgboost", "params": {"n_estimators": 5}}, seed=0)
+    train = parts["train"]
+    pipe.fit(train, train[spec_rare.target])
+    names = list(pipe.named_steps["features"].get_feature_names_out())
+    # ProductCD's five fixture levels have 51-62 training rows; those under 55 get grouped.
+    assert "cat__ProductCD_infrequent_sklearn" in names
+    assert "cat__ProductCD_C" in names and "cat__ProductCD_S" not in names
+    rows = parts["validation"].head(3).copy()
+    rows["ProductCD"] = "NEVER_SEEN"
+    x = pipe[:-1].transform(rows)
+    idx = [
+        i
+        for i, n in enumerate(pipe.named_steps["features"].get_feature_names_out())
+        if n == "cat__ProductCD_infrequent_sklearn"
+    ]
+    assert len(idx) == 1
+    assert np.all(x[:, idx[0]] == 1.0)
+
+
+def test_preprocessing_override_puts_imputation_in_front_of_trees(
+    parts: dict[str, pd.DataFrame], spec: FeatureSpec
+) -> None:
+    cfg = {"type": "xgboost", "preprocessing": "linear", "params": {"n_estimators": 5}}
+    pipe = build_pipeline(spec, cfg, seed=0)
+    train = parts["train"]
+    pipe.fit(train, train[spec.target])
+    num = pipe.named_steps["features"].named_transformers_["num"]
+    assert "impute" in num.named_steps
+    assert not np.isnan(pipe[:-1].transform(parts["validation"])).any()

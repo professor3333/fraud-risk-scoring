@@ -91,12 +91,16 @@ def build_preprocessor(spec: FeatureSpec, kind: str) -> ColumnTransformer:
         numeric = Pipeline([("to_float", ToFloat())])
     else:
         raise ValueError(f"unknown preprocessing kind {kind!r}")
-    categorical = Pipeline(
-        [
-            ("missing", MissingAsCategory()),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
+    if spec.rare_min_frequency is None:
+        onehot = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    else:
+        # Rare training levels share one column; unseen levels land in it too.
+        onehot = OneHotEncoder(
+            handle_unknown="infrequent_if_exist",
+            min_frequency=spec.rare_min_frequency,
+            sparse_output=False,
+        )
+    categorical = Pipeline([("missing", MissingAsCategory()), ("onehot", onehot)])
     transformers = [
         ("num", numeric, list(spec.numeric)),
         ("cat", categorical, list(spec.categorical)),
@@ -119,7 +123,9 @@ def build_model(model_cfg: dict[str, Any], seed: int) -> BaseEstimator:
 
 
 def build_pipeline(spec: FeatureSpec, model_cfg: dict[str, Any], seed: int) -> Pipeline:
-    kind = PREPROCESSING_FOR_MODEL[model_cfg["type"]]
+    # The model type picks its natural preprocessing; a config may override it
+    # (e.g. trees with imputation, E011) so the choice can be measured.
+    kind = str(model_cfg.get("preprocessing", PREPROCESSING_FOR_MODEL[model_cfg["type"]]))
     return Pipeline(
         [
             ("derive", Derive(spec.derived)),

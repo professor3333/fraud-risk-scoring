@@ -38,7 +38,7 @@ something we can verify from the anonymised data.
 | median imputation (`SimpleImputer`) | training window | all windows, serving | in — `tests/test_model.py::test_nothing_is_fit_on_validation_or_test` |
 | missing indicators | training window (which columns) | all | in |
 | standard scaling | training window | all | in |
-| one-hot vocabularies | training window | all; unseen levels → all-zero row | in |
+| one-hot vocabularies | training window | all; unseen levels → all-zero row (or the shared `infrequent` column when `rare_min_frequency` is set, E012) | in |
 | temporal split | config only | — | in — `tests/test_split.py` |
 
 ## Open items (must be decided before the feature exists)

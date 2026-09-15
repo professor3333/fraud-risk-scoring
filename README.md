@@ -195,13 +195,15 @@ data/             git-ignored; data/README.md explains the download
 docs/             eda.md, decisions/ (ADR 0001–0007), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
-                  error_analysis.md, xgboost_progression.md, testing.md, model_card.md
+                  error_analysis.md, xgboost_progression.md, testing.md,
+                  deployment.md, defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   learning_curve, calibrate, select_threshold, review_policy,
                   freeze_artifact, ablation, feature_ladder, evaluate_test,
-                  final_report, split_comparison, make_fixture_artifact
+                  final_report, split_comparison, deploy_check,
+                  make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -212,6 +214,7 @@ src/fraud/
                   static/ (dashboard.html, index.html, synthetic sample CSV)
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
+fly.toml          Fly.io app definition (public deployment)
 ```
 
 ## Requirements
@@ -338,9 +341,12 @@ docker build -t fraud-risk-scoring .            # needs the calibrated artifact 
 docker run --rm -p 8000:8000 fraud-risk-scoring
 ```
 
-The service is **local-only** in this build: the artifact is trained from
-competition data whose rules restrict redistribution, and a public endpoint
-scoring that model would publish it. The image runs anywhere Docker does.
+**Public deployment:** Fly.io, from the same image (`fly.toml`,
+`docs/deployment.md`): the image sits in Fly's private registry so the
+model weights are not redistributed, the endpoint is public, and
+`scripts/deploy_check.py <url>` verifies health + parity, model-info and a
+scored sample after each deploy. Requires the account owner's `flyctl auth
+login` once.
 
 ## Data sources & schema
 

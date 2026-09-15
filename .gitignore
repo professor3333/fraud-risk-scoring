@@ -29,3 +29,6 @@ kaggle.json
 
 # Large intermediate outputs (regenerable by scripts/)
 reports/calibration/*_oof.csv
+
+# Row-level test-window outputs are competition data; never committed
+reports/final/error_analysis.csv

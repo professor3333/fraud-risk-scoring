@@ -88,6 +88,17 @@ is optional on the shipped set (a 100-input variant scores the same). The
 ablation was run on E008; the shipped model differs from it only by four
 frequency-encoded composite keys.
 
+## Error analysis (`docs/error_analysis.md`)
+
+Confident false positives are the fraud archetype (new card, product `C`,
+no billing address, self-addressed e-mail) performed by legitimate
+customers — 29 % of what the policy would block on test, indistinguishable
+row by row. Confident false negatives (25 % of test fraud) are two things:
+propagated labels on ordinary purchases of reported accounts (68 % share an
+entity with other labelled fraud; not recoverable at authorization) and
+established cards used for the mainstream product (recoverable only via
+per-entity deviation features on that slice).
+
 ## Limitations and known risks
 
 - **Label semantics.** Positives include routine purchases on an account

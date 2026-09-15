@@ -58,19 +58,36 @@ class PredictionResponse(BaseModel):
     model_version: str
 
 
+Policy = Literal["rank", "threshold"]
+
+
 class BatchPredictionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transactions: list[TransactionRequest] = Field(min_length=1, max_length=1000)  # type: ignore[valid-type]
+    # Analyst capacity for this batch. With the default "rank" policy: block by
+    # threshold, review the review_budget highest remaining scores, approve the
+    # rest (docs/review_policy.md). None = the server's default budget.
+    review_budget: int | None = Field(default=None, ge=0)
+    policy: Policy = "rank"  # "threshold" = fixed review threshold instead of a budget
 
 
 class RankedPrediction(PredictionResponse):
     rank: int = Field(ge=1)
 
 
+class PolicyApplied(BaseModel):
+    policy: Policy
+    block_threshold: float
+    review_budget: int | None  # the budget used (rank policy)
+    review_threshold: float | None  # the fixed threshold (threshold policy)
+    review_cutoff: float | None  # lowest probability actually reviewed in this batch
+
+
 class BatchPredictionResponse(BaseModel):
     n: int
     ranked: list[RankedPrediction]  # highest fraud probability first
     counts: dict[Action, int]
+    policy: PolicyApplied
 
 
 class Bands(BaseModel):
@@ -87,6 +104,8 @@ class HealthResponse(BaseModel):
 
 class ModelInfoResponse(BaseModel):
     model: str
+    default_policy: Policy
+    default_review_budget: int
     experiment: str
     version: str
     feature_set: str
@@ -126,6 +145,7 @@ class CsvSummary(BaseModel):
     model_version: str
     threshold: float
     bands: Bands
+    policy: PolicyApplied
 
 
 class CsvPredictionResponse(BaseModel):

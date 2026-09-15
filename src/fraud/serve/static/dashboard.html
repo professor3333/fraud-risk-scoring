@@ -64,17 +64,19 @@
 
   <div class="upload">
     <input id="file" type="file" accept=".csv,text/csv">
+    <label for="budget" style="color:var(--muted)">Analyst review capacity</label>
+    <input id="budget" type="number" min="0" step="1" value="200" style="width:90px;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px"> <small>transactions</small>
     <button id="score" class="primary" disabled>Score CSV</button>
     <button id="sample">Try the sample</button>
-    <small>Upload a CSV with the IEEE-CIS column names (up to 5,000 rows). Extra columns are ignored; a fraud label, if present, is ignored too. <a href="/sample.csv">sample.csv</a> is synthetic.</small>
+    <small>Block when p ≥ block threshold; review the highest-scored remaining transactions up to the capacity; approve the rest. Upload a CSV with the IEEE-CIS column names (up to 5,000 rows); extra columns and a label are ignored. <a href="/sample.csv">sample.csv</a> is synthetic.</small>
   </div>
   <div id="error" class="error" hidden></div>
 
   <div class="tiles" id="tiles" hidden>
     <div class="tile"><div class="label">Transactions analysed</div><div class="value" id="t-n">—</div><div class="sub" id="t-ignored"></div></div>
-    <div class="tile"><div class="label">Flagged (review + block)</div><div class="value" id="t-flagged">—</div><div class="sub" id="t-flagged-pct"></div></div>
-    <div class="tile block"><div class="label">High risk (block)</div><div class="value" id="t-high">—</div><div class="sub">p ≥ <span id="t-block"></span></div></div>
-    <div class="tile review"><div class="label">Review</div><div class="value" id="t-review">—</div><div class="sub">p ≥ <span id="t-reviewt"></span></div></div>
+    <div class="tile block"><div class="label">Block</div><div class="value" id="t-high">—</div><div class="sub">p ≥ <span id="t-block"></span></div></div>
+    <div class="tile review"><div class="label">Review</div><div class="value" id="t-review">—</div><div class="sub" id="t-reviewsub"></div></div>
+    <div class="tile"><div class="label">Approve</div><div class="value" id="t-approve">—</div><div class="sub" id="t-approve-pct"></div></div>
     <div class="tile"><div class="label">Average fraud probability</div><div class="value" id="t-avg">—</div><div class="sub">calibrated</div></div>
   </div>
 
@@ -131,17 +133,21 @@ fetch("/model-info").then(r => r.json()).then(m => {
   $("model").textContent = `${m.model} · ${m.experiment} · ${m.version} · validation PR-AUC ${m.validation_pr_auc} · test ${m.test_pr_auc}`;
 }).catch(() => { $("model").textContent = "model info unavailable"; });
 
+let lastFile = null;
 $("file").onchange = () => { $("score").disabled = !$("file").files.length; };
 $("score").onclick = () => upload($("file").files[0]);
 $("sample").onclick = async () => {
   const blob = await (await fetch("/sample.csv")).blob();
   upload(new File([blob], "sample_transactions.csv", {type: "text/csv"}));
 };
+$("budget").onchange = () => { if (lastFile) upload(lastFile); };  // re-apply the policy to the same file
 
 async function upload(file) {
+  lastFile = file;
   $("error").hidden = true; $("score").disabled = true;
   const form = new FormData(); form.append("file", file);
-  const r = await fetch("/predict/csv", {method: "POST", body: form});
+  const budget = Math.max(0, parseInt($("budget").value || "0", 10));
+  const r = await fetch(`/predict/csv?review_budget=${budget}`, {method: "POST", body: form});
   $("score").disabled = !$("file").files.length;
   if (!r.ok) {
     const j = await r.json().catch(() => ({detail: r.statusText}));
@@ -158,11 +164,15 @@ function renderTiles() {
   $("tiles").hidden = false;
   $("t-n").textContent = s.analysed.toLocaleString();
   $("t-ignored").textContent = s.ignored_columns.length ? `${s.ignored_columns.length} column(s) ignored: ${s.ignored_columns.slice(0, 4).join(", ")}${s.ignored_columns.length > 4 ? "…" : ""}` : "";
-  $("t-flagged").textContent = s.flagged.toLocaleString();
-  $("t-flagged-pct").textContent = pct(s.flagged, s.analysed) + " of analysed";
   $("t-high").textContent = s.high_risk.toLocaleString();
   $("t-review").textContent = s.review.toLocaleString();
-  $("t-block").textContent = s.bands.block; $("t-reviewt").textContent = s.bands.review;
+  $("t-approve").textContent = s.approve.toLocaleString();
+  $("t-approve-pct").textContent = pct(s.approve, s.analysed) + " of analysed";
+  $("t-block").textContent = s.policy.block_threshold;
+  const pol = s.policy;
+  $("t-reviewsub").textContent = pol.policy === "rank"
+    ? `top ${pol.review_budget} remaining` + (pol.review_cutoff != null ? ` · lowest reviewed p = ${fmt(pol.review_cutoff)}` : "")
+    : `p ≥ ${pol.review_threshold}`;
   $("t-avg").textContent = fmt(s.average_fraud_probability);
 }
 

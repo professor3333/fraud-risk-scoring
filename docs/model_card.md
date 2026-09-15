@@ -20,7 +20,9 @@
 - **Output:** calibrated probability that the transaction is, or belongs to
   an account that becomes, reported as fraud; a decision at 0.08; and the
   review-policy band (approve < 0.062, review < 0.42, block ≥ 0.42) as
-  `risk_level` / `action`. `/predict/batch` returns a ranked queue.
+  `risk_level` / `action`. `/predict/batch` and `/predict/csv` apply the
+  rank-based review policy: block ≥ 0.42, review the top-N remaining by the
+  analyst budget (default 200), approve the rest.
 - **Version:** `xgb_f5_capacity+sigmoid@<sha256 prefix of the artifact>`,
   returned by `/health` and `/predict`. MLflow: `xgb_f5_capacity` in
   `fraud-xgboost` (model), `fraud-calibration` (map), `fraud-final` (test

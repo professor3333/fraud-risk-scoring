@@ -172,9 +172,10 @@ columns carry 76 % of split gain but are almost fully substitutable
   three-action review policy sized to an analyst budget.
 - Gain, group-permutation and group-ablation importance.
 - Single test-window evaluation with top-*k*-per-day review metrics.
-- FastAPI service: `/health`, `/predict` (probability + decision + risk band
-  + action), `/predict/batch` (ranked, up to 1,000), `/predict/csv` (upload,
-  up to 5,000), `/model-info`; startup parity check against a frozen golden.
+- FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
+  implementing the rank-based review policy (block by threshold, review the
+  top-N remaining by analyst budget, approve the rest), `/model-info`;
+  startup parity check against a frozen golden.
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
@@ -229,7 +230,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 93 tests on the synthetic fixture; no data needed
+uv run pytest            # 96 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -303,23 +304,36 @@ fields are rejected; `TransactionID`, `TransactionDT`, `TransactionAmt`,
 "no identity record".
 
 **Batch** — up to 1,000 transactions in one call, returned ranked by fraud
-probability with per-action counts (what an analyst queue wants):
+probability. The actions follow the review policy the experiments
+recommended (`docs/review_policy.md`): **block** by probability threshold,
+**review** the highest-scored remaining transactions up to the analyst
+budget, **approve** the rest — so the review volume holds when the score
+distribution drifts (a fixed threshold reviewed 141 on a validation day and
+222 on a test day; the rank policy reviews exactly the budget on both).
 
 ```bash
 curl -X POST http://127.0.0.1:8000/predict/batch -H 'content-type: application/json' \
-  -d '{"transactions":[{...},{...},{...}]}'
+  -d '{"review_budget": 200, "transactions":[{...},{...},{...}]}'
 # {"n":3,"ranked":[{"rank":1,"transaction_id":…,"fraud_probability":0.1466,"risk_level":"medium","action":"review",…},…],
-#  "counts":{"approve":0,"review":3,"block":0}}
+#  "counts":{"approve":0,"review":3,"block":0},
+#  "policy":{"policy":"rank","block_threshold":0.42,"review_budget":200,"review_threshold":null,"review_cutoff":0.1007}}
 ```
 
-**Analyst dashboard** (`/`): upload a CSV of transactions with the IEEE-CIS
-column names (up to 5,000 rows; extra columns such as a label are ignored and
-reported). The server scores it in one pass through the same input path the
-parity check uses (`POST /predict/csv`) and the page shows summary tiles —
-analysed, flagged, high-risk, review, average probability — a table ranked by
-fraud probability with sort, filter (flagged / high / review / low) and
-transaction-id search, a row inspector showing every non-empty field, and a
-download of the ranked queue. "Try the sample" loads a **synthetic** 200-row
+`review_budget` defaults to the server's `default_review_budget` (200);
+`"policy": "threshold"` selects the fixed-band policy instead. The same
+options apply to `POST /predict/csv?review_budget=200`. Single `/predict`
+has no batch to rank within, so it reports the fixed bands.
+
+**Analyst dashboard** (`/`): set the analyst review capacity, upload a CSV
+of transactions with the IEEE-CIS column names (up to 5,000 rows; extra
+columns such as a label are ignored and reported). The server scores it in
+one pass through the same input path the parity check uses
+(`POST /predict/csv`) and applies the rank policy; the page shows analysed /
+block / review / approve / average probability (with the lowest probability
+actually reviewed), a table ranked by fraud probability with sort, filter
+(flagged / high / review / low) and transaction-id search, a row inspector
+showing every non-empty field, and a download of the ranked queue. Changing
+the capacity re-applies the policy to the same file. "Try the sample" loads a **synthetic** 200-row
 CSV (no Kaggle rows) with a few planted archetype transactions so all three
 bands appear.
 
@@ -380,7 +394,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 93 fixture tests, no data, no network, ~15 s
+uv run pytest              # 96 fixture tests, no data, no network, ~15 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

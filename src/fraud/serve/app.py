@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
+from fraud.evaluate.policy import apply_rank_policy
 from fraud.evaluate.threshold import load_threshold_config
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.frames import payloads_to_frame, request_to_frame, table_to_frame
@@ -31,6 +32,8 @@ from fraud.serve.schemas import (
     CsvSummary,
     HealthResponse,
     ModelInfoResponse,
+    Policy,
+    PolicyApplied,
     PredictionResponse,
     RankedPrediction,
     RiskLevel,
@@ -53,6 +56,7 @@ class ServingState:
     model_version: str
     parity_rows: int
     info: dict[str, Any]
+    default_review_budget: int
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -78,6 +82,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         model_version=f"{raw['model_version']}@{digest}",
         parity_rows=parity_rows,
         info=dict(raw.get("model_info", {})),
+        default_review_budget=int(raw.get("default_review_budget", 200)),
     )
 
 
@@ -89,8 +94,16 @@ def classify(p: float, bands: Bands) -> tuple[RiskLevel, Action]:
     return "low", "approve"
 
 
-def _response(state: ServingState, transaction_id: int, p: float) -> PredictionResponse:
-    level, action = classify(p, state.bands)
+LEVEL_FOR_ACTION: dict[Action, RiskLevel] = {"block": "high", "review": "medium", "approve": "low"}
+
+
+def _response(
+    state: ServingState, transaction_id: int, p: float, action: Action | None = None
+) -> PredictionResponse:
+    if action is None:
+        level, action = classify(p, state.bands)
+    else:
+        level = LEVEL_FOR_ACTION[action]
     return PredictionResponse(
         transaction_id=transaction_id,
         fraud_probability=p,
@@ -102,40 +115,77 @@ def _response(state: ServingState, transaction_id: int, p: float) -> PredictionR
     )
 
 
+def assign_actions(
+    state: ServingState, probabilities: np.ndarray, policy: Policy, review_budget: int | None
+) -> tuple[list[Action], PolicyApplied]:
+    """Actions for a scored batch: rank-based (default) or fixed-threshold bands."""
+    if policy == "rank":
+        budget = state.default_review_budget if review_budget is None else review_budget
+        actions, cutoff = apply_rank_policy(probabilities, state.bands.block, budget)
+        applied = PolicyApplied(
+            policy="rank",
+            block_threshold=state.bands.block,
+            review_budget=budget,
+            review_threshold=None,
+            review_cutoff=cutoff,
+        )
+        return [str(a) for a in actions], applied  # type: ignore[misc]
+    actions_t: list[Action] = [classify(float(p), state.bands)[1] for p in probabilities]
+    reviewed = [float(p) for p, a in zip(probabilities, actions_t, strict=True) if a == "review"]
+    applied = PolicyApplied(
+        policy="threshold",
+        block_threshold=state.bands.block,
+        review_budget=None,
+        review_threshold=state.bands.review,
+        review_cutoff=min(reviewed) if reviewed else None,
+    )
+    return actions_t, applied
+
+
 def score(state: ServingState, payload: dict[str, Any]) -> PredictionResponse:
     p = float(state.model.predict_proba(request_to_frame(payload))[0, 1])
     return _response(state, int(payload[schema.ID_COL]), p)
 
 
-def score_batch(state: ServingState, payloads: list[dict[str, Any]]) -> BatchPredictionResponse:
-    """Score many rows in one pass and return them ranked, highest risk first."""
+def score_batch(
+    state: ServingState,
+    payloads: list[dict[str, Any]],
+    policy: Policy = "rank",
+    review_budget: int | None = None,
+) -> BatchPredictionResponse:
+    """Score many rows in one pass, apply the policy, return them ranked, highest risk first."""
     probabilities = np.asarray(state.model.predict_proba(payloads_to_frame(payloads))[:, 1])
+    actions, applied = assign_actions(state, probabilities, policy, review_budget)
     order = np.argsort(-probabilities, kind="stable")
-    ranked = [
-        RankedPrediction(
-            rank=rank,
-            **_response(
-                state, int(payloads[i][schema.ID_COL]), float(probabilities[i])
-            ).model_dump(),
+    ranked = []
+    for rank, i in enumerate(order.tolist(), start=1):
+        single = _response(
+            state, int(payloads[i][schema.ID_COL]), float(probabilities[i]), actions[i]
         )
-        for rank, i in enumerate(order.tolist(), start=1)
-    ]
+        ranked.append(RankedPrediction(rank=rank, **single.model_dump()))
     counts: dict[Action, int] = {"approve": 0, "review": 0, "block": 0}
     for r in ranked:
         counts[r.action] += 1
-    return BatchPredictionResponse(n=len(ranked), ranked=ranked, counts=counts)
+    return BatchPredictionResponse(n=len(ranked), ranked=ranked, counts=counts, policy=applied)
 
 
-def score_table(state: ServingState, table: pd.DataFrame) -> CsvPredictionResponse:
-    """Score an uploaded table; rank rows and summarise for the analyst view."""
+def score_table(
+    state: ServingState,
+    table: pd.DataFrame,
+    policy: Policy = "rank",
+    review_budget: int | None = None,
+) -> CsvPredictionResponse:
+    """Score an uploaded table; apply the policy; rank rows and summarise for the analyst view."""
     frame, ignored = table_to_frame(table)
     probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
+    actions, applied = assign_actions(state, probabilities, policy, review_budget)
     order = np.argsort(-probabilities, kind="stable")
     rows: list[ScoredRow] = []
     counts = {"approve": 0, "review": 0, "block": 0}
     for rank, i in enumerate(order.tolist(), start=1):
         p = float(probabilities[i])
-        level, action = classify(p, state.bands)
+        action = actions[i]
+        level = LEVEL_FOR_ACTION[action]
         counts[action] += 1
         record = frame.iloc[i]
         details = {
@@ -169,6 +219,7 @@ def score_table(state: ServingState, table: pd.DataFrame) -> CsvPredictionRespon
         model_version=state.model_version,
         threshold=state.threshold,
         bands=state.bands,
+        policy=applied,
     )
     return CsvPredictionResponse(summary=summary, rows=rows)
 
@@ -179,6 +230,8 @@ def model_info(state: ServingState) -> ModelInfoResponse:
     info = state.info
     return ModelInfoResponse(
         model=str(info.get("model", "xgboost")),
+        default_policy="rank",
+        default_review_budget=state.default_review_budget,
         experiment=str(info.get("experiment", "")),
         version=state.model_version,
         feature_set=str(info.get("feature_set", "")),
@@ -236,10 +289,15 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
     def predict_batch(body: BatchPredictionRequest, request: Request) -> BatchPredictionResponse:
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
-        return score_batch(request.app.state.serving, payloads)
+        return score_batch(request.app.state.serving, payloads, body.policy, body.review_budget)
 
     @app.post("/predict/csv", response_model=CsvPredictionResponse)
-    async def predict_csv(request: Request, file: UploadFile) -> CsvPredictionResponse:
+    async def predict_csv(
+        request: Request,
+        file: UploadFile,
+        review_budget: int | None = None,
+        policy: Policy = "rank",
+    ) -> CsvPredictionResponse:
         raw = await file.read()
         try:
             table = pd.read_csv(io.BytesIO(raw), dtype="str", keep_default_na=False)
@@ -250,7 +308,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         if len(table) > MAX_CSV_ROWS:
             raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload (got {len(table)})")
         try:
-            return score_table(request.app.state.serving, table)
+            return score_table(request.app.state.serving, table, policy, review_budget)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

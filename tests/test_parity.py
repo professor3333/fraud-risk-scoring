@@ -27,7 +27,7 @@ from fraud.train.run import fit_and_evaluate, load_train_config
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs"
-GOLDEN = ROOT / "tests" / "fixtures" / "frozen_expected.json"
+GOLDEN = ROOT / "tests" / "fixtures" / "frozen_features.json"
 
 
 def _payload(row: pd.Series) -> dict[str, object]:
@@ -137,20 +137,28 @@ def test_service_refuses_to_start_on_parity_mismatch(frozen_fixture: dict, tmp_p
         verify(other, tmp_path / "nothing.joblib")
 
 
-def test_fixture_golden_is_stable_across_runs(frozen_fixture: dict) -> None:
-    """Refitting the fixture pipeline from the same config reproduces the committed golden.
+def test_fixture_feature_matrix_matches_committed_golden(frozen_fixture: dict) -> None:
+    """Refitting the fixture preprocessing reproduces the committed feature matrix.
 
-    Guards against silent changes in preprocessing or library behaviour. Regenerate
-    with `uv run python tests/fixtures/make_fixtures.py --golden` when a change is intended.
+    Guards against silent changes in feature construction or preprocessing across
+    machines. Model outputs are deliberately not part of this golden: XGBoost trees
+    fitted on a tiny sample differ across platforms, so per-artifact goldens
+    (scripts/freeze_artifact.py) pin those instead. Regenerate with
+    `uv run python tests/fixtures/make_fixtures.py --golden` when a change is intended.
     """
-    _, expected_path = frozen_paths(frozen_fixture["artifact"])
-    got = json.loads(expected_path.read_text())["probabilities"]
-    if not GOLDEN.exists():
-        pytest.skip("no committed golden yet")
-    want = json.loads(GOLDEN.read_text())["probabilities"]
-    assert got.keys() == want.keys()
-    for tid, p in want.items():
-        assert got[tid] == pytest.approx(p, abs=1e-6), tid
+    want = json.loads(GOLDEN.read_text())
+    pipe = frozen_fixture["model"].pipeline
+    names = list(pipe.named_steps["features"].get_feature_names_out())
+    assert names == want["feature_names"]
+    sample = frozen_fixture["sample"]
+    matrix = pipe[:-1].transform(sample)
+    for tid, row in zip(sample[schema.ID_COL], matrix, strict=True):
+        expected = want["rows"][str(int(tid))]
+        for name, got, exp in zip(names, row, expected, strict=True):
+            if exp is None:
+                assert np.isnan(got), (tid, name)
+            else:
+                assert got == pytest.approx(exp, abs=1e-8), (tid, name)
 
 
 # --- the production artifact -----------------------------------------------------------

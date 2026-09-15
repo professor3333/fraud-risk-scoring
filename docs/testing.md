@@ -27,7 +27,7 @@ container health check (`.github/workflows/ci.yml`).
 | model beats the no-skill baseline | `test_model::test_logreg_beats_constant_on_validation` |
 | reproducibility (same config + seed → same metric) | `test_model::test_run_is_reproducible` |
 | model serialization (save → load → identical, twice) | `test_ml_contracts::test_model_serialization_roundtrip_is_exact`, `test_pipeline::test_save_load_identical_predictions` |
-| training / inference parity | `test_parity::test_training_path_equals_loaded_artifact_raw_scores`, `test_loaded_artifact_matches_frozen_golden`, `test_api_matches_frozen_golden_and_offline`, `test_service_refuses_to_start_on_parity_mismatch`, `test_fixture_golden_is_stable_across_runs`; slow: `test_production_artifact_parity` |
+| training / inference parity | `test_parity::test_training_path_equals_loaded_artifact_raw_scores`, `test_loaded_artifact_matches_frozen_golden`, `test_api_matches_frozen_golden_and_offline`, `test_service_refuses_to_start_on_parity_mismatch`, `test_fixture_feature_matrix_matches_committed_golden`; slow: `test_production_artifact_parity` |
 | API contract (routes, required fields, enums, bounds, status codes) | `test_ml_contracts::test_api_contract_via_openapi`, `test_serving::test_bad_input_is_rejected_with_a_useful_body`, `test_model_info`, `test_batch_rejects_empty_and_bad_rows` |
 | API == offline, batch == single, CSV == single | `test_serving::test_predict_matches_offline_pipeline`, `test_batch_is_ranked_and_matches_single_predictions`, `test_csv_upload_scores_ranks_and_summarises` |
 | calibration preserves ranking; cost / policy arithmetic | `test_model::test_calibrated_model_keeps_ranking_and_improves_brier`, `test_cost_curve_prefers_catching_expensive_fraud`, `test_policy_bands_and_budget_sizing`, `test_top_k_per_day_reviews_the_highest_scores` |
@@ -39,9 +39,15 @@ container health check (`.github/workflows/ci.yml`).
 identity rows with the real schema, spread over all 183 days, with positives
 in every split window and a weak planted signal (product `C`, larger
 amounts) so "beats the baseline" is testable. `--golden` re-fits the fixture
-pipeline from the committed config and stores its frozen probabilities
-(`tests/fixtures/frozen_expected.json`), which `test_parity` compares
-against; regenerate only when a change to preprocessing is intended.
+pipeline from the committed config and stores the **preprocessed feature
+matrix** for a frozen sample (`tests/fixtures/frozen_features.json`), which
+`test_parity` compares against on every platform. Model *outputs* are not
+part of that golden on purpose: XGBoost trees fitted on a 260-row fixture
+differ between macOS and Linux runners (found when CI first ran it —
+0.192 vs 0.059 for one row), so probabilities are pinned per artifact by
+`scripts/freeze_artifact.py` and checked by the same bytes that serve them.
+Regenerate the fixture golden only when a change to preprocessing is
+intended.
 
 ## CI
 

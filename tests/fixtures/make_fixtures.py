@@ -102,13 +102,19 @@ def make_identity(rng: np.random.Generator, tx_ids: np.ndarray) -> pd.DataFrame:
 
 
 def write_golden() -> None:
-    """Fit the fixture pipeline from the committed config and store its frozen probabilities."""
+    """Fit the fixture pipeline from the committed config and store the preprocessed
+    feature matrix for a frozen sample.
+
+    The matrix (not the model output) is the golden: preprocessing is deterministic
+    across platforms, whereas XGBoost trees fitted on a tiny sample are not. Model
+    outputs are pinned per artifact by scripts/freeze_artifact.py instead.
+    """
     import json
+    import math
 
     from fraud.data.load import load_train
     from fraud.data.split import load_split_config, split
     from fraud.features.columns import load_feature_spec
-    from fraud.pipeline.calibrated import CalibratedModel
     from fraud.serve.parity import choose_sample
     from fraud.train.run import fit_and_evaluate, load_train_config
 
@@ -117,19 +123,17 @@ def write_golden() -> None:
     spec = load_feature_spec(cfg.features)
     parts = split(load_train(OUT_DIR), load_split_config(root / "configs" / "split.yaml"))
     pipe, _, _ = fit_and_evaluate(parts, spec, cfg)
-    held = parts["validation"]
-    model = CalibratedModel(pipe, method="sigmoid").fit_calibrator(
-        pipe.predict_proba(held)[:, 1], held[spec.target]
-    )
     sample = choose_sample(parts["test"], n_per_group=5)
-    probs = model.predict_proba(sample)[:, 1]
+    matrix = pipe[:-1].transform(sample)
     golden = {
-        "probabilities": {
-            str(int(i)): float(p) for i, p in zip(sample[schema.ID_COL], probs, strict=True)
-        }
+        "feature_names": list(pipe.named_steps["features"].get_feature_names_out()),
+        "rows": {
+            str(int(i)): [None if math.isnan(v) else round(float(v), 9) for v in row]
+            for i, row in zip(sample[schema.ID_COL], matrix, strict=True)
+        },
     }
-    (OUT_DIR.parent / "frozen_expected.json").write_text(json.dumps(golden, indent=2))
-    print(f"wrote golden probabilities for {len(probs)} fixture rows")
+    (OUT_DIR.parent / "frozen_features.json").write_text(json.dumps(golden))
+    print(f"wrote golden feature matrix: {len(golden['rows'])} rows x {matrix.shape[1]} features")
 
 
 def main() -> None:

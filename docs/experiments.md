@@ -229,3 +229,38 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
 - **Interpretation:** a 0.06 drop one month further out, with recall at the
   threshold holding and precision falling — score-scale drift rather than
   lost ranking ability. Numbers in `README.md` and `docs/model_card.md`.
+
+## E010 — Random stratified split vs the frozen temporal split (educational)
+
+- **Hypothesis:** a random stratified split over the same rows will report a
+  *higher* validation PR-AUC than the temporal split for the same model,
+  for two reasons that are both invisible to it: rows from the same account
+  land on both sides (and the label propagates within accounts, ADR 0001),
+  and the validation rows come from the same months as training, so the
+  drift that the temporal split measures (0.06 PR-AUC from validation to
+  test) is hidden. The random number is a control, not a candidate (G3;
+  ADR 0002 §"Educational random split").
+- **Config:** `scripts/split_comparison.py` with E008's config; pool =
+  temporal train ∪ validation (505,110 rows), stratified random split of
+  the same sizes, seed 42. The test window is not in the pool.
+- **Expected:** random validation PR-AUC 0.10 – 0.25 above the temporal
+  0.6155; a smaller train/validation gap.
+- **Result** (`reports/split_comparison/xgb_v2_tuned.json`, MLflow
+  `fraud-methodology`): same model, same rows, same sizes —
+
+  | split | val PR-AUC | val ROC-AUC | recall @ P ≥ 0.90 | train PR-AUC | gap |
+  |---|---:|---:|---:|---:|---:|
+  | temporal (frozen) | 0.6155 | 0.929 | 0.330 | 0.918 | 0.303 |
+  | random stratified | **0.8102** | 0.963 | **0.654** | 0.912 | 0.102 |
+
+- **Interpretation:** the random split over-reports PR-AUC by **0.19** and
+  recall at 90 % precision by 2×, and makes the model look far less
+  overfit (gap 0.10 vs 0.30). Nothing about the model changed; only what
+  the validation rows share with the training rows did: the same accounts
+  (whose label propagates, so memorising an account *is* predicting its
+  label) and the same weeks (so drift never shows). A project selecting on
+  the random number would ship a model expecting 0.81 and get 0.55 on the
+  next month (the test result). Every decision in this repository was made
+  on the temporal number; this run is a control and is not in the results
+  table's comparison set.
+

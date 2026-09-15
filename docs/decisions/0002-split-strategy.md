@@ -73,3 +73,14 @@ dev-split numbers are for smoke tests and plumbing, never for decisions.
 - Any feature that reads `TransactionDT` must be argued in via the leakage
   audit; the split module is the only place the raw timestamp is consumed as
   time.
+
+## Educational random split (added 2026-09-15, experiment E010)
+
+G3 requires a written justification for any random or stratified split.
+This one is a **control**: `scripts/split_comparison.py` draws a stratified
+random split over the pooled train + validation rows (the test window is
+excluded) and trains the same configuration, so the number a random split
+*would have reported* can be put next to the temporal one. It is logged
+under a separate MLflow experiment (`fraud-methodology`), never compared
+against candidates, and never used to choose anything. Its purpose is to
+show, on this data, why validation methodology matters.

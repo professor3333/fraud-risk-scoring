@@ -1,0 +1,22 @@
+{
+  "temporal": {
+    "val_pr_auc": 0.6154851186254999,
+    "val_roc_auc": 0.9293608248240638,
+    "val_recall_at_precision_0.90": 0.3300970873786408,
+    "train_pr_auc": 0.9184204272058325,
+    "gap": 0.3029353085803326,
+    "n_train": 420066,
+    "n_val": 85044,
+    "val_positive_rate": 0.033911857391467945
+  },
+  "random_stratified": {
+    "val_pr_auc": 0.8101931186193023,
+    "val_roc_auc": 0.9630115077382622,
+    "val_recall_at_precision_0.90": 0.654453781512605,
+    "train_pr_auc": 0.9122642247888706,
+    "gap": 0.10207110616956827,
+    "n_train": 420066,
+    "n_val": 85044,
+    "val_positive_rate": 0.03498189172663562
+  }
+}

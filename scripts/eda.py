@@ -1,7 +1,7 @@
 """Exploratory data analysis for the IEEE-CIS training data.
 
-Reads the joined training frame, writes summary statistics to
-``reports/eda/stats.json`` and figures to ``reports/eda/*.png``. The findings
+Reads the joined training frame, writes ``reports/eda/dataset_summary.json``,
+``missingness.csv``, ``categorical_cardinality.csv`` and figures ``*.png``. The findings
 are written up by hand in ``docs/eda.md``; this script produces the evidence.
 
 Nothing here is fit or reused by the pipeline.
@@ -151,13 +151,144 @@ def identity_coverage(df: pd.DataFrame, stats: dict[str, Any]) -> None:
     save(fig, "04_identity_coverage")
 
 
+FAMILY_NAMES = {
+    "card": "card",
+    "addr": "address",
+    "dist": "distance",
+    "C": "counts",
+    "D": "time deltas",
+    "M": "match",
+    "V": "vesta",
+    "id_": "identity",
+}
+
+
 def family_of(col: str) -> str:
-    for fam in ("card", "addr", "dist", "C", "D", "M", "V", "id_"):
-        if col.startswith(fam) and col[len(fam) :].isdigit():
+    """The competition host's feature families (docs/eda.md, 'Feature families')."""
+    for prefix, fam in FAMILY_NAMES.items():
+        if col.startswith(prefix) and col[len(prefix) :].isdigit():
             return fam
     if col.endswith("emaildomain"):
-        return "emaildomain"
+        return "email"
+    if col in ("DeviceType", "DeviceInfo"):
+        return "device"
+    if col == "TransactionAmt":
+        return "transaction"
+    if col == schema.TIME_COL:
+        return "time"
+    if col == "ProductCD":
+        return "product"
     return col
+
+
+def class_balance(df: pd.DataFrame, stats: dict[str, Any]) -> None:
+    counts = df[schema.TARGET_COL].value_counts().sort_index()
+    stats["class_counts"] = {int(k): int(v) for k, v in counts.items()}
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.bar(["legit (0)", "fraud (1)"], counts.values, color=[LEGIT, FRAUD], width=0.6)
+    for i, v in enumerate(counts.values):
+        ax.text(i, v, f"{v:,}\n{v / counts.sum():.2%}", ha="center", va="bottom", fontsize=8)
+    ax.set_ylabel("transactions")
+    ax.set_title("Class balance")
+    ax.set_ylim(0, counts.max() * 1.18)
+    save(fig, "00_class_balance")
+
+
+BUCKETS = (
+    (10, "≤10"),
+    (100, "≤100"),
+    (1_000, "≤1,000"),
+    (100_000, "≤100,000"),
+    (10**12, ">100,000"),
+)
+DERIVED = {"day", "week", "hour", "dow"}
+
+
+def cardinality(df: pd.DataFrame, stats: dict[str, Any]) -> None:
+    """Unique-value counts for every column, bucketed by order of magnitude."""
+    skip = {schema.ID_COL, schema.TARGET_COL, *DERIVED}
+    rows = []
+    for col in df.columns:
+        if col in skip:
+            continue
+        n = int(df[col].nunique(dropna=True))
+        bucket = (
+            "≤10"
+            if n <= 10
+            else "≤100"
+            if n <= 100
+            else "≤1,000"
+            if n <= 1_000
+            else "≤100,000"
+            if n <= 100_000
+            else ">100,000"
+        )
+        rows.append(
+            {
+                "column": col,
+                "family": family_of(col),
+                "dtype": "string" if pd.api.types.is_string_dtype(df[col].dtype) else "numeric",
+                "n_unique": n,
+                "bucket": bucket,
+                "null_frac": float(df[col].isna().mean()),
+            }
+        )
+    table = pd.DataFrame(rows).sort_values("n_unique", ascending=False)
+    table.to_csv(OUT / "categorical_cardinality.csv", index=False)
+    stats["cardinality_buckets"] = {
+        b: int((table["bucket"] == b).sum())
+        for b in ("≤10", "≤100", "≤1,000", "≤100,000", ">100,000")
+    }
+    strings = table[table["dtype"] == "string"]
+    stats["string_columns_by_cardinality"] = {
+        r["column"]: int(r["n_unique"]) for _, r in strings.iterrows()
+    }
+
+
+def missingness_by_target(df: pd.DataFrame, stats: dict[str, Any]) -> None:
+    """Null rate per column for fraud vs legitimate rows: missingness as a signal."""
+    y = df[schema.TARGET_COL] == 1
+    cols = [
+        c
+        for c in df.columns
+        if c not in (schema.ID_COL, schema.TARGET_COL, "day", "week", "hour", "dow")
+    ]
+    table = pd.DataFrame(
+        {
+            "column": cols,
+            "family": [family_of(c) for c in cols],
+            "null_frac": df[cols].isna().mean().to_numpy(),
+            "null_frac_fraud": df.loc[y, cols].isna().mean().to_numpy(),
+            "null_frac_legit": df.loc[~y, cols].isna().mean().to_numpy(),
+        }
+    )
+    table["diff_fraud_minus_legit"] = table["null_frac_fraud"] - table["null_frac_legit"]
+    table.sort_values("null_frac", ascending=False).to_csv(OUT / "missingness.csv", index=False)
+    stats["missingness_by_target_top_diff"] = {
+        r["column"]: {
+            "fraud": round(float(r["null_frac_fraud"]), 4),
+            "legit": round(float(r["null_frac_legit"]), 4),
+        }
+        for _, r in table.reindex(
+            table["diff_fraud_minus_legit"].abs().sort_values(ascending=False).index
+        )
+        .head(15)
+        .iterrows()
+    }
+    fam = (
+        table.groupby("family")[["null_frac_fraud", "null_frac_legit"]]
+        .mean()
+        .sort_values("null_frac_legit")
+    )
+    fig, ax = plt.subplots(figsize=(7, 3.6))
+    x = np.arange(len(fam))
+    ax.bar(x - 0.2, fam["null_frac_legit"] * 100, width=0.4, color=LEGIT, label="legit")
+    ax.bar(x + 0.2, fam["null_frac_fraud"] * 100, width=0.4, color=FRAUD, label="fraud")
+    ax.set_xticks(x, fam.index, rotation=30, ha="right")
+    ax.set_ylabel("mean null (%) across the family's columns")
+    ax.set_title("Missingness by family and label")
+    ax.legend(frameon=False)
+    save(fig, "08_missingness_by_target")
 
 
 def missingness(df: pd.DataFrame, stats: dict[str, Any]) -> None:
@@ -337,14 +468,17 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     df = add_time_columns(load_train(ROOT / "data" / "raw", cache_dir=ROOT / "data" / "processed"))
     stats: dict[str, Any] = {}
+    class_balance(df, stats)
     label_and_time(df, stats)
     identity_coverage(df, stats)
     missingness(df, stats)
+    missingness_by_target(df, stats)
+    cardinality(df, stats)
     amount(df, stats)
     categoricals(df, stats)
     d_columns_and_entities(df, stats)
-    (OUT / "stats.json").write_text(json.dumps(stats, indent=2))
-    print(f"wrote {OUT / 'stats.json'} and {len(list(OUT.glob('*.png')))} figures")
+    (OUT / "dataset_summary.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False))
+    print(f"wrote {OUT / 'dataset_summary.json'} and {len(list(OUT.glob('*.png')))} figures")
 
 
 if __name__ == "__main__":

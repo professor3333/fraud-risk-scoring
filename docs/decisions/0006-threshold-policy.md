@@ -55,7 +55,8 @@ Selection procedure:
    a range.
 4. The chosen value goes into `configs/threshold.yaml` and is the `threshold`
    every later evaluation and the API use. The test window is evaluated at
-   this threshold once, at the end.
+   this threshold as the final temporal reporting window (ADR 0002's
+   consultation log records each time it was scored).
 
 ## Consequences
 

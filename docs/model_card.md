@@ -51,7 +51,12 @@ outside the training window. Details in `docs/eda.md`.
 ## Evaluation
 
 Validation was used for every decision (feature sets, tuning, threshold,
-calibration choice). The test window was scored **once**, at the end.
+calibration choice). The test window is a **final temporal reporting
+window**: no model was selected on it, but three candidates (E008, E016,
+E022) and two policy checks were reported on the same later window during
+development, so it is **not a strictly blind holdout** and its numbers carry
+a small optimistic bias from having been seen (consultation log in ADR
+0002).
 
 | metric | validation | test |
 |---|---:|---:|
@@ -65,7 +70,7 @@ calibration choice). The test window was scored **once**, at the end.
 | Brier (prior: 0.033) / ECE | 0.0185 / 0.0037 | 0.0214 / 0.0059 |
 | cost at 0.08 / at 0.5 / approve-all | 218k / 332k / 487k | 275k / 371k / 481k |
 
-Earlier candidates, each evaluated once on test before the next was
+Earlier candidates reported on the same window before the next was
 accepted: E008 0.616 / 0.553, E016 0.619 / 0.557. E022's +0.017 validation
 gain over E016 became +0.004 on test, and its operating-point numbers are
 slightly *worse* than E016's (precision 0.262 vs 0.275 at 0.08, cost 275k vs
@@ -79,7 +84,9 @@ Baselines on validation: constant 0.034 PR-AUC; logistic regression 0.288
 (26 columns) / 0.402 (all raw columns); untuned XGBoost on raw columns
 0.570; tuned without composite keys 0.616.
 
-**Reading the test column.** PR-AUC falls 0.08 from validation to test. The
+**Reading the test column.** It is one month further out than validation
+and has been reported on at several milestones (above). PR-AUC falls 0.08
+from validation to test. The
 test month is one month further from the training window, and every
 experiment shows the data drifts (`docs/eda.md` §5). Recall at the threshold
 mostly holds (0.74 → 0.69) while precision drops (0.35 → 0.26): the model still

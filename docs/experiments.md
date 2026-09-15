@@ -220,7 +220,7 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   it. Gain and permutation describe the fitted model; ablation describes the
   data. A 131-column model without `V` is a candidate follow-up experiment.
 
-## Final — single test-window evaluation of E008 + calibration + threshold 0.08
+## Final — test-window report of E008 + calibration + threshold 0.08 (consultation #1)
 
 - **Procedure:** `scripts/evaluate_test.py`, run once (MLflow `fraud-final`).
   No decision was made on the test window.
@@ -507,9 +507,9 @@ derived columns are row-local and computed inside the pipeline
 - **Interpretation:** **accepted and shipped (v0.3.0).** The advantage over
   E016 holds across the whole validation month (+0.020 / +0.014 / +0.018 by
   10-day block), so there was no validation-side reason to doubt it. Its
-  single test look (below) is a caveat, recorded, not a selection.
+  test-window report (below) is a caveat, recorded, not a selection.
 
-## Final — single test-window evaluation of E022 + calibration + threshold 0.08
+## Final — test-window report of E022 + calibration + threshold 0.08 (consultation #5)
 
 - **Procedure:** `scripts/evaluate_test.py`, once (MLflow `fraud-final`).
 - **Result:** test PR-AUC **0.5610** (E016: 0.5566), ROC-AUC 0.907 (0.910);

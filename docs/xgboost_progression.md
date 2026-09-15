@@ -89,8 +89,8 @@ under the seed-paired rule; the gap and the learning curve are there to
 catch the *turn*, and the turn has not arrived in the tested ranges. What
 would change this picture is a larger test of drift: a model that memorises
 more may transfer worse a month out. That is measured, not assumed — E022
-takes the sweep's direction as a candidate and, if accepted, gets its single
-test look like every other shipped model.
+takes the sweep's direction as a candidate and, if accepted, is reported on
+the final temporal reporting window like every other shipped model.
 
 ## V4 — the sweep's direction, seed-paired and shipped (E022)
 
@@ -100,7 +100,7 @@ Depth 12, min_child_weight 1, 1,600 trees at η 0.05: **0.637 / 0.636 /
 validation month (+0.020 / +0.014 / +0.018 by 10-day block). Accepted and
 shipped as v0.3.0.
 
-**And then the test look.** +0.017 on validation became **+0.004** on the
+**And then the reporting-window check** (consultation #5 in ADR 0002). +0.017 on validation became **+0.004** on the
 test month (0.561 vs 0.557), with the operating-point numbers slightly
 *worse* (precision at 0.08 0.262 vs 0.275; cost 275k vs 262k; recall at 500
 reviews/day 0.801 vs 0.816). This is the drift caveat above, now measured:

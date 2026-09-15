@@ -9,9 +9,11 @@ positives (62 % product `C`, 62 % no address, 67 % new card), 844
 high-confidence false negatives (71 % product `W`, 71 % sharing an entity
 with ≥ 2 other test frauds), 1,307 confident true frauds. The numbers below
 are E016's; the reading is unchanged. The test window (days
-153 – 183, 85,430 transactions, 2,994 fraud) was scored once for this
-candidate; `reports/final/` is that same set of predictions, laid out for
-inspection. Nothing in this document changes a decision.
+153 – 183, 85,430 transactions, 2,994 fraud) is the final temporal
+reporting window — consulted at several milestones (ADR 0002's log), never
+used to select a model; `reports/final/` is the same set of predictions as
+the candidate's `evaluate_test` run, laid out for inspection. Nothing in
+this document changes a decision.
 
 `reports/final/`: `metrics.json` · `precision_recall_curve.png` ·
 `roc_curve.png` · `confusion_matrix.png` · `threshold_analysis.csv` ·

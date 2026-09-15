@@ -43,6 +43,17 @@ month. This is recorded as the first open follow-up — a drift-aware
 validation horizon, decided by ADR *before* any further selection — rather
 than patched after seeing the test number.
 
+### "Is your test set really a one-look holdout?"
+
+No, and the documentation now says so. No model was selected on it, but
+three candidates (E008, E016, E022) and two policy checks were reported on
+the same later window during development — five distinct looks, logged in
+ADR 0002. It is a *final temporal reporting window*: one month further out
+than validation, with a small optimistic bias from having been seen. The
+clean fix is to adopt a later-horizon validation protocol and re-freeze a
+reporting window for a genuinely single final look; that is the first
+follow-up, not something to claim retroactively.
+
 ### "No gap between train and validation?"
 
 Features use only the row and strictly earlier rows, so a row at the

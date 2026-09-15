@@ -1,7 +1,7 @@
 """Train one configured model on the training window and log it to MLflow (G6, §8).
 
 Validation metrics are computed here because they drive decisions. The test
-window is never touched by this module; ``scripts/evaluate.py`` handles it.
+window is never touched by this module; ``scripts/evaluate_test.py`` handles it.
 """
 
 from __future__ import annotations

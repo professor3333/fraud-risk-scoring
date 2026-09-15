@@ -90,6 +90,12 @@ Final model (E008 + sigmoid calibration, threshold 0.08):
 | Brier (prior 0.033) / ECE | 0.0192 / 0.0046 | 0.0219 / 0.0060 |
 | cost at 0.08 vs approve-all | 227k vs 486k (−53 %) | 275k vs 477k (−42 %) |
 
+A control experiment (E010) trains the same model on a random stratified
+split of the same rows: it reports validation PR-AUC **0.810** against the
+temporal split's 0.616 — the random split hides both drift and the
+account-level label propagation, and would have promised performance the
+next month never delivers.
+
 Two negative results are as informative as the positives: the reconstructed
 card identifier that drives Kaggle solutions adds nothing once restricted
 to what a live system can compute (E007), and hour of day is already
@@ -131,7 +137,8 @@ docs/             eda.md, decisions/ (ADR 0001–0007), experiments.md,
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, ablation, test
 scripts/          download_data, validate_data, eda, train, tune, learning_curve, calibrate,
-                  select_threshold, ablation, evaluate_test, make_fixture_artifact
+                  select_threshold, ablation, evaluate_test, split_comparison,
+                  make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, encoders, history

@@ -41,3 +41,27 @@ Stage checklist. Each stage is a working system before the next begins.
 ## Current stage: **3 — Feature engineering + XGBoost**
 ADR 0004 written; E007 entity history rejected (no gain when restricted to legitimate computation).
 Next: Stage 4 — calibrate, choose the threshold, learning curves.
+
+## Completion evidence
+
+| area | evidence |
+|---|---|
+| Data | `scripts/download_data.py`, `scripts/validate_data.py`, validated left join, 18 data tests |
+| EDA | `scripts/eda.py` → `reports/eda/`; conclusions in `docs/eda.md` |
+| Validation | ADR 0002, `configs/split.yaml`, split tests; E010 random-split control |
+| Leakage | `docs/leakage_audit.md` |
+| Baseline | E001 dummy, E002b / E002 logistic regression |
+| Features | F0 → F7 (E005 – E017), ladder + family cuts (E018 – E020), `docs/feature_sets.md` |
+| Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped |
+| Imbalance | ADR 0003 |
+| Evaluation | PR-AUC, ROC-AUC, threshold metrics, top-k/day, Brier/ECE; `reports/final/` |
+| Experiments | MLflow (`sqlite:///mlflow.db`), provenance hashes per run |
+| Reasoning | `docs/EXPERIMENT_LOG.md`, `docs/experiments.md` |
+| Operations | threshold 0.08 (ADR 0006), review policy (`docs/review_policy.md`) |
+| Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`) |
+| API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
+| UI | analyst dashboard at `/` |
+| Quality | 93 tests (`docs/testing.md`), CI green with container check |
+| Deployment | Docker image; Fly.io config + `scripts/deploy_check.py` (`docs/deployment.md`) — **public endpoint pending the account login** |
+| Documentation | README, ADRs 0001–0007, model card, error analysis, progression |
+| Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

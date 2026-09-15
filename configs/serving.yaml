@@ -1,0 +1,5 @@
+# Serving configuration (§6). The API loads exactly the calibrated pipeline
+# object that produced the validation metrics (G8).
+model_path: models/xgb_v2_tuned_calibrated.joblib
+threshold_config: configs/threshold.yaml
+model_version: xgb_v2_tuned+sigmoid

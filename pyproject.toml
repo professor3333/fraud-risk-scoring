@@ -6,18 +6,25 @@ authors = [
     { name = "Niroj33", email = "86530493+professor3333@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
+# Runtime dependencies are what the service needs; training-only tools live in
+# the `train` group so the Docker image stays small.
 dependencies = [
     "pandas>=2.2",
-    "pyarrow>=17",
     "scikit-learn>=1.5",
-    "matplotlib>=3.9",
     "pyyaml>=6",
-    "mlflow>=3.16.0",
     "xgboost>=3.4.1",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
 ]
 
 [dependency-groups]
+train = [
+    "pyarrow>=17",
+    "matplotlib>=3.9",
+    "mlflow>=3.16.0",
+]
 dev = [
+    {include-group = "train"},
     "pytest>=8",
     "ruff>=0.6",
     "mypy>=1.11",
@@ -25,6 +32,7 @@ dev = [
     "pandas-stubs",
     "types-pyyaml",
     "kaggle>=2.2.4",
+    "httpx>=0.28.1",
 ]
 
 [build-system]

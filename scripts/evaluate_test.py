@@ -1,8 +1,10 @@
-"""Evaluate the final calibrated model on the held-out test window — once.
+"""Evaluate a calibrated candidate on the final temporal reporting window.
 
 Reports the full metric set at the configured threshold on both validation
 (for the results table) and test, plus the cost model's totals. Every run is
-logged to MLflow so consulting the test window leaves a record (§8).
+logged to MLflow so that each consultation of the reporting window leaves a
+record; ADR 0002 keeps the human-readable log. The window is never used to
+select between candidates.
 
 Example:
     uv run python scripts/evaluate_test.py --run-name xgb_v2_tuned

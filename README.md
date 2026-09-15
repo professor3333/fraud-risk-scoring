@@ -68,8 +68,10 @@ decisions are in `docs/decisions/`.
 ## Results
 
 Validation window = days 123 – 152 (85,044 transactions, 2,884 fraud), used
-for every decision. Test window = days 153 – 183 (85,430 / 2,994), scored
-once at the end.
+for every decision. Test window = days 153 – 183 (85,430 / 2,994), the
+**final temporal reporting window**: no model was selected on it, but three
+candidates and two policy checks were reported on it during development, so
+it is not a strictly blind holdout (consultation log in ADR 0002).
 
 | experiment | model | val PR-AUC | val ROC-AUC | recall @ P ≥ 0.90 |
 |---|---|---:|---:|---:|
@@ -266,7 +268,7 @@ uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
 uv run python scripts/review_policy.py --run-name xgb_f5_capacity --with-test
 uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity            # frozen golden for parity
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
-uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # once per candidate
+uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # reporting window; logged in ADR 0002
 uv run python scripts/final_report.py --run-name xgb_f5_capacity               # reports/final/ + error table
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
 ```

@@ -4,7 +4,8 @@ Model: `xgb_f5_interactions` + sigmoid calibration. Evidence:
 `reports/policy/` from `uv run python scripts/review_policy.py --run-name
 xgb_f5_interactions --with-test`. Everything is *chosen* on the validation
 window (85,044 transactions over 30 days, 96 fraud per day on average) and
-*checked* once on the test window.
+*checked* on the final temporal reporting window (which has been consulted
+at several milestones — ADR 0002's log).
 
 ## 1. Operating points
 
@@ -82,7 +83,7 @@ A 100-analyst-review day catches 55 of the ~96 daily frauds at 55 %
 precision; 500 reviews catch 83. The first 25 reviews are 89 % fraud — the
 model's top of the ranking is very clean.
 
-## 4. What the test window says (one look)
+## 4. What the reporting window says
 
 Same thresholds, one month later:
 

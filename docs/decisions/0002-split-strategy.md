@@ -68,8 +68,10 @@ dev-split numbers are for smoke tests and plumbing, never for decisions.
 
 - `configs/split.yaml` is the single source of the boundaries; `fraud.data.split`
   reads it; `tests/test_split.py` asserts ordering, disjointness and sizes.
-- The test window is evaluated once per model candidate, at the end (project
-  rules §8).
+- The test window is a **final temporal reporting window**, not a blind
+  holdout (see the consultation log below). No model, feature, parameter,
+  threshold or calibration choice was made on it; but it has been reported
+  on at several development milestones.
 - Any feature that reads `TransactionDT` must be argued in via the leakage
   audit; the split module is the only place the raw timestamp is consumed as
   time.
@@ -84,3 +86,42 @@ excluded) and trains the same configuration, so the number a random split
 under a separate MLflow experiment (`fraud-methodology`), never compared
 against candidates, and never used to choose anything. Its purpose is to
 show, on this data, why validation methodology matters.
+
+## Test-window consultation log (amended 2026-09-15)
+
+The project rules say the test window is evaluated once per model candidate
+and is never used to choose between experiments. The second half was kept;
+the first half, read literally, was not — and the documentation used to say
+"scored once, at the end", which is not an accurate description once the
+same later window has been reported on repeatedly during development. The
+honest statement:
+
+> **No model was selected based on test performance; however, multiple
+> development milestones were reported on the same later window, so it is
+> no longer a strictly blind holdout. Test numbers should be read as
+> "one month further out than validation", with a small optimistic bias
+> from having been seen, not as an unbiased estimate from an unseen set.**
+
+Every consultation, in order (all on the same 85,430 rows, days 153–183):
+
+| # | when | what was scored on test | decision made on it? |
+|---|---|---|---|
+| 1 | after E008 accepted | `evaluate_test` for `xgb_v2_tuned` (E008 + calibration + 0.08) | no |
+| 2 | after E016 accepted | `evaluate_test` for `xgb_f5_interactions` | no |
+| 3 | review-policy work | `review_policy --with-test` for E016 (policy table on test) | no — but it *informed* the recommendation "review by rank, not threshold" |
+| 4 | final bundle | `final_report` + error analysis for E016 (same predictions as #2) | no |
+| 5 | after E022 accepted | `evaluate_test` for `xgb_f5_capacity` | no — and E022 was shipped *despite* a weaker test transfer, precisely to avoid selecting on test |
+| 6 | E022 re-ship | `review_policy --with-test`, `final_report` for E022 (same predictions as #5) | no |
+| 7 | rank-policy work | one test day (day 170) scored through the API to show review-volume drift | no |
+
+Three model candidates and two policy checks, so the window has been seen
+in five distinct forms. The one place test evidence changed *documentation*
+rather than a model: the "review by rank" recommendation (#3) was motivated
+partly by the drift visible on test. That is a methodological finding
+about policy shape, not a model choice, but it is recorded here as a test
+consultation.
+
+Going forward: any further candidate is reported on this window with the
+caveat above, or — cleaner — a validation protocol with a later horizon is
+adopted first (PROGRESS.md follow-up #1) so that the reporting window can
+be re-frozen for a genuinely single final look.

@@ -1,5 +1,8 @@
 # Ablation and importance — `xgb_v2_tuned` (E008)
 
+*(The shipped model, E016, adds four frequency-encoded composite keys to this
+feature set; the group structure below is otherwise identical.)*
+
 Evidence: `reports/ablation/`, produced by
 `uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml`.
 All numbers are validation PR-AUC (base **0.6155**). Importance is reported

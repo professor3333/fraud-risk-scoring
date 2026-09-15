@@ -335,3 +335,105 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   measured here (0.6155 / 0.6160 / 0.6119, sd 0.002) confirm the noise floor
   from E004 for the tuned model.
 
+
+## Feature sets F1 – F7 (E013 – E017)
+
+Each set is one change on top of the current best (E008, validation PR-AUC
+0.6155; seed pairs 0.6160 / 0.6119). Same acceptance rule as always. All
+derived columns are row-local and computed inside the pipeline
+(`fraud.features.rowwise`), so serving needs nothing new.
+
+### E013 — F1: missing-field counts
+
+- **Hypothesis:** EDA §4b shows address and match fields are missing far
+  more often for fraud, and identity fields less often. The trees can
+  already split on each column's NaN, so a *count* of missing fields adds
+  only a coarse summary; expected small or no gain.
+- **Config:** `xgboost_f1_missingness.yaml` (+ `n_missing_transaction`,
+  `n_missing_identity`, `n_missing_total`).
+- **Expected:** −0.003 … +0.008.
+- **Result:** validation PR-AUC 0.6149 (−0.0006). **Neutral.** The trees
+  already see every column's NaN; the counts add nothing.
+
+### E014 — F2: amount structure
+
+- **Hypothesis:** the log is a monotone transform (invisible to trees); the
+  integer / cents decomposition and "round amount" flag are new information
+  the raw amount does not expose as a split. EDA found the cents pattern
+  not discriminative *marginally* (47 % vs 48 % with cents); any gain must
+  come from interactions with product or card type. Expected ≈ 0.
+- **Config:** `xgboost_f2_amount.yaml` (+ `amt_log`, `amt_integer_part`,
+  `amt_fraction`, `amt_is_round`, `amt_cents_digits`).
+- **Expected:** −0.003 … +0.006.
+- **Result:** validation PR-AUC 0.6150 (−0.0005). **Neutral**, as the EDA
+  suggested: cents patterns carry no signal here, and the log is invisible
+  to trees.
+
+### E015 — F4: e-mail flags and provider families
+
+- **Hypothesis:** `same_email_domain` is a genuinely new bit (purchaser =
+  recipient); presence flags duplicate the frequency table's `<missing>`
+  share; provider families are a coarsening of the 59/60-level frequency
+  encoding. Expected small gain from `same_email_domain` at most.
+- **Config:** `xgboost_f4_email.yaml`.
+- **Expected:** −0.002 … +0.008.
+- **Result:** validation PR-AUC 0.6097 (−0.0058). **Rejected** — the only
+  set with a clearly negative sign. The provider-family coarsening gives
+  the trees a lower-resolution copy of information the 59/60-level
+  frequency table already carries, and the extra split candidates cost a
+  little. `same_email_domain` alone was not isolated; it could be revisited
+  as a single column if e-mail is ever revisited.
+
+### E016 — F5: card × address / e-mail / card-type keys, frequency-encoded
+
+- **Hypothesis:** `card1` alone has a median of 2 start-days per value
+  (EDA §6), i.e. it is not one account; `card1+addr1` and
+  `card1+addr1+P_emaildomain` are closer to an account, and their
+  training-window frequency says how established that account is. This is
+  the F5 + F6 combination; the host confirms multiple rows per account.
+  Expected the largest gain of the row-local sets.
+- **Config:** `xgboost_f5_interactions.yaml` (four keys under `frequency`).
+- **Expected:** +0.005 … +0.02.
+- **Result** (run `xgb_f5_interactions`): validation PR-AUC **0.6190**
+  (+0.0035), ROC-AUC 0.932, recall at P ≥ 0.90 0.329. Seed pairs vs E008:
+  seed 1 0.6221 vs 0.6160 (+0.0061), seed 2 0.6205 vs 0.6119 (+0.0086).
+  Mean paired delta **+0.0061**, positive on every seed.
+- **Interpretation:** **accepted** under ADR 0003 as amended today (paired
+  mean ≥ 0.005 and all pairs positive; the seed-42 delta alone would not
+  have triggered a re-run under the old wording). The composite keys give
+  a notion of "how established is this card *at this address / with this
+  e-mail*" that neither `card1` frequency nor the provider's counts carry.
+  Smaller than the Kaggle folklore promises, because those gains came
+  from counting over the whole dataset. New current best: E016,
+  feature set `f5_interactions`.
+
+### E017 — F7: history on `card1+addr1` with std / max (only after F0–F6)
+
+- **Hypothesis:** E007 used `(card1, addr1, day − D1)` with count, recency,
+  mean and ratio and found nothing. A coarser entity (`card1+addr1`, no
+  `D1`) with the same strictly-earlier computation plus expanding std and
+  max asks "is this amount unusual for this card-at-this-address". Expected
+  ≈ 0 again, because the provider's `C*`/`D*` columns already summarise
+  the card's past; run to close the question for this entity definition.
+- **Config:** `xgboost_f7_history.yaml`.
+- **Expected:** −0.005 … +0.01.
+- **Result:** validation PR-AUC 0.6185 (−0.0005 vs E016). **Rejected.** Same
+  verdict as E007 under a different entity definition and with std / max
+  added: once the history is restricted to what a live system can compute,
+  the provider's `C*` / `D*` columns already contain it. Two entity
+  definitions, eight features, no gain — the question is closed for this
+  dataset. The module stays as the reference implementation.
+
+### Feature-set summary
+
+| set | experiment | Δ validation PR-AUC | verdict |
+|---|---|---:|---|
+| F0 raw | E003 | — | baseline |
+| F1 missing counts | E013 | −0.001 | neutral |
+| F2 amount structure | E014 | −0.001 | neutral |
+| F3 time of day | E005 | +0.002 paired | rejected |
+| F4 e-mail flags / families | E015 | −0.006 | rejected |
+| F5 card × address / e-mail keys, frequency-encoded | E016 | **+0.006 paired** | **accepted** |
+| F6 frequency encoding | E006 | +0.009 paired | accepted |
+| F7 entity history (two definitions) | E007, E017 | −0.002, −0.001 | rejected |
+

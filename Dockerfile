@@ -1,6 +1,6 @@
 # Build:  docker build -t fraud-risk-scoring .
 # Run:    docker run --rm -p 8000:8000 fraud-risk-scoring
-# The model artifact (models/xgb_v2_tuned_calibrated.joblib) must exist locally
+# The model artifact (models/xgb_f5_interactions_calibrated.joblib) must exist locally
 # before building; it is produced by scripts/train.py + scripts/calibrate.py.
 FROM python:3.12-slim AS base
 
@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Project code, configs and the served artifact.
 COPY src ./src
 COPY configs ./configs
-COPY models/xgb_v2_tuned_calibrated.joblib ./models/xgb_v2_tuned_calibrated.joblib
+COPY models/xgb_f5_interactions_calibrated.joblib ./models/xgb_f5_interactions_calibrated.joblib
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-group train
 

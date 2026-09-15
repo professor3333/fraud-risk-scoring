@@ -17,7 +17,7 @@ from fraud.pipeline.build import build_pipeline
 from fraud.pipeline.calibrated import CalibratedModel
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "models" / "xgb_v2_tuned_calibrated.joblib"
+OUT = ROOT / "models" / "xgb_f5_interactions_calibrated.joblib"
 
 
 def main() -> None:

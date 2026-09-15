@@ -78,20 +78,23 @@ once at the end.
 | E005 | + hour / weekday | 0.576 · rejected (+0.002 seed-paired) | 0.912 | 0.284 |
 | E006 | + frequency encoding (ADR 0005) | 0.578 · accepted (+0.009 seed-paired) | 0.919 | 0.294 |
 | E007 | + card-history features, earlier rows only (ADR 0004) | 0.582 · rejected (−0.002 seed-paired) | 0.920 | 0.280 |
-| E008 | E006 tuned by expanding-window CV | **0.616** | **0.929** | **0.330** |
+| E008 | E006 tuned by expanding-window CV | 0.616 | 0.929 | 0.330 |
 | E011 | E008 + median imputation & indicators before the trees | 0.613 · neutral | 0.933 | 0.326 |
 | E012 | E008 + rare one-hot levels grouped | 0.621 · neutral (+0.002 seed-paired) | 0.930 | 0.326 |
+| E013–E015 | E008 + missing counts / amount structure / e-mail families | 0.615 / 0.615 / 0.610 · rejected | | |
+| **E016** | E008 + card × address / e-mail keys, frequency-encoded | **0.619** (+0.006 seed-paired) | **0.932** | 0.329 |
+| E017 | E016 + card+address history, earlier rows only | 0.619 · rejected | 0.931 | 0.329 |
 
-Final model (E008 + sigmoid calibration, threshold 0.08):
+Final model (E016 + sigmoid calibration, threshold 0.08):
 
 | metric | validation | test |
 |---|---:|---:|
-| PR-AUC | 0.616 | **0.553** |
-| ROC-AUC | 0.929 | 0.910 |
-| precision / recall / F1 at 0.08 | 0.335 / 0.724 / 0.458 | 0.275 / 0.697 / 0.394 |
-| recall reviewing the top 500 transactions per day | 0.861 | 0.822 |
-| Brier (prior 0.033) / ECE | 0.0192 / 0.0046 | 0.0219 / 0.0060 |
-| cost at 0.08 vs approve-all | 227k vs 486k (−53 %) | 275k vs 477k (−42 %) |
+| PR-AUC | 0.619 | **0.557** |
+| ROC-AUC | 0.932 | 0.910 |
+| precision / recall / F1 at 0.08 | 0.335 / 0.730 / 0.459 | 0.275 / 0.717 / 0.397 |
+| recall reviewing the top 500 transactions per day | 0.860 | 0.816 |
+| Brier (prior 0.033) / ECE | 0.0191 / 0.0049 | 0.0217 / 0.0067 |
+| cost at 0.08 vs approve-all | 230k vs 484k (−52 %) | 262k vs 478k (−45 %) |
 
 A control experiment (E010) trains the same model on a random stratified
 split of the same rows: it reports validation PR-AUC **0.810** against the
@@ -99,10 +102,13 @@ temporal split's 0.616 — the random split hides both drift and the
 account-level label propagation, and would have promised performance the
 next month never delivers.
 
-Two negative results are as informative as the positives: the reconstructed
-card identifier that drives Kaggle solutions adds nothing once restricted
-to what a live system can compute (E007), and hour of day is already
-recovered by the provider's columns (E005). Ablation shows the 339 `V`
+Feature engineering was run as named sets, one experiment each: missing
+counts, amount structure, time of day, e-mail families and two definitions
+of card history all added nothing (E005, E007, E013 – E015, E017); only
+frequency encoding (E006) and frequency-encoded card × address / e-mail
+keys (E016) earned their place. The reconstructed card identifier that
+drives Kaggle solutions adds nothing once restricted to what a live system
+can compute. Ablation shows the 339 `V`
 columns carry 76 % of split gain but are almost fully substitutable
 (−0.005 when removed), while `card*` and `C*` are irreplaceable
 (`docs/ablation.md`). Interpretation, limitations and drift are in
@@ -144,7 +150,7 @@ scripts/          download_data, validate_data, eda, train, tune, learning_curve
                   make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
-  features/       columns (spec), derive, time, encoders, history
+  features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV)
   evaluate/       metrics, curves, calibration, threshold, importance
@@ -165,7 +171,7 @@ Dockerfile        runtime-only image, non-root
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 63 tests on the synthetic fixture; no data needed
+uv run pytest            # 71 tests on the synthetic fixture; no data needed
 ```
 
 ## Usage
@@ -192,11 +198,12 @@ uv run python scripts/train.py --model configs/model/xgboost.yaml             # 
 uv run python scripts/train.py --model configs/model/xgboost_v2_freq.yaml     # E006
 uv run python scripts/tune.py  --config configs/tuning/xgboost.yaml           # E008 search, ~2 h on 8 GB
 uv run python scripts/train.py --model configs/model/xgboost_v2_tuned.yaml    # E008 refit, ~90 s
+uv run python scripts/train.py --model configs/model/xgboost_f5_interactions.yaml  # E016, shipped
 uv run python scripts/learning_curve.py --model models/xgb_v2_tuned.joblib
-uv run python scripts/calibrate.py --model-config configs/model/xgboost_v2_tuned.yaml
-uv run python scripts/select_threshold.py --run-name xgb_v2_tuned
+uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_interactions.yaml
+uv run python scripts/select_threshold.py --run-name xgb_f5_interactions
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
-uv run python scripts/evaluate_test.py --run-name xgb_v2_tuned                # once
+uv run python scripts/evaluate_test.py --run-name xgb_f5_interactions          # once per candidate
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
 ```
 
@@ -218,7 +225,7 @@ curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
 Response:
 
 ```json
-{"transaction_id":3000001,"fraud_probability":0.0813,"decision":"decline","threshold":0.08,"model_version":"xgb_v2_tuned+sigmoid@ba9fa5e7419c"}
+{"transaction_id":3000001,"fraud_probability":0.072,"decision":"approve","threshold":0.08,"model_version":"xgb_f5_interactions+sigmoid@9c33a1cdc4db"}
 ```
 
 Any of the 393 transaction and 40 identity columns may be sent; unknown
@@ -229,7 +236,7 @@ fields are rejected; `TransactionID`, `TransactionDT`, `TransactionAmt`,
 **Docker:**
 
 ```bash
-docker build -t fraud-risk-scoring .            # needs models/xgb_v2_tuned_calibrated.joblib
+docker build -t fraud-risk-scoring .            # needs models/xgb_f5_interactions_calibrated.joblib
 docker run --rm -p 8000:8000 fraud-risk-scoring
 ```
 
@@ -269,7 +276,7 @@ git-ignored.
 ## Testing
 
 ```bash
-uv run pytest              # 63 fixture tests, no data, no network, ~10 s
+uv run pytest              # 71 fixture tests, no data, no network, ~10 s
 uv run pytest -m slow      # 3 tests against the real files, if present
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

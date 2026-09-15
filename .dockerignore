@@ -4,7 +4,7 @@ data
 mlruns
 mlflow.db
 models/*
-!models/xgb_v2_tuned_calibrated.joblib
+!models/xgb_f5_interactions_calibrated.joblib
 notebooks
 reports
 tests

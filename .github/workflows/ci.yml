@@ -23,9 +23,20 @@ jobs:
         run: uv run mypy
       - name: Tests (fixture only, no data or network)
         run: uv run pytest -q
-      - name: Docker image builds
+      - name: Smoke training through the CLI (fixture, seconds)
         run: |
-          # The served artifact is not committed; build against a fixture-trained
-          # stand-in so the Dockerfile itself is exercised on every change.
-          uv run python scripts/make_fixture_artifact.py
-          docker build -t fraud-risk-scoring:ci .
+          uv run python scripts/train.py --model configs/model/xgboost.yaml \
+            --raw-dir tests/fixtures/raw --cache-dir /tmp/fixture-cache \
+            --models-dir /tmp/models --tracking-uri sqlite:////tmp/mlflow.db
+          test -f /tmp/models/xgb_raw.joblib
+      - name: Stand-in served artifact from the fixture
+        run: uv run python scripts/make_fixture_artifact.py
+      - name: Docker build
+        run: docker build -t fraud-risk-scoring:ci .
+      - name: Container smoke test (/health must pass the startup parity check)
+        run: |
+          docker run -d --rm --name frs -p 8000:8000 fraud-risk-scoring:ci
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8000/health && break; sleep 2; done
+          curl -sf http://127.0.0.1:8000/health | grep -q '"parity_rows":10'
+          curl -sf http://127.0.0.1:8000/model-info | grep -q '"primary_metric":"pr_auc"'
+          docker stop frs

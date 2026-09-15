@@ -51,7 +51,7 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     pipe = joblib.load(args.models_dir / f"{cfg.run_name}.joblib")
-    gain = gain_importance(pipe)
+    gain = gain_importance(pipe, spec)
     gain.to_csv(args.out_dir / f"{cfg.run_name}_gain.csv", index=False)
     gain_by_group = gain.groupby("group")["gain_share"].sum().sort_values(ascending=False)
     print("gain share by group:\n" + gain_by_group.round(4).to_string())

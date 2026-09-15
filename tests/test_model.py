@@ -231,11 +231,25 @@ def test_group_helpers_partition_the_spec(df: pd.DataFrame) -> None:
     parts = split(df, load_split_config(CONFIGS / "split.yaml"))
     pipe = build_pipeline(spec, {"type": "xgboost", "params": {"n_estimators": 20}}, seed=0)
     pipe.fit(parts["train"], parts["train"][spec.target])
-    gain = gain_importance(pipe)
+    gain = gain_importance(pipe, spec)
     assert gain["gain_share"].sum() == pytest.approx(1.0)
-    assert set(gain["group"]) <= set(GROUP_PATTERNS) | {"other"}
+    assert set(gain["group"]) <= set(GROUP_PATTERNS)
+    assert gain.loc[gain.feature.str.startswith("cat__M4_"), "source"].eq("M4").all()
     perm = group_permutation_importance(
         pipe, parts["validation"], spec.target, spec, seed=0, n_repeats=1
     )
     assert set(perm["group"]) <= set(GROUP_PATTERNS)
     assert "base_pr_auc" in perm.attrs
+
+
+def test_top_k_per_day_reviews_the_highest_scores() -> None:
+    from fraud.evaluate.metrics import top_k_per_day
+
+    y = np.array([1, 0, 0, 1, 0, 1])
+    s = np.array([0.9, 0.8, 0.1, 0.7, 0.6, 0.2])
+    day = np.array([1, 1, 1, 2, 2, 2])
+    out = top_k_per_day(y, s, day, k=2)
+    # day 1 reviews scores 0.9 (fraud), 0.8; day 2 reviews 0.7 (fraud), 0.6 -> 2 tp of 4 reviews
+    assert out["precision_at_2_per_day"] == 0.5
+    assert out["recall_at_2_per_day"] == pytest.approx(2 / 3)
+    assert out["reviewed_per_day_2"] == 2.0

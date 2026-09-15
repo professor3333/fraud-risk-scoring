@@ -6,6 +6,7 @@ from typing import Any
 
 import matplotlib
 import numpy as np
+import pandas as pd
 from numpy.typing import ArrayLike
 from sklearn.metrics import (
     average_precision_score,
@@ -44,6 +45,27 @@ def compute_metrics(y_true: ArrayLike, y_score: ArrayLike, threshold: float) -> 
         "precision_at_recall_0.50": _precision_at_recall(p_curve, r_curve, 0.50),
         "positive_rate": float(y.mean()),
         "n": float(len(y)),
+    }
+
+
+def top_k_per_day(
+    y_true: ArrayLike, y_score: ArrayLike, day: ArrayLike, k: int
+) -> dict[str, float]:
+    """Precision and recall when only the k highest-scored transactions per day are reviewed.
+
+    The operational question for a capacity-limited review team: which transactions
+    should analysts spend their k daily reviews on? Ties are broken by score order.
+    """
+    frame = pd.DataFrame({"y": np.asarray(y_true, dtype=int), "s": np.asarray(y_score), "d": day})
+    frame = frame.sort_values(["d", "s"], ascending=[True, False])
+    frame["rank"] = frame.groupby("d").cumcount()
+    reviewed = frame[frame["rank"] < k]
+    tp = int(reviewed["y"].sum())
+    n_pos = int(frame["y"].sum())
+    return {
+        f"precision_at_{k}_per_day": tp / len(reviewed) if len(reviewed) else 0.0,
+        f"recall_at_{k}_per_day": tp / n_pos if n_pos else 0.0,
+        f"reviewed_per_day_{k}": float(len(reviewed) / frame["d"].nunique()),
     }
 
 

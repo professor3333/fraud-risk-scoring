@@ -198,3 +198,34 @@ average precision (ADR 0003). MLflow experiment `fraud-baselines` holds the runs
   it is benign — validation PR-AUC keeps rising with trees rather than
   turning over. Current best: E008 (`xgb_v2_tuned`).
 
+
+## E009 — Ablation and importance of the current best
+
+- **Hypothesis:** the `V` block, which the EDA shows is engineered and
+  block-structured, will dominate split gain but be partly redundant with
+  the raw columns; `C*` and `card*` will be the groups the model cannot do
+  without; `has_identity` will contribute nothing (product proxy).
+- **Config:** `scripts/ablation.py` on E008 — gain, group permutation on
+  validation, and one refit per removed group (MLflow `fraud-ablation`).
+- **Expected:** removing `V` costs 0.01 – 0.03; removing `C` or `card`
+  costs ≥ 0.03; `has_identity` ≈ 0.
+- **Result:** `docs/ablation.md`. `V`: gain 76 %, permutation −0.19,
+  **ablation −0.005**. `card` −0.053, `C` −0.049, frequency −0.014, `M`
+  −0.014, `addr` −0.011. `has_identity` 0.000 on every method; removing it
+  or `dist` gives +0.005 (noise band).
+- **Interpretation:** the hypothesis on `C`/`card`/`has_identity` held; `V`
+  is *more* redundant than expected — the data does almost as well without
+  it. Gain and permutation describe the fitted model; ablation describes the
+  data. A 131-column model without `V` is a candidate follow-up experiment.
+
+## Final — single test-window evaluation of E008 + calibration + threshold 0.08
+
+- **Procedure:** `scripts/evaluate_test.py`, run once (MLflow `fraud-final`).
+  No decision was made on the test window.
+- **Result:** test PR-AUC **0.553** (validation 0.616), ROC-AUC 0.910
+  (0.929); at 0.08 precision 0.275 / recall 0.697 / F1 0.394; recall at
+  P ≥ 0.90 0.237; top-500-per-day recall 0.822; Brier 0.0219, ECE 0.0060;
+  cost 275k vs 477k approve-all vs 363k at 0.5.
+- **Interpretation:** a 0.06 drop one month further out, with recall at the
+  threshold holding and precision falling — score-scale drift rather than
+  lost ranking ability. Numbers in `README.md` and `docs/model_card.md`.

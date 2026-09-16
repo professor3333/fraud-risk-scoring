@@ -2,10 +2,11 @@
 #
 #   scripts/release.py vX.Y.Z  →  git tag  →  this workflow:
 #     checks   ci.yml (lint, types, tests, fixture image, container health)
-#     space    push deploy/space/ to the Hugging Face Space with FRAUD_REF=vX.Y.Z; the Space
-#              builds from GitHub at that tag and fetches the champion from the private
-#              model repo at startup; then scripts/deploy_check.py against the live URL
-#              needs: vars.HF_SPACE (user/space), secrets.HF_TOKEN  — the free, public demo
+#     render   POST the Render deploy hook (Render builds main == this tag from
+#              deploy/hosted/Dockerfile, no weights; the service fetches the champion from
+#              the private HF model repo at startup), wait until the served version is the
+#              tag's, then scripts/deploy_check.py against the live URL
+#              needs: vars.RENDER_URL, secrets.RENDER_DEPLOY_HOOK  — the free, public demo
 #     fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z (image pushed by release.py
 #              --fly-image), then deploy_check.py — the paid alternative
 #              needs: vars.FLY_APP, secrets.FLY_API_TOKEN
@@ -26,37 +27,28 @@ jobs:
   checks:
     uses: ./.github/workflows/ci.yml
 
-  space:
+  render:
     needs: checks
     runs-on: ubuntu-latest
-    if: ${{ vars.HF_SPACE != '' }}
+    if: ${{ vars.RENDER_URL != '' }}
     env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_SPACE: ${{ vars.HF_SPACE }}
+      RENDER_URL: ${{ vars.RENDER_URL }}
     steps:
       - uses: actions/checkout@v4
-      - name: Push the Space repository pinned to this tag
-        run: |
-          set -euo pipefail
-          work=$(mktemp -d)
-          cp deploy/space/Dockerfile deploy/space/README.md "$work/"
-          sed -i "s|^ARG FRAUD_REF=.*|ARG FRAUD_REF=${GITHUB_REF_NAME}|" "$work/Dockerfile"
-          cd "$work"
-          git init -q -b main
-          git config user.name "deploy"
-          git config user.email "deploy@users.noreply.github.com"
-          git add . && git commit -q -m "Deploy ${GITHUB_REF_NAME}"
-          git push -q --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" main
+      - name: Trigger the Render deploy of main (== this tag) through the deploy hook
+        run: curl -sf -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" >/dev/null
       - uses: astral-sh/setup-uv@v6
-      - name: Wait for the Space to build and verify the live service
+      - name: Wait for the new build to serve, then verify it
         run: |
           set -euo pipefail
-          url="https://${HF_SPACE/\//-}.hf.space"
-          for i in $(seq 1 90); do
-            curl -sf "$url/health" >/dev/null && break
+          expected=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          # a free instance builds for a few minutes and cold-starts in ~1 min; poll up to 20 min
+          for i in $(seq 1 60); do
+            if curl -sf "$RENDER_URL/openapi.json" | grep -q "\"version\":\"$expected\""; then break; fi
             sleep 20
           done
-          uv run --no-project python scripts/deploy_check.py "$url"
+          curl -sf "$RENDER_URL/openapi.json" | grep -q "\"version\":\"$expected\""
+          uv run --no-project python scripts/deploy_check.py "$RENDER_URL"
         env:
           FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
 

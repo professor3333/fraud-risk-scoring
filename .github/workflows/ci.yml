@@ -34,6 +34,8 @@ jobs:
         run: uv run python scripts/make_fixture_artifact.py
       - name: Docker build
         run: docker build -t fraud-risk-scoring:ci .
+      - name: Hosted image builds too (no weights; deploy/hosted/Dockerfile)
+        run: docker build -t fraud-risk-scoring:hosted -f deploy/hosted/Dockerfile .
       - name: Container smoke test (/health must pass the startup parity check)
         run: |
           docker run -d --rm --name frs -p 8000:8000 fraud-risk-scoring:ci

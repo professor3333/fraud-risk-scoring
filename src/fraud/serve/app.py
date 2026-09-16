@@ -97,8 +97,8 @@ CHAMPION_FILES = (
 def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[str]:
     """Populate the champion directory from a private artifact store at startup.
 
-    For hosts whose build context must not contain the weights (a public
-    Hugging Face Space): FRAUD_CHAMPION_URL names a directory-like base URL — a
+    For hosts that build from the public repository (Render, Koyeb — the image
+    must not contain the weights): FRAUD_CHAMPION_URL names a base URL — a
     private HF model repo's ``…/resolve/main`` — and HF_TOKEN authorises it. The
     files land next to ``model_path`` and the startup parity check then treats
     them exactly like a local champion. Optional files (the monitoring

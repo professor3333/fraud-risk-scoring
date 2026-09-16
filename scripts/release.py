@@ -1,8 +1,8 @@
 """Cut a release: checks → champion verified → git tag (→ deploy.yml deploys it).
 
-The pushed tag runs .github/workflows/deploy.yml: the Hugging Face Space rebuilds
-from GitHub at the tag and fetches the champion from the private model repo at
-startup; the Fly leg, when configured, deploys the image this script can push with
+The pushed tag runs .github/workflows/deploy.yml: Render rebuilds main (== the tag)
+without the weights and the service fetches the champion from the private model repo
+at startup; the Fly leg, when configured, deploys the image this script can push with
 --fly-image. The weights never enter the repository or a public runner.
 
     uv run python scripts/release.py v0.6.0              # checks, tag, push
@@ -12,7 +12,7 @@ startup; the Fly leg, when configured, deploys the image this script can push wi
 Preconditions: on main, clean tree, tag unused, pyproject version == tag without the
 "v", models/champion present and reproducing its golden; for --fly-image, flyctl
 logged in. The champion must already be in the private model repo
-(scripts/publish_champion.py) for the Space to start.
+(scripts/publish_champion.py) for the hosted service to start.
 """
 
 from __future__ import annotations

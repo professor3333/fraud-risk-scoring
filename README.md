@@ -9,11 +9,11 @@ chosen from a written cost model — served over a FastAPI endpoint, with every
 modelling decision recorded and every improvement measured on a strictly
 later window of time.
 
-**Live demo:** not yet public. The free hosting path (a Hugging Face Space
-that fetches the model from a private repository at startup) is built,
-tested end to end locally and wired into CD; it goes live the moment the
-account steps in `docs/deployment.md` → *One-time setup* are done, and
-this line becomes the URL.
+**Live demo:** not yet public. The zero-cost hosting path (a Render free
+web service that fetches the model from a private repository at startup)
+is built, measured under Render's limits locally and wired into CD; it
+goes live the moment the account steps in `docs/deployment.md` →
+*One-time setup* are done, and this line becomes the URL.
 
 ## Architecture
 
@@ -245,7 +245,8 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report, benchmark_api,
                   release, publish_champion
-deploy/space/     the Hugging Face Space repository (Dockerfile + README)
+deploy/hosted/    Dockerfile without the weights (Render / Koyeb build it; the service
+                  fetches the champion at startup); render.yaml is the blueprint
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
@@ -477,19 +478,21 @@ docker build -t fraud-risk-scoring .            # needs the calibrated artifact 
 docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring   # volume keeps the audit trail
 ```
 
-**Public deployment** (`docs/deployment.md`): a Hugging Face Space
-(free tier, no card) whose repository holds three files and no model — the
-Space clones this repository at the release tag and, at startup, fetches
-`models/champion/` from a *private* model repository with a token, then
-runs the same parity check as everywhere else. Fly.io remains wired as the
-paid alternative (`fly.toml`). `scripts/deploy_check.py <url>` verifies
-health + parity, model-info and a scored sample on any deployment.
+**Public deployment** (`docs/deployment.md`): a Render free web service
+(512 MB, 0.1 CPU, no card) built from `deploy/hosted/Dockerfile`, which
+holds no model — at startup the service fetches `models/champion/` from a
+*private* Hugging Face model repository with a token, then runs the same
+parity check as everywhere else. Measured under those limits: 238 MiB at
+rest, cold start ~1 min, the 200-row sample in ~19 s. Fly.io remains wired
+as the paid alternative (`fly.toml`). `scripts/deploy_check.py <url>`
+verifies health + parity, model-info and a scored sample on any deployment.
 
 **Release:** `uv run python scripts/release.py vX.Y.Z` runs the checks,
 verifies the champion and pushes the tag; `.github/workflows/deploy.yml`
-then re-runs CI, pushes the Space pinned to the tag (and deploys the Fly
-image if configured), runs `deploy_check.py` against the live URL and cuts
-the GitHub release. No runner ever sees the weights.
+then re-runs CI, triggers the Render deploy of the tag (and the Fly image
+if configured), waits for the tag's version to serve, runs
+`deploy_check.py` against the live URL and cuts the GitHub release. No
+runner ever sees the weights.
 
 ## Performance
 

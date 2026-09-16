@@ -223,6 +223,23 @@ class AuditLog:
             row = self._conn.execute("SELECT MAX(as_of_dt) FROM label_feed").fetchone()
         return None if row[0] is None else int(row[0])
 
+    def reviewed_transactions(self, day: int) -> set[int]:
+        """Transactions of one TransactionDT day whose latest decision is 'review'.
+
+        Latest, because a re-scored transaction is a re-decision, not another
+        review; the rank policy charges the day's budget with these.
+        """
+        lo, hi = day * 86_400, (day + 1) * 86_400
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.transaction_id FROM prediction_events e JOIN ("
+                "  SELECT transaction_id, MAX(id) AS id FROM prediction_events"
+                "  WHERE transaction_dt >= ? AND transaction_dt < ? GROUP BY transaction_id"
+                ") last ON last.id = e.id WHERE e.action = 'review'",
+                (lo, hi),
+            ).fetchall()
+        return {int(r[0]) for r in rows}
+
     def frame(self, table: str, since: str | None = None, until: str | None = None) -> Any:
         """A pandas frame of one table within a time window (monitoring reads)."""
         import pandas as pd

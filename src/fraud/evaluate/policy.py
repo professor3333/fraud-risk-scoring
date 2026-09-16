@@ -184,6 +184,33 @@ def apply_rank_policy(
     return action, None
 
 
+def apply_daily_rank_policy(
+    y_score: ArrayLike,
+    day: ArrayLike,
+    block_threshold: float,
+    capacity_by_day: dict[int, int],
+) -> tuple[np.ndarray, float | None]:
+    """The rank policy applied within each transaction day, each with its own capacity.
+
+    Serving form of :func:`apply_rank_policy`: a request may span days and a day
+    may have spent part of its budget on earlier requests, so the capacity is
+    supplied per day. Returns the action per row and the lowest reviewed score.
+    """
+    s = np.asarray(y_score, dtype=float)
+    d = np.asarray(day)
+    action = np.where(s >= block_threshold, "block", "approve").astype(object)
+    cutoff: float | None = None
+    for value in np.unique(d):
+        rows = np.flatnonzero(d == value)
+        day_actions, day_cutoff = apply_rank_policy(
+            s[rows], block_threshold, capacity_by_day.get(int(value), 0)
+        )
+        action[rows] = day_actions
+        if day_cutoff is not None:
+            cutoff = day_cutoff if cutoff is None else min(cutoff, day_cutoff)
+    return action, cutoff
+
+
 def evaluate_policy(
     y_true: ArrayLike,
     y_score: ArrayLike,

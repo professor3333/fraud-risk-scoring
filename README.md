@@ -349,6 +349,13 @@ recommended (`docs/review_policy.md`): **block** by probability threshold,
 budget, **approve** the rest — so the review volume holds when the score
 distribution drifts (a fixed threshold reviewed 141 on a validation day and
 222 on a test day; the rank policy reviews exactly the budget on both).
+The budget is **per transaction day**, released through the day and
+shared by every request that scores that day: the audit trail remembers
+what is already under review, a re-scored transaction is re-decided rather
+than counted twice, and the response reports the capacity this request had
+left (`policy.review_capacity`, `policy.budget_accounting`). One
+validation day as ten batches reviews exactly 200 in total, spread across
+them.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/predict/batch -H 'content-type: application/json' \

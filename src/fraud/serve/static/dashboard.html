@@ -65,10 +65,10 @@
   <div class="upload">
     <input id="file" type="file" accept=".csv,text/csv">
     <label for="budget" style="color:var(--muted)">Analyst review capacity</label>
-    <input id="budget" type="number" min="0" step="1" value="200" style="width:90px;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px"> <small>transactions</small>
+    <input id="budget" type="number" min="0" step="1" value="200" style="width:90px;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px"> <small>reviews per transaction day</small>
     <button id="score" class="primary" disabled>Score CSV</button>
     <button id="sample">Try the sample</button>
-    <small>Block when p ≥ block threshold; review the highest-scored remaining transactions up to the capacity; approve the rest. Upload a CSV with the IEEE-CIS column names (up to 5,000 rows); extra columns and a label are ignored. <a href="/sample.csv">sample.csv</a> is synthetic.</small>
+    <small>Block when p ≥ block threshold; review the highest-scored remaining transactions of each day up to the capacity (shared with earlier uploads of the same day; re-uploading the same rows re-decides them); approve the rest. Upload a CSV with the IEEE-CIS column names (up to 5,000 rows); extra columns and a label are ignored. <a href="/sample.csv">sample.csv</a> is synthetic.</small>
   </div>
   <div id="error" class="error" hidden></div>
 

@@ -69,8 +69,9 @@ class BatchPredictionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transactions: list[TransactionRequest] = Field(min_length=1, max_length=1000)  # type: ignore[valid-type]
     # Analyst capacity for this batch. With the default "rank" policy: block by
-    # threshold, review the review_budget highest remaining scores, approve the
-    # rest (docs/review_policy.md). None = the server's default budget.
+    # threshold, review the highest remaining scores up to the analyst budget — per
+    # TransactionDT day, shared by every request that scores that day (the audit
+    # trail keeps the count; docs/review_policy.md). None = the server's default.
     review_budget: int | None = Field(default=None, ge=0)
     policy: Policy = "rank"  # "threshold" = fixed review threshold instead of a budget
 
@@ -82,9 +83,14 @@ class RankedPrediction(PredictionResponse):
 class PolicyApplied(BaseModel):
     policy: Policy
     block_threshold: float
-    review_budget: int | None  # the budget used (rank policy)
+    review_budget: int | None  # reviews per transaction day (rank policy)
     review_threshold: float | None  # the fixed threshold (threshold policy)
     review_cutoff: float | None  # lowest probability actually reviewed in this batch
+    # rank policy: what this request could still review after earlier requests spent
+    # part of the day's budget, summed over the days it spans; equals the budget times
+    # the days spanned when nothing was spent or when auditing (the memory) is off
+    review_capacity: int | None = None
+    budget_accounting: Literal["audit_trail", "per_request"] | None = None
 
 
 class BatchPredictionResponse(BaseModel):

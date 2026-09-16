@@ -334,55 +334,176 @@ def test_dashboard_and_sample_are_served(client: TestClient) -> None:
     assert scored.status_code == 200 and scored.json()["summary"]["analysed"] == 200
 
 
-def test_batch_rank_policy_reviews_exactly_the_budget(
-    client: TestClient, served: dict[str, Any]
+def _fresh_client(served: dict[str, Any], tmp_path: Path, audit: bool = True) -> TestClient:
+    """A service on its own audit database, so budget accounting starts from zero."""
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    db = f"audit_db: {tmp_path / 'audit.sqlite'}" if audit else "audit_db: null"
+    cfg.write_text(text + db + "\n")
+    return TestClient(create_app(cfg))
+
+
+def _day(payload: dict[str, Any]) -> int:
+    return int(payload[schema.TIME_COL]) // 86_400
+
+
+def _released(payloads: list[dict[str, Any]], budget: int) -> dict[int, int]:
+    """Reviews the day has released by its latest transaction in the request."""
+    import math
+
+    latest: dict[int, int] = {}
+    for p in payloads:
+        latest[_day(p)] = max(latest.get(_day(p), 0), int(p[schema.TIME_COL]))
+    return {d: math.ceil(budget * ((t - d * 86_400 + 1) / 86_400)) for d, t in latest.items()}
+
+
+def _expected_reviews(
+    ranked: list[dict[str, Any]], payloads: list[dict[str, Any]], budget: int
+) -> int:
+    """The rank policy per transaction day: min(released, non-blocked rows) summed."""
+    day_of = {p["TransactionID"]: _day(p) for p in payloads}
+    released = _released(payloads, budget)
+    by_day: dict[int, int] = {}
+    for x in ranked:
+        if x["action"] != "block":
+            by_day[day_of[x["transaction_id"]]] = by_day.get(day_of[x["transaction_id"]], 0) + 1
+    return sum(min(released[d], n) for d, n in by_day.items())
+
+
+def test_batch_rank_policy_reviews_the_budget_per_transaction_day(
+    served: dict[str, Any], tmp_path: Path
 ) -> None:
-    """Block by threshold, review the top-N remaining, approve the rest (docs/review_policy.md)."""
+    """Block by threshold, review the top-N remaining *per day*, approve the rest."""
     rows: pd.DataFrame = served["rows"].head(40)
     payloads = [_payload(row) for _, row in rows.iterrows()]
-    for budget in (0, 5, 1000):
+    day_of = {p["TransactionID"]: _day(p) for p in payloads}
+    n_days = len(set(day_of.values()))
+    assert n_days > 1  # the fixture rows span days; the policy must not pool them
+    with _fresh_client(served, tmp_path) as client:
+        for budget in (0, 1, 1000):
+            body = client.post(
+                "/predict/batch", json={"transactions": payloads, "review_budget": budget}
+            ).json()
+            ranked = body["ranked"]
+            n_block = sum(x["action"] == "block" for x in ranked)
+            n_review = sum(x["action"] == "review" for x in ranked)
+            assert n_block == sum(x["fraud_probability"] >= 0.42 for x in ranked)
+            assert n_review == _expected_reviews(ranked, payloads, budget)
+            # within each day the reviewed rows are the highest-probability non-blocked ones
+            for day in set(day_of.values()):
+                todays = [
+                    x
+                    for x in ranked
+                    if day_of[x["transaction_id"]] == day and x["action"] != "block"
+                ]  # already sorted desc
+                k = sum(x["action"] == "review" for x in todays)
+                assert [x["action"] for x in todays] == ["review"] * k + ["approve"] * (
+                    len(todays) - k
+                )
+            pol = body["policy"]
+            assert pol["policy"] == "rank" and pol["review_budget"] == budget
+            assert pol["budget_accounting"] == "audit_trail"
+            # re-scoring the same rows: everything the days have released by these rows
+            assert pol["review_capacity"] == sum(_released(payloads, budget).values())
+            assert pol["review_capacity"] <= budget * n_days
+            if n_review:
+                reviewed = [x["fraud_probability"] for x in ranked if x["action"] == "review"]
+                assert pol["review_cutoff"] == pytest.approx(min(reviewed))
+            else:
+                assert pol["review_cutoff"] is None
+            assert body["counts"] == {"block": n_block, "review": n_review,
+                                      "approve": len(ranked) - n_block - n_review}  # fmt: skip
+        # default budget comes from the server config when the request omits it
+        body = client.post("/predict/batch", json={"transactions": payloads}).json()
+        assert body["policy"]["review_budget"] == 200
+        assert client.get("/model-info").json()["default_review_budget"] == 200
+        assert client.get("/model-info").json()["default_policy"] == "rank"
+
+
+def test_review_budget_is_shared_across_requests_of_the_same_day(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """Ten small batches of one day may not review ten budgets; re-sending rows is a
+    re-decision, not a second review; other days have their own budget; no audit, no memory."""
+    rows: pd.DataFrame = served["rows"]
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    by_day: dict[int, list[dict[str, Any]]] = {}
+    for p in payloads:
+        by_day.setdefault(_day(p), []).append(p)
+    day, todays = max(by_day.items(), key=lambda kv: len(kv[1]))
+    assert len(todays) >= 4
+    first, second = todays[: len(todays) // 2], todays[len(todays) // 2 :]
+    other_day = next(d for d in by_day if d != day)
+
+    def reviews(client: TestClient, batch: list[dict[str, Any]], budget: int) -> tuple[int, int]:
         body = client.post(
-            "/predict/batch", json={"transactions": payloads, "review_budget": budget}
+            "/predict/batch", json={"transactions": batch, "review_budget": budget}
         ).json()
-        ranked = body["ranked"]
-        n_block = sum(x["action"] == "block" for x in ranked)
-        n_review = sum(x["action"] == "review" for x in ranked)
-        assert n_block == sum(x["fraud_probability"] >= 0.42 for x in ranked)
-        assert n_review == min(budget, len(ranked) - n_block)
-        # reviewed rows are exactly the highest-probability non-blocked rows
-        non_blocked = [x for x in ranked if x["action"] != "block"]  # already sorted desc
-        assert [x["action"] for x in non_blocked] == ["review"] * n_review + ["approve"] * (
-            len(non_blocked) - n_review
-        )
-        pol = body["policy"]
-        assert pol["policy"] == "rank" and pol["review_budget"] == budget
-        if n_review:
-            assert pol["review_cutoff"] == pytest.approx(
-                min(x["fraud_probability"] for x in non_blocked[:n_review])
-            )
-        else:
-            assert pol["review_cutoff"] is None
-        assert body["counts"] == {"block": n_block, "review": n_review,
-                                  "approve": len(ranked) - n_block - n_review}  # fmt: skip
-    # default budget comes from the server config when the request omits it
-    body = client.post("/predict/batch", json={"transactions": payloads}).json()
-    assert body["policy"]["review_budget"] == 200
-    assert client.get("/model-info").json()["default_review_budget"] == 200
-    assert client.get("/model-info").json()["default_policy"] == "rank"
+        c = body["counts"]
+        assert c["review"] == min(body["policy"]["review_capacity"], c["review"] + c["approve"])
+        return c["review"], body["policy"]["review_capacity"]
+
+    with _fresh_client(served, tmp_path) as client:
+        # a budget of 1: the first batch spends it, the second gets nothing
+        n1, cap1 = reviews(client, first, 1)
+        assert cap1 == 1
+        n2, cap2 = reviews(client, second, 1)
+        assert cap2 == 1 - n1 and (n2 == 0 or not n1)
+        # a different day is untouched
+        _, cap_other = reviews(client, by_day[other_day], 1)
+        assert cap_other == 1
+        # re-sending the first batch: its own earlier reviews do not count against it
+        n1_again, cap_again = reviews(client, first, 1)
+        assert cap_again == 1 and n1_again == n1
+        # raising the budget later: what the day has released by these rows, minus what stands
+        released = _released(second, 3)[day]
+        _, cap3 = reviews(client, second, 3)
+        assert cap3 == max(released - n1, 0)
+        # the single-prediction endpoint (threshold policy) re-decides its row and the
+        # day's standing reviews — latest decision per transaction — are what is charged
+        client.post("/predict", json=todays[0])
+        standing = 0
+        for p in first:
+            latest = client.get(f"/audit/recent?transaction_id={p['TransactionID']}").json()[0]
+            standing += latest["action"] == "review"
+        _, cap4 = reviews(client, second, 3)
+        assert cap4 == max(released - standing, 0)
+    (tmp_path / "noaudit").mkdir(exist_ok=True)
+    with _fresh_client(served, tmp_path / "noaudit", audit=False) as client:
+        body = client.post(
+            "/predict/batch", json={"transactions": first, "review_budget": 1}
+        ).json()
+        assert body["policy"]["budget_accounting"] == "per_request"
+        body = client.post(
+            "/predict/batch", json={"transactions": second, "review_budget": 1}
+        ).json()
+        assert body["policy"]["review_capacity"] == 1  # no memory of the first batch
 
 
-def test_csv_upload_honours_review_budget(client: TestClient, served: dict[str, Any]) -> None:
+def test_csv_upload_honours_review_budget(served: dict[str, Any], tmp_path: Path) -> None:
     rows: pd.DataFrame = served["rows"].head(30)
+    payloads = [_payload(row) for _, row in rows.iterrows()]
     csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
     files = {"file": ("q.csv", csv, "text/csv")}
-    body = client.post("/predict/csv?review_budget=7", files=files).json()
-    s = body["summary"]
-    assert s["policy"]["policy"] == "rank" and s["policy"]["review_budget"] == 7
-    assert s["review"] == min(7, 30 - s["high_risk"])
-    assert s["flagged"] == s["review"] + s["high_risk"]
-    body_t = client.post("/predict/csv?policy=threshold", files=files).json()
-    assert body_t["summary"]["policy"]["policy"] == "threshold"
-    assert body_t["summary"]["policy"]["review_threshold"] == 0.062
+    with _fresh_client(served, tmp_path) as client:
+        body = client.post("/predict/csv?review_budget=7", files=files).json()
+        s = body["summary"]
+        assert s["policy"]["policy"] == "rank" and s["policy"]["review_budget"] == 7
+        ranked = [
+            {"transaction_id": r["transaction_id"], "action": r["action"]} for r in body["rows"]
+        ]
+        assert s["review"] == _expected_reviews(ranked, payloads, 7)
+        assert s["flagged"] == s["review"] + s["high_risk"]
+        body_t = client.post("/predict/csv?policy=threshold", files=files).json()
+        assert body_t["summary"]["policy"]["policy"] == "threshold"
+        assert body_t["summary"]["policy"]["review_threshold"] == 0.062
 
 
 # --- prediction audit trail --------------------------------------------------------------
@@ -409,8 +530,8 @@ def test_predictions_are_audited(client: TestClient, served: dict[str, Any]) -> 
     assert len(batch_events) == 6 and {e["batch_size"] for e in batch_events} == {6}
     assert {e["policy"] for e in batch_events} == {"rank"}
     assert {e["review_budget"] for e in batch_events} == {2}
-    assert sum(e["action"] == "review" for e in batch_events) == min(
-        2, 6 - sum(e["action"] == "block" for e in batch_events)
+    assert sum(e["action"] == "review" for e in batch_events) <= 2 * len(
+        {e["transaction_dt"] // 86_400 for e in batch_events}
     )
     mine = [e for e in recent if e["request_id"] == "req-abc"]
     assert len(mine) == 1

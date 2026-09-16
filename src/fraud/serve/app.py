@@ -52,6 +52,7 @@ from fraud.serve.schemas import (
 )
 
 MAX_CSV_ROWS = 5_000
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # serving.yaml max_upload_bytes overrides
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -67,6 +68,7 @@ class ServingState:
     info: dict[str, Any]
     default_review_budget: int
     audit: AuditLog | None
+    max_upload_bytes: int = MAX_UPLOAD_BYTES
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -112,6 +114,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         info=dict(raw.get("model_info", {})),
         default_review_budget=int(raw.get("default_review_budget", 200)),
         audit=audit,
+        max_upload_bytes=int(raw.get("max_upload_bytes", MAX_UPLOAD_BYTES)),
     )
 
 
@@ -306,6 +309,27 @@ def threshold_policy_applied(state: ServingState) -> PolicyApplied:
     )
 
 
+async def read_upload(request: Request, file: UploadFile, max_bytes: int) -> bytes:
+    """Read an upload without ever holding more than ``max_bytes`` of it.
+
+    The declared Content-Length is checked first (cheap, covers honest clients);
+    the stream is then read in chunks and abandoned the moment it exceeds the cap,
+    so a dishonest or absent length cannot make the service buffer an arbitrary body.
+    """
+    declared = request.headers.get("content-length")
+    too_large = HTTPException(413, f"upload larger than {max_bytes} bytes")
+    if declared is not None and declared.isdigit() and int(declared) > max_bytes:
+        raise too_large
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(1 << 20):
+        size += len(chunk)
+        if size > max_bytes:
+            raise too_large
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def request_id_of(request: Request) -> str:
     return request.headers.get("x-request-id") or new_request_id()
 
@@ -447,15 +471,18 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         state: ServingState = request.app.state.serving
         rid = request_id_of(request)
         t0 = time.perf_counter()
-        raw = await file.read()
+        raw = await read_upload(request, file, state.max_upload_bytes)
         try:
-            table = pd.read_csv(io.BytesIO(raw), dtype="str", keep_default_na=False)
+            # one row past the limit is enough to know it was exceeded; never parse the rest
+            table = pd.read_csv(
+                io.BytesIO(raw), dtype="str", keep_default_na=False, nrows=MAX_CSV_ROWS + 1
+            )
         except (ValueError, pd.errors.ParserError) as exc:
             raise HTTPException(422, f"could not parse CSV: {exc}") from exc
         if len(table) == 0:
             raise HTTPException(422, "the CSV has no rows")
         if len(table) > MAX_CSV_ROWS:
-            raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload (got {len(table)})")
+            raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload")
         try:
             frame, _ = table_to_frame(table)
             result = score_table(state, table, policy, review_budget)

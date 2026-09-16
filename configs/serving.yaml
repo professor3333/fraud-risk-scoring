@@ -27,6 +27,9 @@ model_info:
   calibration: sigmoid
   training_window_days: [1, 122]
   validation_window_days: [123, 152]
+# Largest CSV upload accepted by /predict/csv, in bytes (5,000 rows of the raw schema is
+# ~6 MB); the row limit (5,000) is checked while parsing, not after.
+max_upload_bytes: 26214400
 # Default analyst review capacity per batch / upload for the rank-based policy
 # (docs/review_policy.md: block by threshold, review the top N remaining, approve the rest).
 default_review_budget: 200

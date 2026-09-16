@@ -183,9 +183,12 @@ def score_batch(
     payloads: list[dict[str, Any]],
     policy: Policy = "rank",
     review_budget: int | None = None,
+    frame: pd.DataFrame | None = None,
 ) -> BatchPredictionResponse:
     """Score many rows in one pass, apply the policy, return them ranked, highest risk first."""
-    probabilities = np.asarray(state.model.predict_proba(payloads_to_frame(payloads))[:, 1])
+    if frame is None:
+        frame = payloads_to_frame(payloads)
+    probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
     actions, applied = assign_actions(state, probabilities, policy, review_budget)
     order = np.argsort(-probabilities, kind="stable")
     ranked = []
@@ -442,20 +445,13 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         rid = request_id_of(request)
         t0 = time.perf_counter()
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
-        result = score_batch(state, payloads, body.policy, body.review_budget)
+        frame = payloads_to_frame(payloads)
+        result = score_batch(state, payloads, body.policy, body.review_budget, frame)
         latency = (time.perf_counter() - t0) * 1000
         scored = [
             (r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.ranked
         ]
-        record_events(
-            state,
-            "/predict/batch",
-            rid,
-            result.policy,
-            scored,
-            latency,
-            payloads_to_frame(payloads),
-        )
+        record_events(state, "/predict/batch", rid, result.policy, scored, latency, frame)
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = str(result.n)
         return result

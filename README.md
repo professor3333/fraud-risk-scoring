@@ -232,7 +232,7 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   backtest, retrain, learning_curve, calibrate, select_threshold,
                   review_policy, freeze_artifact, monitor_reference, monitor,
                   feedback, simulate_feedback, promote, subgroups, ablation,
-                  feature_ladder, evaluate_test, final_report,
+                  feature_ladder, evaluate_test, final_report, benchmark_api,
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
@@ -450,6 +450,40 @@ model weights are not redistributed, the endpoint is public, and
 scored sample after each deploy. Requires the account owner's `flyctl auth
 login` once.
 
+## Performance
+
+`uv run python scripts/benchmark_api.py` starts a local server on a scratch
+audit database and measures it; `--url` benchmarks a running one. It uses
+the 200 synthetic rows shipped with the dashboard, tiled to the API limits,
+so it runs from a clean clone. Numbers below are from
+`reports/benchmark/`: the Docker image under `--cpus 1 --memory 1g` (the
+`fly.toml` sizing) on an Apple M-series host, one uvicorn worker.
+
+| scenario | p50 | p95 / max |
+|---|---:|---:|
+| container cold start → healthy `/health` (model load + parity check) | 3.5 s | |
+| single `/predict`, sequential | 46 ms | 77 ms |
+| `/predict/batch`, 1,000 rows | 0.59 s | 0.62 s |
+| `/predict/csv`, 200 rows (the dashboard sample) | 0.51 s | 0.54 s |
+| `/predict/csv`, 1,000 rows | 1.4 s | 1.5 s |
+| `/predict/csv`, 5,000 rows (4.7 MB, the upload limit) | 6.4 s | 6.6 s |
+| 20 concurrent clients, single `/predict` | 0.93 s | 1.19 s — **21 req/s**, 0 errors |
+| 20 concurrent 200-row CSV uploads | 6.6 s | 10.5 s — 381 rows/s |
+| peak container memory (during the concurrent CSV run) | **538 MiB** | |
+
+What this says about `fly.toml`: 1 GB leaves ~2× headroom over the peak;
+the 60 s health-check grace period covers a 3.5 s cold start twenty times
+over; the soft concurrency limit of 20 is where single-prediction latency
+has already risen from 46 ms to ~1 s, because one worker serialises
+scoring — so 20 is the right soft limit for one machine, and throughput
+beyond ~20 req/s means more machines, not a bigger one. The 8-CPU host
+without limits gives the same numbers (`reports/benchmark/local.md`):
+scoring is single-threaded at these batch sizes.
+
+The benchmark found one bug on its first run: `/predict/batch` with 1,000
+rows took 36 s (a one-row DataFrame per transaction, built twice); it is
+now 0.5 s.
+
 ## Data sources & schema
 
 Kaggle *IEEE-CIS Fraud Detection* (Vesta Corporation), labelled training
@@ -483,7 +517,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 116 fixture tests, no data, no network, ~40 s
+uv run pytest              # 117 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

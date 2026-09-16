@@ -1,0 +1,58 @@
+# Continuous deployment: a version tag deploys the image that scripts/release.py
+# built from the champion and pushed to Fly's private registry, then verifies it.
+#
+#   scripts/release.py vX.Y.Z   (local: tests → image from models/champion → push → git tag)
+#         │ push tag
+#         ▼
+#   this workflow: ci checks → flyctl deploy --image registry.fly.io/<app>:vX.Y.Z
+#                  → scripts/deploy_check.py <url> → GitHub release
+#
+# The model weights never enter the repository or a public runner: the runner deploys
+# an image it cannot build. Needs the FLY_API_TOKEN repository secret (flyctl tokens
+# create deploy); without it the deploy job is skipped and the release is still cut.
+name: deploy
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: checks
+    runs-on: ubuntu-latest
+    if: ${{ vars.FLY_APP != '' }}
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_APP: ${{ vars.FLY_APP }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy the image built for this tag
+        run: |
+          flyctl deploy --app "$FLY_APP" \
+            --image "registry.fly.io/$FLY_APP:${GITHUB_REF_NAME}" \
+            --strategy immediate
+      - uses: astral-sh/setup-uv@v6
+      - name: Verify the live service (health + parity, model-info, scored sample)
+        run: uv run --no-project python scripts/deploy_check.py "https://$FLY_APP.fly.dev"
+        env:
+          FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: GitHub release from the tag
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Served model: see models/champion/model_manifest.json on the release machine (weights are not published). Performance: README → Performance."
+        env:
+          GH_TOKEN: ${{ github.token }}

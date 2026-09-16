@@ -47,10 +47,39 @@ behaviour.
    gates (`docs/promotion.md`); on success `models/champion/` is replaced
    and the registry alias moves. Nothing in `configs/`, the `Dockerfile` or
    `.dockerignore` changes.
-3. `flyctl deploy --remote-only`; run `deploy_check.py`.
+3. Release (below), or for an unversioned deploy `flyctl deploy
+   --remote-only` and `deploy_check.py`.
 
 To revert, promote the previous champion again; it goes through the same
 gates.
+
+## Release and continuous deployment
+
+```
+scripts/release.py vX.Y.Z   (the machine that holds models/champion)
+  ├─ preconditions: main, clean tree, pyproject version == X.Y.Z, tag unused,
+  │                 champion reproduces its golden
+  ├─ tests → ruff → format → mypy                      (§14 ship sequence)
+  ├─ flyctl deploy --build-only --push --image-label vX.Y.Z
+  │     → registry.fly.io/fraud-risk-scoring:vX.Y.Z   (private; weights never leave it)
+  └─ git tag -a vX.Y.Z && git push origin vX.Y.Z
+                │
+                ▼  .github/workflows/deploy.yml (on the tag)
+  ci.yml (lint, types, tests, fixture image, container health)
+  flyctl deploy --image registry.fly.io/<app>:vX.Y.Z    needs secrets.FLY_API_TOKEN, vars.FLY_APP
+  scripts/deploy_check.py https://<app>.fly.dev         needs secrets.FRAUD_API_KEY when the service is keyed
+  gh release create vX.Y.Z --generate-notes
+```
+
+Why two halves: the model weights are git-ignored and must not reach a
+public runner or a public image, so the runner deploys an image it cannot
+build. The build happens where the champion is, gated by the same tests
+CI runs; the runner only ever moves a labelled image and checks the
+result. Until `FLY_API_TOKEN` and `FLY_APP` are set (`flyctl tokens create
+deploy`; repository settings → secrets and variables), a tag still runs
+the checks and cuts the GitHub release, and the deploy job is skipped.
+`scripts/release.py --dry-run` prints the sequence without doing it;
+`--skip-image` tags an image pushed earlier.
 
 ## Hardening for a public URL
 

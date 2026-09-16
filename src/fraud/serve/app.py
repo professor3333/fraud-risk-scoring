@@ -424,6 +424,16 @@ def _finish(
     return response
 
 
+def package_version() -> str:
+    """pyproject.toml's version, the one source (scripts/release.py checks the tag against it)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("fraud")
+    except PackageNotFoundError:  # running from a checkout without an install
+        return "0.0.0"
+
+
 def request_id_of(request: Request) -> str:
     return request.headers.get("x-request-id") or new_request_id()
 
@@ -457,7 +467,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         app.state.serving = load_state(config_path)
         yield
 
-    app = FastAPI(title="fraud-risk-scoring", version="0.5.0", lifespan=lifespan)
+    app = FastAPI(title="fraud-risk-scoring", version=package_version(), lifespan=lifespan)
     if not request_log.handlers:  # one JSON object per line, ready for a log shipper
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(message)s"))

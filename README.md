@@ -364,8 +364,9 @@ options apply to `POST /predict/csv?review_budget=200`. Single `/predict`
 has no batch to rank within, so it reports the fixed bands.
 
 **Analyst dashboard** (`/`): set the analyst review capacity, upload a CSV
-of transactions with the IEEE-CIS column names (up to 5,000 rows; extra
-columns such as a label are ignored and reported). The server scores it in
+of transactions with the IEEE-CIS column names (up to 5,000 rows and 25 MB
+— both enforced before the body is parsed or held; extra columns such as a
+label are ignored and reported). The server scores it in
 one pass through the same input path the parity check uses
 (`POST /predict/csv`) and applies the rank policy; the page shows analysed /
 block / review / approve / average probability (with the lowest probability
@@ -482,7 +483,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 115 fixture tests, no data, no network, ~40 s
+uv run pytest              # 116 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

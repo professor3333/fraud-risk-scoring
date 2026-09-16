@@ -258,6 +258,59 @@ def test_csv_upload_rejects_bad_files(client: TestClient, served: dict[str, Any]
     assert r.status_code == 422 and "card2" in r.text
 
 
+def test_csv_upload_limits_are_enforced_before_the_body_is_held(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """A body over the byte cap is refused (declared or not) and a CSV over the row limit
+    is refused without parsing past the limit."""
+    from fraud.serve import app as serving_app
+
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    cfg.write_text(text + "audit_db: null\nmax_upload_bytes: 20000\n")
+    rows: pd.DataFrame = served["rows"].head(3).drop(columns=[schema.TARGET_COL])
+    small = rows.to_csv(index=False)
+    with TestClient(create_app(cfg)) as c:
+        ok = c.post("/predict/csv", files={"file": ("q.csv", small, "text/csv")})
+        assert ok.status_code == 200
+        big = small + ("x," * 200 + "\n") * 200  # > 20 kB of junk after valid rows
+        r = c.post("/predict/csv", files={"file": ("q.csv", big, "text/csv")})
+        assert r.status_code == 413 and "20000" in r.text
+        # a client lying about (or omitting) the length is caught by the streamed read
+        r = c.post(
+            "/predict/csv", files={"file": ("q.csv", big, "text/csv")},
+            headers={"content-length": "100"},
+        )  # fmt: skip
+        assert r.status_code == 413
+    # the row limit: MAX_CSV_ROWS + 1 rows are read, no more, and the upload is refused
+    limit = serving_app.MAX_CSV_ROWS
+    header = ",".join(rows.columns) + "\n"
+    one = rows.iloc[[0]].to_csv(index=False, header=False).strip()
+    body = header + "\n".join(one for _ in range(limit + 5)) + "\n"
+    calls: list[int | None] = []
+    original = pd.read_csv
+
+    def spy(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        calls.append(kwargs.get("nrows"))
+        return original(*args, **kwargs)
+
+    serving_app.pd.read_csv = spy  # type: ignore[assignment]
+    try:
+        with TestClient(create_app(Path(served["config"]))) as c:
+            r = c.post("/predict/csv", files={"file": ("q.csv", body, "text/csv")})
+    finally:
+        serving_app.pd.read_csv = original  # type: ignore[assignment]
+    assert r.status_code == 422 and f"at most {limit} rows" in r.text
+    assert calls == [limit + 1]
+
+
 def test_dashboard_and_sample_are_served(client: TestClient) -> None:
     assert "Fraud review queue" in client.get("/").text
     assert "/predict" in client.get("/single").text

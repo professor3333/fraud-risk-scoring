@@ -44,8 +44,9 @@ operations: label feedback (ADR 0009), promotion gates (ADR 0010),
 subgroup robustness, upload limits, the API benchmark, the per-day review
 budget. Per-prediction explanation added (`docs/explanation.md`). API key, time budget and structured request logs added
 (`docs/deployment.md` → Hardening). CD on tag exists (`deploy.yml` + `scripts/release.py`). The hosting
-target moved from Fly.io (paid 1 GB machine) to a free Hugging Face Space
-(zero payment). Open: the owner's one-time HF account steps
+target moved from Fly.io (paid) via Hugging Face Spaces (Docker now needs
+PRO) to a Render free web service (512 MB / 0.1 CPU, no card; the service
+fits at 238 MiB). Open: the owner's one-time account steps
 (`docs/deployment.md` → One-time setup), after which the README's *Live
 demo* line becomes the URL.
 
@@ -69,6 +70,6 @@ demo* line becomes the URL.
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
 | UI | analyst dashboard at `/` |
 | Quality | 118 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
-| Deployment | Docker image; free public target = Hugging Face Space fetching the champion from a private repo at startup (built, tested end to end locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **public URL pending the owner's HF account steps (free, no card)** |
+| Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from a private HF model repo at startup (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **public URL pending the owner's account steps (free, no card)** |
 | Documentation | README, ADRs 0001–0010, model card, error analysis, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

@@ -1,14 +1,15 @@
-"""Upload models/champion/ to a private Hugging Face model repo, for the Space to fetch.
+"""Upload models/champion/ to a private Hugging Face model repo for the hosted service.
 
-The public Space must not contain the weights; the service fetches them at startup
-from this private repo with a token (FRAUD_CHAMPION_URL + HF_TOKEN). Uses the
+A host that builds from the public repository must not get the weights; the service
+fetches them at startup from this private repo with a token (FRAUD_CHAMPION_URL +
+HF_TOKEN; docs/deployment.md). Uses the
 huggingface_hub CLI through uvx, so nothing is added to the project's dependencies.
 
     uv run python scripts/publish_champion.py --repo <user>/fraud-risk-scoring-model
     uv run python scripts/publish_champion.py --repo … --dry-run
 
 Needs `uvx --from huggingface_hub hf auth login` once (or HF_TOKEN in the environment).
-Prints the FRAUD_CHAMPION_URL to set on the Space.
+Prints the FRAUD_CHAMPION_URL to set on the host.
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def main() -> None:
             subprocess.run(cmd, check=True, cwd=ROOT)
     url = f"https://huggingface.co/{args.repo}/resolve/main"
     print(json.dumps({"FRAUD_CHAMPION_URL": url, "files": list(FILES)}, indent=2))
-    print("set FRAUD_CHAMPION_URL as a Space variable and HF_TOKEN (read access) as a Space secret")
+    print("set FRAUD_CHAMPION_URL and HF_TOKEN (a read token) on the hosted service")
 
 
 if __name__ == "__main__":

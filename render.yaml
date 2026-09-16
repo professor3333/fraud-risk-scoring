@@ -1,0 +1,23 @@
+# Render blueprint (docs/deployment.md): the free public demo. One Docker web service
+# built from this repository with deploy/hosted/Dockerfile — no model in the image;
+# the service fetches models/champion/ at startup from a private Hugging Face model
+# repo. Deploys are triggered by the release workflow through a deploy hook, not by
+# every push (autoDeploy: false).
+services:
+  - type: web
+    name: fraud-risk-scoring
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: deploy/hosted/Dockerfile
+    dockerContext: .
+    branch: main
+    autoDeploy: false
+    healthCheckPath: /health
+    envVars:
+      - key: FRAUD_CHAMPION_URL       # https://huggingface.co/<user>/<model-repo>/resolve/main
+        sync: false
+      - key: HF_TOKEN                 # read token for that private repo
+        sync: false
+      - key: UVICORN_WORKERS
+        value: "1"

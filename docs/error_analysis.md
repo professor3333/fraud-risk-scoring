@@ -1,16 +1,12 @@
 # Final evaluation and error analysis
 
-Analysed on the model shipped at the time (E016: feature set
-`f5_interactions`, E008 parameters, sigmoid calibration, threshold 0.08,
-review bands 0.067 / 0.42) and re-checked on the current shipped model
-(E022, same features, depth 12 × 1,600 trees; `reports/final/` now holds
-E022's bundle). The re-check gave the same profile: 490 high-confidence false
-positives (62 % product `C`, 62 % no address, 67 % new card), 844
-high-confidence false negatives (71 % product `W`, 71 % sharing an entity
-with ≥ 2 other test frauds), 1,307 confident true frauds. The numbers below
-are E016's; the reading is unchanged. The test window (days
-153 – 183, 85,430 transactions, 2,994 fraud) is the final temporal
-reporting window — consulted at several milestones (ADR 0002's log), never
+Analysed on the shipped model, E022 (feature set `f5_interactions`,
+depth 12 × 1,600 trees, sigmoid calibration, threshold 0.08, review bands
+0.062 / 0.42; `reports/final/` is its bundle). It was first written on the
+previous shipped model, E016; the re-analysis on E022 gave the same
+profile with slightly different counts, and every number below is now
+E022's. The test window (days 153 – 183, 85,430 transactions, 2,994
+fraud) is the final temporal reporting window — consulted at several milestones (ADR 0002's log), never
 used to select a model; `reports/final/` is the same set of predictions as
 the candidate's `evaluate_test` run, laid out for inspection. Nothing in
 this document changes a decision.
@@ -24,20 +20,20 @@ its probability, action and error category).
 
 | | |
 |---|---|
-| PR-AUC / ROC-AUC | **0.557** / 0.910 |
-| at 0.08: precision / recall / F1 | 0.275 / 0.717 / 0.397 |
-| confusion at 0.08 (tp / fp / fn / tn) | 2,148 / 5,678 / 846 / 76,758 |
-| recall at precision ≥ 0.90 | 0.256 |
-| reviewing top 100 / 200 / 500 per day: recall | 0.52 / 0.66 / 0.82 |
-| Brier (prior 0.034) / ECE | 0.0217 / 0.0067 |
-| policy: block ≥ 0.42 | 60 / day, 71 % fraud, catches 43 % of fraud |
-| policy: review 0.067 – 0.42 | 248 / day, 13 % fraud, recall block + review 0.75 |
-| policy: approve < 0.067 | 2,540 / day, 1.0 % fraud remaining |
-| cost at 0.08 / at 0.5 / approve-all | 262k / 358k / 478k |
+| PR-AUC / ROC-AUC | **0.561** / 0.907 |
+| at 0.08: precision / recall / F1 | 0.262 / 0.691 / 0.380 |
+| confusion at 0.08 (tp / fp / fn / tn) | 2,070 / 5,826 / 924 / 76,610 |
+| recall at precision ≥ 0.90 | 0.243 |
+| reviewing top 100 / 200 / 500 per day: recall | 0.53 / 0.66 / 0.80 |
+| Brier (prior 0.034) / ECE | 0.0214 / 0.0059 |
+| policy: block ≥ 0.42 | 60 / day, 73 % fraud, catches 44 % of fraud |
+| policy: review 0.062 – 0.42 | 252 / day, 11 % fraud, recall block + review 0.72 |
+| policy: approve < 0.062 | 2,536 / day, 1.1 % fraud remaining |
+| cost at 0.08 / at 0.5 / approve-all | 275k / 371k / 481k |
 
-Validation → test: PR-AUC 0.619 → 0.557, recall at 0.08 holds (0.73 →
-0.72), precision drops (0.33 → 0.27), calibration loosens (ECE 0.005 →
-0.007). One month of drift, as the model card says.
+Validation → test: PR-AUC 0.637 → 0.561, recall at 0.08 holds (0.74 →
+0.69), precision drops (0.35 → 0.26), calibration loosens (ECE 0.004 →
+0.006). One month of drift, as the model card says.
 
 ## 2. The three groups inspected
 
@@ -45,74 +41,73 @@ Categories from `error_analysis.csv` (bands from the review policy):
 
 | category | rows | meaning |
 |---|---:|---|
-| confident true fraud | 1,277 | p ≥ 0.42 and fraud |
-| **high-confidence false positive** | 522 | p ≥ 0.42 and legitimate — 29 % of everything the policy would block |
-| **high-confidence false negative** | 762 | p < 0.067 and fraud — 25 % of all test fraud, scored *safer than average* (mean p 0.028 vs 0.042) |
-| review band | 7,435 | 0.067 ≤ p < 0.42 |
-| confident true legit | 75,434 | |
+| confident true fraud | 1,307 | p ≥ 0.42 and fraud |
+| **high-confidence false positive** | 490 | p ≥ 0.42 and legitimate — 27 % of everything the policy would block |
+| **high-confidence false negative** | 844 | p < 0.062 and fraud — 28 % of all test fraud, scored *safer than average* (mean p 0.028 vs 0.041) |
+| review band | 7,550 | 0.062 ≤ p < 0.42 |
+| confident true legit | 75,239 | |
 
 Profiles (share of rows unless stated):
 
 | | all test | confident fraud | **HC false positive** | **HC false negative** |
 |---|---:|---:|---:|---:|
-| product `C` | 0.11 | 0.70 | **0.57** | 0.18 |
-| product `W` | 0.78 | 0.10 | 0.22 | **0.67** |
-| identity record present | 0.21 | 0.89 | **0.77** | 0.32 |
-| recipient e-mail present | 0.21 | 0.88 | **0.76** | 0.32 |
-| billing `addr1` missing | 0.11 | 0.69 | **0.57** | 0.18 |
-| `D1 = 0` (card first seen today) | 0.42 | 0.68 | **0.62** | 0.48 |
-| `M4 = M2` | 0.10 | 0.58 | **0.49** | 0.18 |
-| credit card | 0.24 | 0.53 | **0.62** | 0.32 |
-| mobile device | 0.09 | 0.44 | **0.38** | 0.19 |
-| median amount | 68 | 48 | 71 | 75 |
+| product `C` | 0.11 | 0.69 | **0.62** | 0.16 |
+| product `W` | 0.78 | 0.12 | 0.21 | **0.71** |
+| identity record present | 0.21 | 0.87 | **0.77** | 0.28 |
+| recipient e-mail present | 0.21 | 0.87 | **0.77** | 0.28 |
+| billing `addr1` missing | 0.11 | 0.68 | **0.62** | 0.16 |
+| `D1 = 0` (card first seen today) | 0.42 | 0.67 | **0.67** | 0.48 |
+| `M4 = M2` | 0.10 | 0.57 | **0.53** | 0.16 |
+| credit card | 0.24 | 0.50 | **0.63** | 0.34 |
+| mobile device | 0.09 | 0.43 | **0.40** | 0.16 |
+| median amount | 68 | 48 | 54 | 75 |
 | `card1` seen in training | 0.99 | 0.98 | 0.97 | 0.99 |
-| shares `card1+addr1` with ≥ 2 test frauds | — | 0.21 | — | **0.68** |
-| median fraud share of that entity's test rows | — | — | — | **0.17** |
+| shares `card1+addr1` with ≥ 2 other test frauds | — | 0.17 | — | **0.61** |
+| median fraud share of that entity's test rows | — | — | — | **0.19** |
 
 ## 3. What fools the model
 
 ### High-confidence false positives are the fraud archetype, done by real customers
 
-The 522 legitimate transactions the model is surest about look almost
+The 490 legitimate transactions the model is surest about look almost
 exactly like confident fraud: product `C`, a card first seen today, no
 billing address, an identity record, the purchaser's own e-mail as the
 recipient, `M4 = M2`, a credit card, often on mobile. The six highest-scored
 legitimate rows (p 0.992 – 0.995) are all product `C`, `addr1` missing,
-`P_emaildomain = R_emaildomain` (gmail / hotmail), `M4 = M2`, `D1 ≤ 6`,
-`C1` 8 – 14.
+`P_emaildomain = R_emaildomain` (gmail), `M4 = M2`, `D1 ≤ 2`, `C1` 5 – 13.
 
 The model has learned "new card + product `C` + no address + self-addressed
-e-mail" as fraud, and it is right 71 % of the time on test. The other 29 %
+e-mail" as fraud, and it is right 73 % of the time on test. The other 27 %
 are, by every field the model can see, indistinguishable: most plausibly
 first-time customers buying a digital / gift-type product for themselves.
 **Nothing in the row separates them; only history or the outcome would.**
 This is the strongest argument for the review band: a transaction in this
 archetype should be *reviewed* (a 3-dollar delay), not blocked outright (a
-lost customer three times in ten).
+lost customer nearly three times in ten).
 
-Two details worth a note. `C1` is high (8 – 14) for these rows — the
+Two details worth a note. `C1` is high (5 – 13) for these rows — the
 provider's count of something linked to the card is elevated on both the
 true and the false positives, so it is part of the archetype, not a way
 out of it. And the false-positive rate of the block band drifted from 20 %
-on validation to 29 % on test, so the archetype's fraud share is falling
+on validation to 27 % on test, so the archetype's fraud share is falling
 over time — the block threshold must be re-set at every retrain.
 
 ### High-confidence false negatives are fraud that looks like everyone else
 
-The 762 frauds the model is surest are safe look like the population, not
-like fraud: 67 % product `W` (the mainstream product, 2 % fraud overall),
+The 844 frauds the model is surest are safe look like the population, not
+like fraud: 71 % product `W` (the mainstream product, 2 % fraud overall),
 billing address present, no recipient e-mail, usually no identity record,
-established cards. The lowest-scored frauds (p < 0.0015) include a `W`
+established cards. The lowest-scored frauds (p < 0.0014) include a `W`
 purchase on a card with 139 linked entities and 422 prior transactions
-(`C1`, `C13`) at a 76-day-old address, and three 10 – 20 dollar product-`S`
-purchases spread over two weeks on a 170 – 186-day-old card with the same
-address and iCloud e-mail.
+(`C1`, `C13`) at a 76-day-old address, and four 58 – 108 dollar `W` debit
+purchases over two weeks from one yahoo address at the same billing
+address, `D1` 13 – 28 days.
 
 Two mechanisms, and the entity check separates them:
 
-1. **Label propagation.** 68 % of these frauds share their `card1+addr1`
-   entity with at least two other test frauds (confident fraud: 21 %), yet
-   the median entity is only 17 % fraud. That is the signature ADR 0001
+1. **Label propagation.** 61 % of these frauds share their `card1+addr1`
+   entity with at least two other test frauds (confident fraud: 17 %), yet
+   the median entity is only 19 % fraud. That is the signature ADR 0001
    warned about: an account is reported, its *subsequent* transactions
    are labelled fraud, and many of those are ordinary purchases. The model
    cannot see "this account was reported last week" — that information
@@ -133,9 +128,9 @@ Two mechanisms, and the entity check separates them:
 
 ### Confident true fraud is one pattern
 
-70 % product `C`, 89 % with identity, 69 % no billing address, 88 % with a
-recipient e-mail, 68 % on a card first seen today, median amount 48. The
-model is excellent at this pattern (the top 25 reviews per day are 89 %
+69 % product `C`, 87 % with identity, 68 % no billing address, 87 % with a
+recipient e-mail, 67 % on a card first seen today, median amount 48. The
+model is excellent at this pattern (the top 25 reviews per day are 90 %
 fraud on validation) and the pattern is a large share of the labelled
 fraud. It is also the pattern the false positives share.
 

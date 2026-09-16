@@ -204,7 +204,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 63 fixture-based tests (no data, no network) + 3 slow real-data tests.
+- 118 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -524,7 +524,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 117 fixture tests, no data, no network, ~40 s
+uv run pytest              # 118 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

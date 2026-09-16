@@ -1,15 +1,18 @@
-"""Cut a release: checks → image from the champion → Fly's private registry → git tag.
+"""Cut a release: checks → champion verified → git tag (→ deploy.yml deploys it).
 
-The second half is .github/workflows/deploy.yml: the pushed tag deploys the image
-this script pushed and verifies it with scripts/deploy_check.py. The weights never
-enter the repository or a public runner.
+The pushed tag runs .github/workflows/deploy.yml: the Hugging Face Space rebuilds
+from GitHub at the tag and fetches the champion from the private model repo at
+startup; the Fly leg, when configured, deploys the image this script can push with
+--fly-image. The weights never enter the repository or a public runner.
 
-    uv run python scripts/release.py v0.6.0            # everything
-    uv run python scripts/release.py v0.6.0 --dry-run  # checks and what would happen
+    uv run python scripts/release.py v0.6.0              # checks, tag, push
+    uv run python scripts/release.py v0.6.0 --dry-run    # what would happen
+    uv run python scripts/release.py v0.6.0 --fly-image  # also build + push the Fly image
 
 Preconditions: on main, clean tree, tag unused, pyproject version == tag without the
-"v", models/champion present and reproducing its golden, flyctl logged in (unless
---skip-image), FLY_APP set or fly.toml's app name.
+"v", models/champion present and reproducing its golden; for --fly-image, flyctl
+logged in. The champion must already be in the private model repo
+(scripts/publish_champion.py) for the Space to start.
 """
 
 from __future__ import annotations
@@ -48,7 +51,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", help="vX.Y.Z")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--skip-image", action="store_true", help="tag only (image pushed already)")
+    parser.add_argument(
+        "--fly-image", action="store_true", help="also build and push the Fly image for the tag"
+    )
     parser.add_argument("--skip-checks", action="store_true", help="CI already ran on this commit")
     args = parser.parse_args()
     tag = args.tag
@@ -93,12 +98,11 @@ def main() -> None:
             if not args.dry_run:
                 sh(*cmd)
 
-    # the image, into Fly's private registry, labelled with the tag
-    app = fly_app()
-    image = f"registry.fly.io/{app}:{tag}"
-    if not args.skip_image:
+    # optionally the Fly image, into Fly's private registry, labelled with the tag
+    if args.fly_image:
+        app = fly_app()
         cmd = ("flyctl", "deploy", "--app", app, "--build-only", "--push", "--image-label", tag)
-        print("$", " ".join(cmd), "→", image, flush=True)
+        print("$", " ".join(cmd), f"→ registry.fly.io/{app}:{tag}", flush=True)
         if not args.dry_run:
             sh(*cmd)
 
@@ -108,7 +112,7 @@ def main() -> None:
     if not args.dry_run:
         sh("git", "tag", "-a", tag, "-m", message)
         sh("git", "push", "origin", tag)
-        print(f"pushed {tag}; deploy.yml deploys {image} and runs deploy_check.py")
+        print(f"pushed {tag}; deploy.yml deploys it and runs deploy_check.py")
 
 
 if __name__ == "__main__":

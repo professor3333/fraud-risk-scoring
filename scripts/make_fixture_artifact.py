@@ -18,7 +18,7 @@ from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.parity import choose_sample, freeze
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "models" / "xgb_f5_capacity_calibrated.joblib"
+OUT = ROOT / "models" / "champion" / "model.joblib"  # no manifest: serving.yaml's fallbacks apply
 
 
 def main() -> None:

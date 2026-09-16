@@ -63,5 +63,6 @@ Reading:
 3. Deployment: the promoted artifact + golden replace the served files;
    the service refuses to start on a parity mismatch, so a bad promotion
    cannot serve. `scripts/deploy_check.py` is the post-deploy gate.
-4. Registry: the cycle's `decision.json` files are the promotion log; an
-   MLflow model registry stage transition would be the production form.
+4. Registry: `scripts/promote.py` (`docs/promotion.md`) — a promoted
+   challenger is a candidate for it; the acceptance gates and the
+   `champion` alias replace the cycle's `decision.json` as the record.

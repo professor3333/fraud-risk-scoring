@@ -1,0 +1,68 @@
+{
+  "candidate": "xgb_f5_interactions",
+  "champion_before": "xgb_f5_capacity",
+  "registry_version": 2,
+  "passed": false,
+  "promoted": false,
+  "dry_run": true,
+  "gates": [
+    {
+      "metric": "pr_auc",
+      "candidate": 0.6189589935817271,
+      "champion": 0.6366986009793608,
+      "passed": false,
+      "reason": "0.6190 < champion 0.6367 - 0.005"
+    },
+    {
+      "metric": "recall_at_200_per_day",
+      "candidate": 0.7246879334257975,
+      "champion": 0.7337031900138696,
+      "passed": true,
+      "reason": "vs champion 0.7337"
+    },
+    {
+      "metric": "ece",
+      "candidate": 0.004919514313857259,
+      "champion": 0.0037445005823925894,
+      "passed": true,
+      "reason": "vs champion 0.0037"
+    },
+    {
+      "metric": "brier",
+      "candidate": 0.01906128338924875,
+      "champion": 0.018500727302264534,
+      "passed": false,
+      "reason": "0.0191 > champion 0.0185 + 0.0005"
+    },
+    {
+      "metric": "block_precision",
+      "candidate": 0.800251256281407,
+      "champion": 0.8002371072910492,
+      "passed": true,
+      "reason": "vs champion 0.8002"
+    },
+    {
+      "metric": "cost_per_transaction",
+      "candidate": 1.8901698365551949,
+      "champion": 1.847832869338225,
+      "passed": false,
+      "reason": "1.8902 > champion 1.8478 + 0.02"
+    }
+  ],
+  "metrics": {
+    "pr_auc": 0.6189589935817271,
+    "roc_auc": 0.9322722075224149,
+    "brier": 0.01906128338924875,
+    "ece": 0.004919514313857259,
+    "recall_at_200_per_day": 0.7246879334257975,
+    "precision_at_200_per_day": 0.34833333333333333,
+    "block_threshold": 0.42,
+    "review_threshold": 0.06650951962957609,
+    "block_precision": 0.800251256281407,
+    "recall_block": 0.441747572815534,
+    "recall_block_plus_review": 0.7673370319001387,
+    "cost_per_transaction": 1.8901698365551949,
+    "n_validation": 85044.0,
+    "positives": 2884.0
+  }
+}

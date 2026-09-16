@@ -1,0 +1,19 @@
+# Candidate -> acceptance gates -> champion (ADR 0010, docs/promotion.md).
+# The service loads models/champion/model.joblib and reads its manifest for the model
+# version, facts and policy bands; scripts/promote.py is the only thing that writes there.
+registry_model: fraud-risk-scorer
+champion_dir: models/champion
+# The candidate's policy is re-derived on validation before it is measured: block at the
+# precision bar (docs/review_policy.md), review band sized to the daily analyst budget.
+review_budget_per_day: 200
+block_min_precision: 0.80
+# Every gate must pass. Absolute bounds always apply; the champion comparison applies when
+# there is a champion (the first promotion is a bootstrap). tolerance_vs_champion is how
+# far below (for higher_is_better) or above the champion a candidate may land.
+gates:
+  pr_auc:                     {higher_is_better: true,  tolerance_vs_champion: 0.005}  # ~2 seed sd (ADR 0003)
+  recall_at_200_per_day:      {higher_is_better: true,  tolerance_vs_champion: 0.01, min: 0.60}
+  ece:                        {higher_is_better: false, max: 0.01}
+  brier:                      {higher_is_better: false, tolerance_vs_champion: 0.0005}
+  block_precision:            {higher_is_better: true,  min: 0.75}   # the bar is 0.80 on the grid; allow rounding
+  cost_per_transaction:       {higher_is_better: false, tolerance_vs_champion: 0.02}   # currency units per transaction

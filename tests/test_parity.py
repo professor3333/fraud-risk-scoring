@@ -22,7 +22,14 @@ from fraud.data.split import load_split_config, split
 from fraud.features.columns import load_feature_spec
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.app import create_app, load_state
-from fraud.serve.parity import choose_sample, freeze, frozen_paths, load_frozen_sample, verify
+from fraud.serve.parity import (
+    choose_sample,
+    freeze,
+    frozen_paths,
+    load_frozen_sample,
+    read_manifest,
+    verify,
+)
 from fraud.train.run import fit_and_evaluate, load_train_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -168,8 +175,12 @@ def test_production_artifact_parity(full_raw_dir: Path) -> None:
     model = joblib.load(artifact)
     result = verify(model, artifact)
     assert result.n_rows == 50 and result.max_abs_diff == 0.0
-    # training-path pipeline (saved by scripts/train.py) == the production object's inner pipeline
-    training_pipe = joblib.load(str(artifact).replace("_calibrated.joblib", ".joblib"))
+    # training-path pipeline (saved by scripts/train.py) == the production object's inner pipeline;
+    # the champion's manifest names the calibrated artifact it was materialised from
+    manifest = read_manifest(artifact)
+    source = artifact if manifest is None else artifact.parents[1] / manifest["source_artifact"]
+    assert manifest is None or manifest["artifact_sha256"] == result.artifact_sha256
+    training_pipe = joblib.load(str(source).replace("_calibrated.joblib", ".joblib"))
     sample = load_frozen_sample(artifact)
     np.testing.assert_array_equal(
         training_pipe.predict_proba(sample)[:, 1], model.raw_scores(sample)

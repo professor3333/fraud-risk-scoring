@@ -41,6 +41,19 @@ def frozen_paths(artifact: Path) -> tuple[Path, Path]:
     return Path(f"{stem}_frozen_sample.json"), Path(f"{stem}_frozen_expected.json")
 
 
+def manifest_path(artifact: Path) -> Path:
+    """The promotion manifest next to a champion artifact (fraud.train.promotion)."""
+    return artifact.with_name(f"{artifact.stem}_manifest.json")
+
+
+def read_manifest(artifact: Path) -> dict[str, Any] | None:
+    path = manifest_path(artifact)
+    if not path.exists():
+        return None
+    loaded: dict[str, Any] = json.loads(path.read_text())
+    return loaded
+
+
 def choose_sample(frame: pd.DataFrame, n_per_group: int = 25) -> pd.DataFrame:
     """A deterministic sample: the lowest TransactionIDs with and without identity."""
     ordered = frame.sort_values(schema.ID_COL)

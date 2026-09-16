@@ -189,6 +189,11 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Monitoring: a frozen reference per artifact and a report over any window
   of stored predictions — API rate / latency / errors, score and action
   PSI, per-feature drift, eventual performance and calibration with labels.
+- Model promotion: candidate → acceptance gates (PR-AUC, recall at the
+  review budget, ECE, Brier, block precision, cost per transaction, parity)
+  → champion; the MLflow model registry is the ledger, `models/champion/`
+  is what the service and the image load, its manifest supplies the
+  version, facts and policy bands (ADR 0010, `docs/promotion.md`).
 - Delayed-label feedback loop: outcomes arrive later (`POST /outcomes` or
   a simulated feed), attach to their predictions, age against the 120-day
   reporting window (matured / pending / overdue); eventual metrics on
@@ -210,21 +215,22 @@ matplotlib · pytest · ruff · mypy · Docker.
 ```
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   tuning/*.yaml, backtest.yaml, retrain.yaml, threshold.yaml,
-                  policy.yaml, serving.yaml, feedback.yaml
+                  policy.yaml, serving.yaml, feedback.yaml, promotion.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0009), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0010), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
                   backtest.md, retraining.md, deployment.md, monitoring.md,
-                  feedback.md, defending_the_decisions.md, model_card.md
+                  feedback.md, promotion.md, defending_the_decisions.md,
+                  model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   backtest, retrain, learning_curve, calibrate, select_threshold,
                   review_policy, freeze_artifact, monitor_reference, monitor,
-                  feedback, simulate_feedback, ablation, feature_ladder,
-                  evaluate_test, final_report,
+                  feedback, simulate_feedback, promote, ablation,
+                  feature_ladder, evaluate_test, final_report,
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
@@ -289,7 +295,8 @@ uv run python scripts/calibrate.py --model-config configs/model/xgboost_f5_capac
 uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
 uv run python scripts/review_policy.py --run-name xgb_f5_capacity --with-test
 uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity            # frozen golden for parity
-uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity          # frozen monitoring reference
+uv run python scripts/promote.py --run-name xgb_f5_capacity                    # gates -> models/champion/ (served)
+uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity          # frozen monitoring reference (promote does this too)
 uv run python scripts/simulate_feedback.py --fresh                             # delayed labels played forward, ~1 min
 uv run python scripts/retrain.py --label-maturity-days 30 --out-dir models/retrain_delay30 --report-dir reports/retrain/delay30
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
@@ -395,6 +402,15 @@ precision, recall and calibration against the reference. Demonstrated on
 one validation day (eventual PR-AUC 0.655) and one reporting-window day
 (0.617, Brier worse) in `reports/monitoring/`.
 
+**Promotion** (`docs/promotion.md`, ADR 0010) — the service loads
+`models/champion/`, which only `scripts/promote.py` writes: a candidate is
+measured on validation under its own re-derived policy, must clear every
+gate against the current champion (PR-AUC within 0.005, recall at 200
+reviews/day, ECE ≤ 0.01, Brier, block precision, cost per transaction) and
+reproduce its golden; every evaluation is a registry version with the
+verdict in its tags, and the `champion` alias moves only on success. E022
+is champion (v1); E016 as a dry-run candidate is rejected on three gates.
+
 **Delayed labels** (`docs/feedback.md`, ADR 0009) — outcomes arrive after
 the fact: `POST /outcomes` (or `scripts/feedback.py`, which simulates the
 chargeback stream from the dataset's labels) stores them next to the
@@ -463,7 +479,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 109 fixture tests, no data, no network, ~40 s
+uv run pytest              # 113 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

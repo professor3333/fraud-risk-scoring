@@ -35,7 +35,7 @@ Stage checklist. Each stage is a working system before the next begins.
 ## Stage 6 — Serving
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
-- [x] Small UI (demo page at `/`); local-only, reason in README
+- [x] Small UI (demo page at `/`); public URL pending the owner's free HF account steps (`docs/deployment.md`)
 - [x] README complete and verified from a clean clone (v0.1.0 tagged)
 
 ## Current stage: **all six complete — operating and hardening**
@@ -43,8 +43,11 @@ Every stage box above is ticked. Work since v0.5.0 is post-stage
 operations: label feedback (ADR 0009), promotion gates (ADR 0010),
 subgroup robustness, upload limits, the API benchmark, the per-day review
 budget. Per-prediction explanation added (`docs/explanation.md`). API key, time budget and structured request logs added
-(`docs/deployment.md` → Hardening). CD on tag exists (`deploy.yml` + `scripts/release.py`). Open: the public
-Fly.io endpoint — the account login, `FLY_API_TOKEN` and `FLY_APP`.
+(`docs/deployment.md` → Hardening). CD on tag exists (`deploy.yml` + `scripts/release.py`). The hosting
+target moved from Fly.io (paid 1 GB machine) to a free Hugging Face Space
+(zero payment). Open: the owner's one-time HF account steps
+(`docs/deployment.md` → One-time setup), after which the README's *Live
+demo* line becomes the URL.
 
 ## Completion evidence
 
@@ -66,6 +69,6 @@ Fly.io endpoint — the account login, `FLY_API_TOKEN` and `FLY_APP`.
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
 | UI | analyst dashboard at `/` |
 | Quality | 118 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
-| Deployment | Docker image; Fly.io config + `scripts/deploy_check.py` (`docs/deployment.md`) — **public endpoint pending the account login** |
+| Deployment | Docker image; free public target = Hugging Face Space fetching the champion from a private repo at startup (built, tested end to end locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **public URL pending the owner's HF account steps (free, no card)** |
 | Documentation | README, ADRs 0001–0010, model card, error analysis, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

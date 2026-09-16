@@ -85,10 +85,55 @@ class ServingState:
     request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
 
 
+CHAMPION_FILES = (
+    "model.joblib",
+    "model_frozen_sample.json",
+    "model_frozen_expected.json",
+    "model_manifest.json",
+    "model_monitor_reference.json",
+)
+
+
+def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[str]:
+    """Populate the champion directory from a private artifact store at startup.
+
+    For hosts whose build context must not contain the weights (a public
+    Hugging Face Space): FRAUD_CHAMPION_URL names a directory-like base URL — a
+    private HF model repo's ``…/resolve/main`` — and HF_TOKEN authorises it. The
+    files land next to ``model_path`` and the startup parity check then treats
+    them exactly like a local champion. Optional files (the monitoring
+    reference) are skipped when the store lacks them; everything else must exist.
+    """
+    import urllib.error
+    import urllib.request
+
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    fetched: list[str] = []
+    for name in CHAMPION_FILES:
+        target = model_path.parent / name
+        if target.exists():
+            continue
+        req = urllib.request.Request(f"{base_url.rstrip('/')}/{name}", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                target.write_bytes(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and name == "model_monitor_reference.json":
+                continue
+            raise RuntimeError(f"could not fetch {name} from {base_url}: HTTP {exc.code}") from exc
+        fetched.append(name)
+    return fetched
+
+
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     raw = yaml.safe_load(config_path.read_text())
     root = config_path.resolve().parents[1]
     model_path = root / raw["model_path"]
+    champion_url = os.environ.get("FRAUD_CHAMPION_URL")
+    if not model_path.exists() and champion_url:
+        fetched = fetch_champion(model_path, champion_url, os.environ.get("HF_TOKEN"))
+        request_log.info(json.dumps({"event": "champion_fetched", "files": fetched}))
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
     # A promoted champion carries a manifest (scripts/promote.py): its version, facts and

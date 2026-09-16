@@ -689,3 +689,91 @@ def test_every_guarded_call_logs_one_json_line(
     assert set(by_id["log-1"]) == {
         "ts", "request_id", "method", "path", "status", "latency_ms", "rows", "client"
     }  # fmt: skip
+
+
+# --- champion fetched at startup (hosts whose image must not contain the weights) --------
+
+
+def test_champion_is_fetched_from_a_private_store_at_startup(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With FRAUD_CHAMPION_URL set and no local champion, the service downloads the
+    artifact, golden and manifest with the bearer token, then runs the parity check."""
+    import shutil
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from fraud.serve.app import CHAMPION_FILES, fetch_champion
+
+    # a private store: the fixture model laid out as a champion directory
+    store = tmp_path / "store"
+    store.mkdir()
+    src = Path(served["config"]).parents[1] / "models"
+    shutil.copyfile(src / "m.joblib", store / "model.joblib")
+    shutil.copyfile(src / "m_frozen_sample.json", store / "model_frozen_sample.json")
+    shutil.copyfile(src / "m_frozen_expected.json", store / "model_frozen_expected.json")
+    import hashlib
+    import json
+
+    sha = hashlib.sha256((store / "model.joblib").read_bytes()).hexdigest()
+    (store / "model_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_name": "fixture", "model_version": "fixture+sigmoid", "artifact_sha256": sha,
+                "bands": {"review": 0.05, "block": 0.5}, "model_info": {"experiment": "fetched"},
+            }
+        )
+    )  # fmt: skip
+    seen: list[tuple[str, str | None]] = []
+
+    class Store(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            seen.append((self.path, self.headers.get("Authorization")))
+            if self.headers.get("Authorization") != "Bearer tok":
+                self.send_response(401)
+                self.end_headers()
+                return
+            target = store / self.path.strip("/").split("/")[-1]
+            if not target.exists():
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Store)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}/resolve/main"
+    try:
+        # the module function: fetches what is missing, tolerates a missing reference
+        target = tmp_path / "champion" / "model.joblib"
+        fetched = fetch_champion(target, base, "tok")
+        assert set(fetched) == set(CHAMPION_FILES) - {"model_monitor_reference.json"}
+        assert all(a == "Bearer tok" for _, a in seen)
+        assert fetch_champion(target, base, "tok") == []  # idempotent: nothing re-fetched
+        with pytest.raises(RuntimeError, match="HTTP 401"):
+            fetch_champion(tmp_path / "other" / "model.joblib", base, "wrong")
+        # the service: an empty champion directory + the env → a serving, parity-checked app
+        root = tmp_path / "svc"
+        (root / "configs").mkdir(parents=True)
+        cfg = root / "configs" / "serving.yaml"
+        cfg.write_text(
+            "model_path: models/champion/model.joblib\naudit_db: null\n"
+            "model_version: unused\nbands: {review: 0.062, block: 0.42}\n"
+        )
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", base)
+        monkeypatch.setenv("HF_TOKEN", "tok")
+        with TestClient(create_app(cfg)) as c:
+            h = c.get("/health").json()
+            assert h["parity_rows"] == 10 and h["model_version"].startswith("fixture+sigmoid@")
+            assert c.get("/model-info").json()["experiment"] == "fetched"
+            assert c.get("/model-info").json()["bands"]["block"] == 0.5
+        assert (root / "models" / "champion" / "model.joblib").exists()
+    finally:
+        server.shutdown()

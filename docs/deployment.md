@@ -1,44 +1,90 @@
 # Deployment
 
 The service is packaged as a Docker image (`Dockerfile`: runtime deps from
-`uv.lock`, non-root user, healthcheck, the calibrated artifact and its frozen
-sample). It runs anywhere Docker runs; the public deployment target is Fly.io.
+`uv.lock`, non-root user, healthcheck, the champion directory and its frozen
+sample). It runs anywhere Docker runs. Two public targets are wired:
 
-## Why Fly.io, and what is and is not published
+| | Hugging Face Space (default) | Fly.io (alternative) |
+|---|---|---|
+| cost | **free** — CPU basic (2 vCPU, 16 GB), no card | 1 GB machine is paid; a card is required |
+| the weights | fetched at startup from a **private** HF model repo with a token; the public Space repo holds three files and no model | baked into an image in Fly's **private** registry |
+| idle behaviour | sleeps after inactivity; first request wakes it (build is cached; container start ≈ 3 s + a 41 MB fetch) | scale-to-zero |
+| persistence | none on the free tier: the audit trail is ephemeral | a volume for the audit trail |
+| CD leg (`deploy.yml`) | `space` job: needs `vars.HF_SPACE`, `secrets.HF_TOKEN` | `fly` job: needs `vars.FLY_APP`, `secrets.FLY_API_TOKEN` |
 
-- The image is pushed to Fly's **private** registry and served from there:
-  the endpoint is public, the model weights are not redistributed. (A
-  Hugging Face Space or a public GHCR image would expose the artifact, which
-  was trained on competition data.)
-- Scale-to-zero (`auto_stop_machines`) keeps an idle demo essentially free;
-  the 1 GB VM the model needs is a paid size on Fly (a few dollars a month
-  while running). A card on the Fly account is required.
+Fly was the original target; its config (`fly.toml`) stays for anyone
+with an account. The zero-payment requirement is what moved the default.
 
-## One-time setup (needs the account owner)
+## The Space
+
+```
+GitHub repo ──(git clone at FRAUD_REF)──► Space build ──► image without weights
+                                                              │ startup
+private HF model repo (models/champion/) ──(HF_TOKEN)──► fetch_champion() ──► parity check ──► serve
+```
+
+- `deploy/space/` is the whole Space repository: a `Dockerfile` that clones
+  this repository at `FRAUD_REF` and installs it from the lock file, and a
+  `README.md` with the Space metadata (`sdk: docker`, `app_port: 7860`).
+- `FRAUD_CHAMPION_URL` (Space variable) = `https://huggingface.co/<user>/<model-repo>/resolve/main`;
+  `HF_TOKEN` (Space secret, read scope) authorises it. `fraud.serve.app.
+  fetch_champion` downloads `model.joblib`, the frozen golden, the manifest
+  and the monitoring reference into `models/champion/` when the directory
+  is empty, and the startup parity check runs as everywhere else — a Space
+  with the wrong token or a tampered file does not come up.
+- `FRAUD_API_KEY` is **not** set on the demo Space: the dashboard has to
+  score without a key to be a demo. The upload cap, the time budget and
+  the Space's own sleep are the protections; the audit trail is
+  ephemeral, so `/outcomes` writes nothing that outlives a restart.
+
+Verified locally end to end before any account existed: the Space image
+built from GitHub, a token-checking store serving `models/champion/`,
+`FRAUD_CHAMPION_URL` pointing at it → healthy in 3 s, `parity_rows` 50,
+`deploy_check.py` passed, dashboard served.
+
+## One-time setup (needs the account owner, once)
 
 ```bash
-brew install flyctl                 # installed already on the build machine
-flyctl auth login                   # opens the browser; the only step that needs you
+uvx --from huggingface_hub hf auth login                          # a free HF account, no card
+uv run python scripts/publish_champion.py --repo <user>/fraud-risk-scoring-model
+#   → creates the PRIVATE model repo, uploads models/champion/, prints FRAUD_CHAMPION_URL
+
+# the Space: create it once (Docker SDK, public, CPU basic), then set on it
+#   variable FRAUD_CHAMPION_URL = the URL printed above
+#   secret   HF_TOKEN           = a read token for the model repo
+uvx --from huggingface_hub hf repo create <user>/fraud-risk-scoring --repo-type space --space-sdk docker
+uvx --from huggingface_hub hf upload spaces/<user>/fraud-risk-scoring deploy/space . --repo-type space
+
+# continuous deployment from GitHub on every tag
+gh variable set HF_SPACE --body <user>/fraud-risk-scoring
+gh secret set HF_TOKEN --body <a write token for the Space>
+```
+
+Then `uv run python scripts/release.py vX.Y.Z` cuts a release whose tag
+pushes the Space repository pinned to that tag, waits for the build, runs
+`deploy_check.py https://<user>-fraud-risk-scoring.hf.space`, and cuts the
+GitHub release. The live URL goes into the README's *Live demo* line.
+
+## Fly.io (alternative)
+
+```bash
+brew install flyctl
+flyctl auth login
 flyctl apps create fraud-risk-scoring
+flyctl secrets set FRAUD_API_KEY=…            # optional
+flyctl volumes create fraud_audit --size 1    # persistent audit trail (mounted at /app/audit)
+uv run python scripts/release.py vX.Y.Z --fly-image   # builds + pushes registry.fly.io/<app>:vX.Y.Z
+gh variable set FLY_APP --body fraud-risk-scoring && gh secret set FLY_API_TOKEN --body "$(flyctl tokens create deploy -x 999999h)"
 ```
 
-## Deploy
+## The check every deployment must pass
 
-```bash
-# make sure the champion directory exists locally (written by scripts/promote.py)
-ls models/champion/
-
-flyctl volumes create fraud_audit --size 1   # persistent audit trail (mounted at /app/audit)
-flyctl deploy --remote-only          # builds the Dockerfile on Fly's builder, pushes, starts
-uv run python scripts/deploy_check.py https://fraud-risk-scoring.fly.dev
-```
-
-`deploy_check.py` asserts: `/health` is `ok` with `parity_rows > 0` (the
-startup parity check ran), `/model-info` reports the same version, and the
-synthetic sample CSV scores 200 rows with the same model version. If the
-artifact in the image does not reproduce its frozen golden, the machine
-never becomes healthy and the deploy fails — which is the intended
-behaviour.
+`scripts/deploy_check.py <url>` asserts: `/health` is `ok` with
+`parity_rows > 0` (the startup parity check ran), `/model-info` reports
+the same version, and the synthetic sample CSV scores 200 rows with the
+same model version. If the artifact does not reproduce its frozen golden
+the service never becomes healthy and the check fails — the intended
+behaviour. It sends `X-API-Key` when `/health` says the service is keyed.
 
 ## Updating the model
 
@@ -47,8 +93,8 @@ behaviour.
    gates (`docs/promotion.md`); on success `models/champion/` is replaced
    and the registry alias moves. Nothing in `configs/`, the `Dockerfile` or
    `.dockerignore` changes.
-3. Release (below), or for an unversioned deploy `flyctl deploy
-   --remote-only` and `deploy_check.py`.
+3. `uv run python scripts/publish_champion.py --repo <user>/<model-repo>`
+   so the Space can fetch it, then release (below).
 
 To revert, promote the previous champion again; it goes through the same
 gates.
@@ -60,32 +106,29 @@ scripts/release.py vX.Y.Z   (the machine that holds models/champion)
   ├─ preconditions: main, clean tree, pyproject version == X.Y.Z, tag unused,
   │                 champion reproduces its golden
   ├─ tests → ruff → format → mypy                      (§14 ship sequence)
-  ├─ flyctl deploy --build-only --push --image-label vX.Y.Z
-  │     → registry.fly.io/fraud-risk-scoring:vX.Y.Z   (private; weights never leave it)
+  ├─ [--fly-image] flyctl deploy --build-only --push --image-label vX.Y.Z
   └─ git tag -a vX.Y.Z && git push origin vX.Y.Z
                 │
                 ▼  .github/workflows/deploy.yml (on the tag)
-  ci.yml (lint, types, tests, fixture image, container health)
-  flyctl deploy --image registry.fly.io/<app>:vX.Y.Z    needs secrets.FLY_API_TOKEN, vars.FLY_APP
-  scripts/deploy_check.py https://<app>.fly.dev         needs secrets.FRAUD_API_KEY when the service is keyed
-  gh release create vX.Y.Z --generate-notes
+  checks   ci.yml (lint, types, tests, fixture image, container health)
+  space    push deploy/space/ pinned to vX.Y.Z → Space builds from GitHub, fetches the champion
+           → scripts/deploy_check.py https://<user>-<space>.hf.space
+  fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z → deploy_check.py
+  release  gh release create vX.Y.Z --generate-notes
 ```
 
-Why two halves: the model weights are git-ignored and must not reach a
-public runner or a public image, so the runner deploys an image it cannot
-build. The build happens where the champion is, gated by the same tests
-CI runs; the runner only ever moves a labelled image and checks the
-result. Until `FLY_API_TOKEN` and `FLY_APP` are set (`flyctl tokens create
-deploy`; repository settings → secrets and variables), a tag still runs
-the checks and cuts the GitHub release, and the deploy job is skipped.
-`scripts/release.py --dry-run` prints the sequence without doing it;
-`--skip-image` tags an image pushed earlier.
+The weights are git-ignored and must not reach a public runner or a
+public image. On the Space leg the runner pushes three files and the
+Space itself clones the tag and fetches the champion from the private
+repo; on the Fly leg the runner deploys an image built where the champion
+is. A leg whose variables are unset is skipped; the release is still cut.
+`scripts/release.py --dry-run` prints the sequence without doing it.
 
 ## Hardening for a public URL
 
 | protection | where | behaviour |
 |---|---|---|
-| API key | `FRAUD_API_KEY` (a Fly secret: `flyctl secrets set FRAUD_API_KEY=…`) | when set, `/predict*`, `/explain`, `/outcomes` and `/audit/*` require a matching `X-API-Key` (constant-time compare) → 401 before the body is read; `/health`, `/model-info` and the dashboard stay open, and `/health` reports `auth: api_key`. The dashboard shows a key field when the server asks for one and keeps it in the browser only. Unset = open, for local use. |
+| API key | `FRAUD_API_KEY` (a Space secret or a Fly secret; unset on the demo Space) | when set, `/predict*`, `/explain`, `/outcomes` and `/audit/*` require a matching `X-API-Key` (constant-time compare) → 401 before the body is read; `/health`, `/model-info` and the dashboard stay open, and `/health` reports `auth: api_key`. The dashboard shows a key field when the server asks for one and keeps it in the browser only. Unset = open, for local use. |
 | upload cap | `serving.yaml` `max_upload_bytes` (25 MB) | declared length checked, then the stream abandoned the moment it exceeds the cap → 413; the row limit stops the parser one row past 5,000 → 422 |
 | time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
 | request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |

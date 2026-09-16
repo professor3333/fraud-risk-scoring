@@ -1,15 +1,18 @@
-# Continuous deployment: a version tag deploys the image that scripts/release.py
-# built from the champion and pushed to Fly's private registry, then verifies it.
+# Continuous deployment on a version tag (docs/deployment.md).
 #
-#   scripts/release.py vX.Y.Z   (local: tests → image from models/champion → push → git tag)
-#         │ push tag
-#         ▼
-#   this workflow: ci checks → flyctl deploy --image registry.fly.io/<app>:vX.Y.Z
-#                  → scripts/deploy_check.py <url> → GitHub release
+#   scripts/release.py vX.Y.Z  →  git tag  →  this workflow:
+#     checks   ci.yml (lint, types, tests, fixture image, container health)
+#     space    push deploy/space/ to the Hugging Face Space with FRAUD_REF=vX.Y.Z; the Space
+#              builds from GitHub at that tag and fetches the champion from the private
+#              model repo at startup; then scripts/deploy_check.py against the live URL
+#              needs: vars.HF_SPACE (user/space), secrets.HF_TOKEN  — the free, public demo
+#     fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z (image pushed by release.py
+#              --fly-image), then deploy_check.py — the paid alternative
+#              needs: vars.FLY_APP, secrets.FLY_API_TOKEN
+#     release  GitHub release from the tag
 #
-# The model weights never enter the repository or a public runner: the runner deploys
-# an image it cannot build. Needs the FLY_API_TOKEN repository secret (flyctl tokens
-# create deploy); without it the deploy job is skipped and the release is still cut.
+# The model weights never enter the repository, a public runner or a public image.
+# A leg whose variables are unset is skipped; the release is still cut.
 name: deploy
 
 on:
@@ -23,7 +26,41 @@ jobs:
   checks:
     uses: ./.github/workflows/ci.yml
 
-  deploy:
+  space:
+    needs: checks
+    runs-on: ubuntu-latest
+    if: ${{ vars.HF_SPACE != '' }}
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE: ${{ vars.HF_SPACE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push the Space repository pinned to this tag
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cp deploy/space/Dockerfile deploy/space/README.md "$work/"
+          sed -i "s|^ARG FRAUD_REF=.*|ARG FRAUD_REF=${GITHUB_REF_NAME}|" "$work/Dockerfile"
+          cd "$work"
+          git init -q -b main
+          git config user.name "deploy"
+          git config user.email "deploy@users.noreply.github.com"
+          git add . && git commit -q -m "Deploy ${GITHUB_REF_NAME}"
+          git push -q --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" main
+      - uses: astral-sh/setup-uv@v6
+      - name: Wait for the Space to build and verify the live service
+        run: |
+          set -euo pipefail
+          url="https://${HF_SPACE/\//-}.hf.space"
+          for i in $(seq 1 90); do
+            curl -sf "$url/health" >/dev/null && break
+            sleep 20
+          done
+          uv run --no-project python scripts/deploy_check.py "$url"
+        env:
+          FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
+
+  fly:
     needs: checks
     runs-on: ubuntu-latest
     if: ${{ vars.FLY_APP != '' }}

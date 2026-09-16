@@ -27,6 +27,12 @@ model_info:
   calibration: sigmoid
   training_window_days: [1, 122]
   validation_window_days: [123, 152]
+# Time budget per call on the scoring, explanation and outcome endpoints; a call past
+# it returns 504 (the 5,000-row CSV takes ~6 s on the benchmark host, README → Performance).
+request_timeout_s: 60
+# Access: when the FRAUD_API_KEY environment variable (a Fly secret in deployment) is set,
+# /predict*, /explain, /outcomes and /audit/* require a matching X-API-Key header; /health,
+# /model-info and the dashboard stay open. Unset = open, for local use.
 # Largest CSV upload accepted by /predict/csv, in bytes (5,000 rows of the raw schema is
 # ~6 MB); the row limit (5,000) is checked while parsing, not after.
 max_upload_bytes: 26214400

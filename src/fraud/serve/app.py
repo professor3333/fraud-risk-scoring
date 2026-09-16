@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import hmac
 import io
+import json
+import logging
 import math
 import os
 import time
@@ -56,6 +60,10 @@ from fraud.serve.schemas import (
 
 MAX_CSV_ROWS = 5_000
 SECONDS_PER_DAY = 86_400
+# Endpoints that score, explain or write labels: protected by X-API-Key when FRAUD_API_KEY
+# is set, recorded in the requests table, logged as one JSON line, and bounded in time.
+GUARDED_PREFIXES = ("/predict", "/explain", "/outcomes", "/audit")
+request_log = logging.getLogger("fraud.serve.requests")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # serving.yaml max_upload_bytes overrides
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +81,8 @@ class ServingState:
     default_review_budget: int
     audit: AuditLog | None
     max_upload_bytes: int = MAX_UPLOAD_BYTES
+    api_key: str | None = None  # FRAUD_API_KEY; None leaves the guarded endpoints open
+    request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -119,6 +129,8 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         default_review_budget=int(raw.get("default_review_budget", 200)),
         audit=audit,
         max_upload_bytes=int(raw.get("max_upload_bytes", MAX_UPLOAD_BYTES)),
+        api_key=os.environ.get("FRAUD_API_KEY") or None,
+        request_timeout_s=float(raw.get("request_timeout_s", 60.0)),
     )
 
 
@@ -378,6 +390,40 @@ async def read_upload(request: Request, file: UploadFile, max_bytes: int) -> byt
     return b"".join(chunks)
 
 
+def _finish(
+    request: Request,
+    response: Response,
+    rid: str,
+    started: str,
+    t0: float,
+    state: ServingState | None,
+) -> Response:
+    """Stamp the request id, store the call, log one JSON line."""
+    rid = response.headers.get("X-Request-ID", rid)
+    latency = (time.perf_counter() - t0) * 1000
+    rows = int(response.headers.get("X-Rows", "0"))
+    if state is not None and state.audit is not None:
+        state.audit.record_request(
+            rid, request.url.path, started, response.status_code, latency, rows
+        )
+    response.headers.setdefault("X-Request-ID", rid)
+    request_log.info(
+        json.dumps(
+            {
+                "ts": started,
+                "request_id": rid,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "latency_ms": round(latency, 1),
+                "rows": rows,
+                "client": request.client.host if request.client else None,
+            }
+        )
+    )
+    return response
+
+
 def request_id_of(request: Request) -> str:
     return request.headers.get("x-request-id") or new_request_id()
 
@@ -412,25 +458,42 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         yield
 
     app = FastAPI(title="fraud-risk-scoring", version="0.5.0", lifespan=lifespan)
+    if not request_log.handlers:  # one JSON object per line, ready for a log shipper
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        request_log.addHandler(handler)
+        request_log.setLevel(logging.INFO)
+        request_log.propagate = False
 
     @app.middleware("http")
-    async def record_request(request: Request, call_next: Any) -> Any:
-        """Every scoring call — success or error — lands in the requests table."""
-        if not request.url.path.startswith("/predict"):
+    async def guard_and_record(request: Request, call_next: Any) -> Any:
+        """Guarded endpoints: API key (when configured), time budget, requests table, one
+        structured log line per call — success, rejection or error alike."""
+        if not request.url.path.startswith(GUARDED_PREFIXES):
             return await call_next(request)
         started = utc_now()
         t0 = time.perf_counter()
         rid = request_id_of(request)
-        response = await call_next(request)
-        state = getattr(request.app.state, "serving", None)
-        if state is not None and state.audit is not None:
-            rid = response.headers.get("X-Request-ID", rid)
-            state.audit.record_request(
-                rid, request.url.path, started, response.status_code,
-                (time.perf_counter() - t0) * 1000, int(response.headers.get("X-Rows", "0")),
-            )  # fmt: skip
-        response.headers.setdefault("X-Request-ID", rid)
-        return response
+        state: ServingState | None = getattr(request.app.state, "serving", None)
+        if state is not None and state.api_key is not None:
+            given = request.headers.get("x-api-key", "")
+            if not hmac.compare_digest(given.encode(), state.api_key.encode()):
+                response = Response(
+                    json.dumps({"detail": "missing or invalid X-API-Key"}),
+                    status_code=401,
+                    media_type="application/json",
+                )
+                return _finish(request, response, rid, started, t0, state)
+        timeout = state.request_timeout_s if state is not None else 60.0
+        try:
+            response = await asyncio.wait_for(call_next(request), timeout=timeout)
+        except TimeoutError:
+            response = Response(
+                json.dumps({"detail": f"request exceeded {timeout:g} s"}),
+                status_code=504,
+                media_type="application/json",
+            )
+        return _finish(request, response, rid, started, t0, state)
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
@@ -452,6 +515,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             model_version=s.model_version,
             parity_rows=s.parity_rows,
             audit_events=s.audit.count() if s.audit is not None else None,
+            auth="api_key" if s.api_key else "open",
         )
 
     @app.get("/model-info", response_model=ModelInfoResponse)
@@ -486,6 +550,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     def explain_one(
         body: TransactionRequest,  # type: ignore[valid-type]
         request: Request,
+        response: Response,
         top_k: int = 8,
     ) -> ExplanationResponse:
         """Which inputs moved this transaction's score, and how far (docs/explanation.md).
@@ -493,6 +558,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         state: ServingState = request.app.state.serving
         frame = request_to_frame(body.model_dump())  # type: ignore[attr-defined]
         e = explain(state.model, frame, top_k=max(1, min(top_k, 50)))
+        response.headers["X-Rows"] = "1"
         return ExplanationResponse(
             model_version=state.model_version,
             note=(
@@ -571,7 +637,9 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         return [AuditEvent(**e) for e in s.audit.recent(min(limit, 1000), transaction_id)]
 
     @app.post("/outcomes", response_model=OutcomesResponse)
-    def post_outcomes(body: OutcomesRequest, request: Request) -> OutcomesResponse:
+    def post_outcomes(
+        body: OutcomesRequest, request: Request, response: Response
+    ) -> OutcomesResponse:
         """Delayed labels arriving for scored transactions (docs/feedback.md)."""
         s: ServingState = request.app.state.serving
         if s.audit is None:
@@ -585,6 +653,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         recorded = s.audit.record_outcomes(rows)
         clock = max(o.observed_dt for o in body.outcomes)
         total = s.audit.record_feed_run(clock, recorded, body.source)
+        response.headers["X-Rows"] = str(recorded)
         return OutcomesResponse(received=len(rows), recorded=recorded, total=total)
 
     return app

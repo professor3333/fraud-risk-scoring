@@ -606,3 +606,86 @@ def test_requests_and_inputs_are_recorded_for_monitoring(
         "WHERE request_id = ?", (rid,)
     ).fetchall()  # fmt: skip
     assert len(snap) == 4 and all(0 <= h <= 23 for _, _, h, _ in snap)
+
+
+# --- public-API hardening ----------------------------------------------------------------
+
+
+def test_api_key_guards_scoring_and_labels_when_configured(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _payload(served["rows"].iloc[0])
+    # open by default: /health says so and nothing needs a key
+    with _fresh_client(served, tmp_path) as c:
+        assert c.get("/health").json()["auth"] == "open"
+        assert c.post("/predict", json=payload).status_code == 200
+    monkeypatch.setenv("FRAUD_API_KEY", "s3cret")
+    (tmp_path / "keyed").mkdir()
+    with _fresh_client(served, tmp_path / "keyed") as c:
+        assert c.get("/health").json()["auth"] == "api_key"
+        assert c.get("/model-info").status_code == 200  # facts stay open
+        assert c.get("/").status_code == 200
+        for path, kwargs in (
+            ("/predict", {"json": payload}),
+            ("/predict/batch", {"json": {"transactions": [payload]}}),
+            ("/explain", {"json": payload}),
+            ("/outcomes", {"json": {"outcomes": [{"transaction_id": 1, "is_fraud": True,
+                                                  "event_dt": 1, "observed_dt": 2}]}}),
+        ):  # fmt: skip
+            r = c.post(path, **kwargs)
+            assert r.status_code == 401 and "X-API-Key" in r.json()["detail"], path
+            assert c.post(path, headers={"X-API-Key": "wrong"}, **kwargs).status_code == 401
+            assert c.post(path, headers={"X-API-Key": "s3cret"}, **kwargs).status_code == 200
+        assert c.get("/audit/recent").status_code == 401
+        assert c.get("/audit/recent", headers={"X-API-Key": "s3cret"}).status_code == 200
+        # rejected calls are still recorded and carry a request id
+        r = c.post("/predict", json=payload, headers={"X-Request-ID": "denied-1"})
+        assert r.status_code == 401 and r.headers["X-Request-ID"] == "denied-1"
+        import sqlite3
+
+        db = sqlite3.connect(tmp_path / "keyed" / "audit.sqlite")
+        row = db.execute(
+            "SELECT status_code, n_rows FROM requests WHERE request_id = 'denied-1'"
+        ).fetchone()
+        assert row == (401, 0)
+
+
+def test_request_time_budget_returns_504(served: dict[str, Any], tmp_path: Path) -> None:
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    cfg.write_text(text + "audit_db: null\nrequest_timeout_s: 0.001\n")
+    rows: pd.DataFrame = served["rows"].head(50)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+    with TestClient(create_app(cfg)) as c:
+        r = c.post("/predict/csv", files={"file": ("q.csv", csv, "text/csv")})
+        assert r.status_code == 504 and "exceeded" in r.json()["detail"]
+        assert c.get("/health").status_code == 200  # unguarded paths are not bounded
+
+
+def test_every_guarded_call_logs_one_json_line(
+    client: TestClient, served: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    import json
+    import logging
+
+    payload = _payload(served["rows"].iloc[0])
+    with caplog.at_level(logging.INFO, logger="fraud.serve.requests"):
+        client.post("/predict", json=payload, headers={"X-Request-ID": "log-1"})
+        client.post("/explain", json=payload, headers={"X-Request-ID": "log-2"})
+        client.post("/predict", json={"bad": 1}, headers={"X-Request-ID": "log-3"})
+    lines = [json.loads(r.getMessage()) for r in caplog.records if r.name == "fraud.serve.requests"]
+    by_id = {line["request_id"]: line for line in lines}
+    assert by_id["log-1"]["path"] == "/predict" and by_id["log-1"]["status"] == 200
+    assert by_id["log-1"]["rows"] == 1 and by_id["log-1"]["latency_ms"] > 0
+    assert by_id["log-2"]["path"] == "/explain" and by_id["log-2"]["rows"] == 1
+    assert by_id["log-3"]["status"] == 422 and by_id["log-3"]["rows"] == 0
+    assert set(by_id["log-1"]) == {
+        "ts", "request_id", "method", "path", "status", "latency_ms", "rows", "client"
+    }  # fmt: skip

@@ -238,6 +238,7 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   review_policy, freeze_artifact, monitor_reference, monitor,
                   feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report, benchmark_api,
+                  release
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
@@ -476,6 +477,12 @@ model weights are not redistributed, the endpoint is public, and
 scored sample after each deploy. Requires the account owner's `flyctl auth
 login` once.
 
+**Release:** `uv run python scripts/release.py vX.Y.Z` runs the checks,
+builds the image from `models/champion/` into Fly's private registry
+labelled with the tag, and pushes the tag; `.github/workflows/deploy.yml`
+then re-runs CI, deploys that image, runs `deploy_check.py` against the
+live URL and cuts the GitHub release. The runner never sees the weights.
+
 ## Performance
 
 `uv run python scripts/benchmark_api.py` starts a local server on a scratch
@@ -559,7 +566,9 @@ test map is `docs/testing.md`.
 
 CI (`.github/workflows/ci.yml`): ruff → mypy → pytest → smoke training
 through the CLI on the fixture → Docker build → container `/health` with
-the startup parity check. The full model is never trained in CI.
+the startup parity check. The full model is never trained in CI. A version
+tag additionally deploys the release image and verifies the live service
+(`.github/workflows/deploy.yml`, `docs/deployment.md` → Release).
 
 ## Development setup
 

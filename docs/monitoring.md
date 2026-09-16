@@ -85,9 +85,10 @@ Reading:
   the generic 0.20.
 - **The error-rate flag works** (the two malformed requests are 16.7 % of
   twelve calls).
-- **Latency is the next engineering item**: 3–5 s for a 280-row CSV batch
-  is the per-row `details` construction and per-row snapshot loops, not
-  the model; single predictions take ~10 ms.
+- **Latency** was 3–5 s for a 280-row CSV batch when this was written.
+  `scripts/benchmark_api.py` (README → Performance) now puts a 200-row CSV
+  at 0.5 s and a single prediction at ~50 ms end to end; the batch endpoint's
+  36 s for 1,000 rows was found and fixed by the same benchmark.
 
 ## Operating it
 

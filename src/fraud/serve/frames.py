@@ -52,7 +52,27 @@ def row_to_payload(row: pd.Series) -> dict[str, Any]:
 
 
 def payloads_to_frame(payloads: list[dict[str, Any]]) -> pd.DataFrame:
-    return pd.concat([request_to_frame(p) for p in payloads], ignore_index=True)
+    """Many validated requests -> one frame, column by column.
+
+    Equal to concatenating :func:`request_to_frame` over the payloads (a test
+    asserts it, dtypes included) — that construction is one Series per field per
+    row and took 19 s for a 1,000-row batch; this is one Series per field.
+    """
+    columns: dict[str, pd.Series] = {}
+    for col in INPUT_COLUMNS:
+        values: list[Any] = [p.get(col) for p in payloads]
+        if col in (schema.ID_COL, schema.TIME_COL):
+            columns[col] = pd.Series([int(v) for v in values], dtype="int64")
+        elif col in _STR_COLS:
+            columns[col] = pd.Series([None if v is None else str(v) for v in values], dtype="str")
+        else:
+            columns[col] = pd.Series(
+                [float("nan") if v is None else float(v) for v in values], dtype="float64"
+            )
+    columns[schema.HAS_IDENTITY_COL] = pd.Series(
+        [any(p.get(c) is not None for c in IDENTITY_FIELDS) for p in payloads], dtype="bool"
+    )
+    return pd.DataFrame(columns)
 
 
 def table_to_frame(table: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:

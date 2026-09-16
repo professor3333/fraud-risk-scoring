@@ -52,6 +52,15 @@ behaviour.
 To revert, promote the previous champion again; it goes through the same
 gates.
 
+## Sizing evidence
+
+`fly.toml` asks for 1 GB and a soft / hard request concurrency of 20 / 50.
+`scripts/benchmark_api.py --url …` against the image under `--cpus 1
+--memory 1g` (README → Performance, `reports/benchmark/docker_1cpu_1gb.md`):
+peak memory 538 MiB, cold start 3.5 s, 21 single predictions/s at 20
+concurrent clients with p50 0.9 s. Run it against the Fly URL after a
+deploy to see what the shared CPU actually gives.
+
 ## Local alternative
 
 ```bash

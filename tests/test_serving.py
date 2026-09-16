@@ -244,6 +244,20 @@ def test_csv_upload_scores_ranks_and_summarises(client: TestClient, served: dict
         assert "TransactionAmt" in x["details"] and "isFraud" not in x["details"]
 
 
+def test_payloads_to_frame_equals_row_by_row_construction(served: dict[str, Any]) -> None:
+    """The vectorised batch frame is the single-request frame, row for row, dtype for dtype
+    (the golden and the batch == single test both rest on this)."""
+    from fraud.serve.frames import payloads_to_frame, request_to_frame
+
+    rows: pd.DataFrame = served["rows"].head(40)
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    payloads[3] = {k: v for k, v in payloads[3].items() if not k.startswith("id_")}  # no identity
+    vectorised = payloads_to_frame(payloads)
+    row_by_row = pd.concat([request_to_frame(p) for p in payloads], ignore_index=True)
+    pd.testing.assert_frame_equal(vectorised, row_by_row, check_dtype=True, check_exact=True)
+    assert not vectorised.loc[3, schema.HAS_IDENTITY_COL]
+
+
 def test_csv_upload_rejects_bad_files(client: TestClient, served: dict[str, Any]) -> None:
     rows: pd.DataFrame = served["rows"].head(3).drop(columns=[schema.TARGET_COL])
     r = client.post("/predict/csv", files={"file": ("q.csv", "", "text/csv")})

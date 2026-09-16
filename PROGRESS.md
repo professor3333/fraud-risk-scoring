@@ -30,7 +30,7 @@ Stage checklist. Each stage is a working system before the next begins.
 
 ## Stage 5 — Ablation, importance, model card
 - [x] Ablation per feature group; importance from two methods (`docs/ablation.md`)
-- [x] `docs/model_card.md`; single test-window evaluation (test PR-AUC 0.553)
+- [x] `docs/model_card.md`; single test-window evaluation (E022: test PR-AUC 0.561)
 
 ## Stage 6 — Serving
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
@@ -38,9 +38,15 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] Small UI (demo page at `/`); local-only, reason in README
 - [x] README complete and verified from a clean clone (v0.1.0 tagged)
 
-## Current stage: **3 — Feature engineering + XGBoost**
-ADR 0004 written; E007 entity history rejected (no gain when restricted to legitimate computation).
-Next: Stage 4 — calibrate, choose the threshold, learning curves.
+## Current stage: **all six complete — operating and hardening**
+Every stage box above is ticked except the tuning-vs-untuned comparison in
+Stage 3, which the expanding-window search (E008) and the one-axis sweeps
+(E021) cover in substance (`docs/xgboost_progression.md`); it stays unticked
+until written up as one comparison. Work since v0.5.0 is post-stage
+operations: label feedback (ADR 0009), promotion gates (ADR 0010),
+subgroup robustness, upload limits, the API benchmark, the per-day review
+budget. Open: the public Fly.io endpoint (needs the account login), CD on
+tag, API hardening for a public URL, per-prediction explanation.
 
 ## Completion evidence
 
@@ -61,7 +67,7 @@ Next: Stage 4 — calibrate, choose the threshold, learning curves.
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
 | UI | analyst dashboard at `/` |
-| Quality | 93 tests (`docs/testing.md`), CI green with container check |
+| Quality | 118 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; Fly.io config + `scripts/deploy_check.py` (`docs/deployment.md`) — **public endpoint pending the account login** |
 | Documentation | README, ADRs 0001–0010, model card, error analysis, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

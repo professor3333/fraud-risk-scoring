@@ -52,6 +52,21 @@ behaviour.
 To revert, promote the previous champion again; it goes through the same
 gates.
 
+## Hardening for a public URL
+
+| protection | where | behaviour |
+|---|---|---|
+| API key | `FRAUD_API_KEY` (a Fly secret: `flyctl secrets set FRAUD_API_KEY=…`) | when set, `/predict*`, `/explain`, `/outcomes` and `/audit/*` require a matching `X-API-Key` (constant-time compare) → 401 before the body is read; `/health`, `/model-info` and the dashboard stay open, and `/health` reports `auth: api_key`. The dashboard shows a key field when the server asks for one and keeps it in the browser only. Unset = open, for local use. |
+| upload cap | `serving.yaml` `max_upload_bytes` (25 MB) | declared length checked, then the stream abandoned the moment it exceeds the cap → 413; the row limit stops the parser one row past 5,000 → 422 |
+| time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
+| request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |
+| structured logs | logger `fraud.serve.requests` | one JSON line per guarded call — `ts, request_id, method, path, status, latency_ms, rows, client` — success, 401, 422 and 504 alike; Fly ships stdout to `flyctl logs` |
+| rate limiting | `fly.toml` `[http_service.concurrency]` soft 20 / hard 50 | Fly's proxy queues then refuses beyond the hard limit per machine; the benchmark (README → Performance) is why 20 is the soft limit |
+
+Checked against a live server with a 0.5 s budget: a 4.7 MB upload without
+a key → 401 in 0.9 ms (nothing read); with the key → 504; `/health` 200
+in 1.6 ms afterwards.
+
 ## Sizing evidence
 
 `fly.toml` asks for 1 GB and a soft / hard request concurrency of 20 / 50.

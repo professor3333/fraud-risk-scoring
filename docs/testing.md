@@ -1,6 +1,6 @@
 # Testing
 
-`uv run pytest` — 121 tests on a synthetic 400-row fixture (`tests/fixtures/`),
+`uv run pytest` — 124 tests on a synthetic 400-row fixture (`tests/fixtures/`),
 no data download, no network, ~20 s. `uv run pytest -m slow` — 4 tests
 against the real files and the production artifact when present. CI runs
 the default set plus a smoke training through the CLI, a Docker build and a
@@ -28,6 +28,7 @@ container health check (`.github/workflows/ci.yml`).
 | reproducibility (same config + seed → same metric) | `test_model::test_run_is_reproducible` |
 | model serialization (save → load → identical, twice) | `test_ml_contracts::test_model_serialization_roundtrip_is_exact`, `test_pipeline::test_save_load_identical_predictions` |
 | training / inference parity | `test_parity::test_training_path_equals_loaded_artifact_raw_scores`, `test_loaded_artifact_matches_frozen_golden`, `test_api_matches_frozen_golden_and_offline`, `test_service_refuses_to_start_on_parity_mismatch`, `test_fixture_feature_matrix_matches_committed_golden`; slow: `test_production_artifact_parity` |
+| public-API hardening: API key required on scoring / explain / outcomes / audit when configured (401 before the body, constant-time compare, rejected calls recorded with their request id), open otherwise and `/health` says which; time budget → 504 while unguarded paths stay unbounded; one JSON log line per guarded call with a fixed key set | `test_serving::test_api_key_guards_scoring_and_labels_when_configured`, `test_request_time_budget_returns_504`, `test_every_guarded_call_logs_one_json_line` |
 | upload limits enforced before the body is held (byte cap on declared and streamed length → 413; row limit checked while parsing, never past it) | `test_serving::test_csv_upload_limits_are_enforced_before_the_body_is_held` |
 | API contract (routes, required fields, enums, bounds, status codes) | `test_ml_contracts::test_api_contract_via_openapi`, `test_serving::test_bad_input_is_rejected_with_a_useful_body`, `test_model_info`, `test_batch_rejects_empty_and_bad_rows` |
 | batch frame == single-request frame, row for row and dtype for dtype (the vectorised builder the golden and the batch endpoint use) | `test_serving::test_payloads_to_frame_equals_row_by_row_construction` |

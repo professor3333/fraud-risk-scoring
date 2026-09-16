@@ -190,7 +190,9 @@ columns carry 76 % of split gain but are almost fully substitutable
   returning one authoritative `action` (approve / review / block) from the
   rank-based review policy, `/explain`, `/model-info`, `/audit/recent`; startup parity
   check against a frozen golden; every scored transaction, every request
-  and an input snapshot persisted to a SQLite audit trail.
+  and an input snapshot persisted to a SQLite audit trail; API key
+  (`FRAUD_API_KEY`), upload cap, per-request time budget, request IDs and
+  one JSON log line per call for the public URL (`docs/deployment.md`).
 - Monitoring: a frozen reference per artifact and a report over any window
   of stored predictions — API rate / latency / errors, score and action
   PSI, per-feature drift, eventual performance and calibration with labels.
@@ -207,7 +209,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 121 fixture-based tests (no data, no network) + 4 slow real-data tests.
+- 124 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -444,6 +446,12 @@ service returns. The dashboard's row inspector shows it as *Why this
 score*. It explains why a transaction ranks where it does, not whether the
 purchase was fraud.
 
+**Access** — set `FRAUD_API_KEY` and the scoring, explanation, outcome and
+audit endpoints require `X-API-Key`; `/health` reports `auth: api_key` and
+the dashboard asks for the key. Every guarded call is logged as one JSON
+line with its request id and bounded by `request_timeout_s`
+(`docs/deployment.md` → Hardening).
+
 **Model info** — what is being served:
 
 ```bash
@@ -535,7 +543,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 121 fixture tests, no data, no network, ~20 s
+uv run pytest              # 124 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

@@ -110,6 +110,7 @@ class HealthResponse(BaseModel):
     model_version: str
     parity_rows: int  # frozen rows re-scored at startup; startup fails on a mismatch
     audit_events: int | None  # rows in the prediction audit trail; None when disabled
+    auth: Literal["open", "api_key"] = "open"  # scoring endpoints need X-API-Key when api_key
 
 
 class ModelInfoResponse(BaseModel):

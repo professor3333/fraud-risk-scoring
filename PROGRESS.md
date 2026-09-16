@@ -45,9 +45,9 @@ Stage 3, which the expanding-window search (E008) and the one-axis sweeps
 until written up as one comparison. Work since v0.5.0 is post-stage
 operations: label feedback (ADR 0009), promotion gates (ADR 0010),
 subgroup robustness, upload limits, the API benchmark, the per-day review
-budget. Per-prediction explanation added (`docs/explanation.md`). Open: the
-public Fly.io endpoint (needs the account login), CD on tag, API hardening
-for a public URL.
+budget. Per-prediction explanation added (`docs/explanation.md`). API key, time budget and structured request logs added
+(`docs/deployment.md` → Hardening). Open: the public Fly.io endpoint
+(needs the account login) and CD on tag.
 
 ## Completion evidence
 

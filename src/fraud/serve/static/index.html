@@ -74,7 +74,8 @@ document.getElementById("send").onclick = async () => {
   let body;
   try { body = JSON.parse(ta.value); } catch (e) { out.textContent = "invalid JSON: " + e.message; return; }
   const isBatch = Array.isArray(body);
-  const r = await fetch(isBatch ? "/predict/batch" : "/predict", {method: "POST", headers: {"content-type": "application/json"},
+  const key = localStorage.getItem("fraudApiKey");  // set on the dashboard when the server requires one
+  const r = await fetch(isBatch ? "/predict/batch" : "/predict", {method: "POST", headers: {"content-type": "application/json", ...(key ? {"X-API-Key": key} : {})},
     body: JSON.stringify(isBatch ? {transactions: body} : body)});
   const j = await r.json();
   out.textContent = JSON.stringify(j, null, 2);

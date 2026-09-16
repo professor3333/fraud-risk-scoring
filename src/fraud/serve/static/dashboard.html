@@ -69,7 +69,8 @@
 <body>
 <main>
   <header>
-    <div><h1>Fraud review queue</h1><small id="model">loading model info…</small></div>
+    <div><h1>Fraud review queue</h1><small id="model">loading model info…</small>
+      <span id="auth" hidden> · <label for="apikey" style="color:var(--muted)">API key</label> <input id="apikey" type="password" placeholder="X-API-Key" style="width:150px;font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:6px"></span></div>
     <small><a href="/single">single transaction</a> · <a href="/docs">API</a></small>
   </header>
 
@@ -141,6 +142,14 @@ const riskOrder = {high: 3, medium: 2, low: 1};
 const fmt = (p) => p.toFixed(4);
 const pct = (a, b) => b ? (100 * a / b).toFixed(1) + "%" : "";
 
+// When the server is deployed with an API key (/health says auth: api_key), the guarded
+// endpoints need X-API-Key; the key is kept in this browser only.
+const keyHeader = () => { const k = localStorage.getItem("fraudApiKey"); return k ? {"X-API-Key": k} : {}; };
+fetch("/health").then(r => r.json()).then(h => {
+  if (h.auth !== "api_key") return;
+  $("auth").hidden = false; $("apikey").value = localStorage.getItem("fraudApiKey") || "";
+  $("apikey").onchange = () => localStorage.setItem("fraudApiKey", $("apikey").value.trim());
+}).catch(() => {});
 fetch("/model-info").then(r => r.json()).then(m => {
   $("model").textContent = `${m.model} · ${m.experiment} · ${m.version} · validation PR-AUC ${m.validation_pr_auc} · test ${m.test_pr_auc}`;
 }).catch(() => { $("model").textContent = "model info unavailable"; });
@@ -160,7 +169,7 @@ async function upload(file) {
   $("error").hidden = true; $("score").disabled = true;
   const form = new FormData(); form.append("file", file);
   const budget = Math.max(0, parseInt($("budget").value || "0", 10));
-  const r = await fetch(`/predict/csv?review_budget=${budget}`, {method: "POST", body: form});
+  const r = await fetch(`/predict/csv?review_budget=${budget}`, {method: "POST", body: form, headers: keyHeader()});
   $("score").disabled = !$("file").files.length;
   if (!r.ok) {
     const j = await r.json().catch(() => ({detail: r.statusText}));
@@ -243,7 +252,7 @@ async function explain(r) {
   const why = $("i-why"); why.innerHTML = `<h3>Why this score</h3><small>computing…</small>`;
   const body = {}; for (const [k, v] of Object.entries(r.details)) if (k !== "has_identity") body[k] = v;
   try {
-    const res = await fetch("/explain?top_k=8", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+    const res = await fetch("/explain?top_k=8", {method: "POST", headers: {"content-type": "application/json", ...keyHeader()}, body: JSON.stringify(body)});
     if (!res.ok) throw new Error(await res.text());
     const e = await res.json();
     const scale = Math.max(...e.signals.map(s => Math.abs(s.contribution)), 1e-6);

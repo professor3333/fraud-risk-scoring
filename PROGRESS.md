@@ -58,10 +58,10 @@ Next: Stage 4 — calibrate, choose the threshold, learning curves.
 | Experiments | MLflow (`sqlite:///mlflow.db`), provenance hashes per run |
 | Reasoning | `docs/EXPERIMENT_LOG.md`, `docs/experiments.md` |
 | Operations | threshold 0.08 (ADR 0006), review policy (`docs/review_policy.md`); delayed-label loop — outcomes → predictions → cohort-aged monitoring → retraining on matured labels (ADR 0009, `docs/feedback.md`, `reports/feedback/`) |
-| Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`) |
+| Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
 | UI | analyst dashboard at `/` |
 | Quality | 93 tests (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; Fly.io config + `scripts/deploy_check.py` (`docs/deployment.md`) — **public endpoint pending the account login** |
-| Documentation | README, ADRs 0001–0009, model card, error analysis, progression |
+| Documentation | README, ADRs 0001–0010, model card, error analysis, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

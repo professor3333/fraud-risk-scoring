@@ -25,8 +25,8 @@ flyctl apps create fraud-risk-scoring
 ## Deploy
 
 ```bash
-# make sure the served artifact and its frozen sample exist locally
-ls models/xgb_f5_capacity_calibrated.joblib models/xgb_f5_capacity_calibrated_frozen_*.json
+# make sure the champion directory exists locally (written by scripts/promote.py)
+ls models/champion/
 
 flyctl volumes create fraud_audit --size 1   # persistent audit trail (mounted at /app/audit)
 flyctl deploy --remote-only          # builds the Dockerfile on Fly's builder, pushes, starts
@@ -42,10 +42,15 @@ behaviour.
 
 ## Updating the model
 
-1. Train, calibrate, threshold, freeze (`README.md` → *Reproduce the model*).
-2. Point `configs/serving.yaml`, `Dockerfile` and `.dockerignore` at the new
-   artifact name (one `sed`, see PR #27 for the pattern).
+1. Train, calibrate, freeze (`README.md` → *Reproduce the model*).
+2. `uv run python scripts/promote.py --run-name <run>` — the acceptance
+   gates (`docs/promotion.md`); on success `models/champion/` is replaced
+   and the registry alias moves. Nothing in `configs/`, the `Dockerfile` or
+   `.dockerignore` changes.
 3. `flyctl deploy --remote-only`; run `deploy_check.py`.
+
+To revert, promote the previous champion again; it goes through the same
+gates.
 
 ## Local alternative
 

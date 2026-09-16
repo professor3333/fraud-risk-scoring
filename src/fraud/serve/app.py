@@ -29,7 +29,7 @@ from fraud.serve.frames import (
     request_to_frame,
     table_to_frame,
 )
-from fraud.serve.parity import frozen_paths, verify
+from fraud.serve.parity import frozen_paths, read_manifest, verify
 from fraud.serve.schemas import (
     Action,
     AuditEvent,
@@ -75,6 +75,18 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model_path = root / raw["model_path"]
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
+    # A promoted champion carries a manifest (scripts/promote.py): its version, facts and
+    # policy bands come from there, so a promotion never edits this config.
+    manifest = read_manifest(model_path)
+    if manifest is not None:
+        if manifest["artifact_sha256"][:12] != digest:
+            raise RuntimeError(
+                f"{model_path.name} ({digest}) is not the artifact its manifest describes "
+                f"({manifest['artifact_sha256'][:12]}); promote again or restore the champion"
+            )
+        raw["model_version"] = manifest["model_version"]
+        raw["model_info"] = {**raw.get("model_info", {}), **manifest["model_info"]}
+        raw["bands"] = manifest["bands"]
     bands = Bands(**raw["bands"])
     if not 0.0 <= bands.review <= bands.block <= 1.0:
         raise ValueError(f"bands must satisfy 0 <= review <= block <= 1, got {bands}")

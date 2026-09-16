@@ -1,8 +1,7 @@
 # Build:  docker build -t fraud-risk-scoring .
 # Run:    docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring
-# The model artifact (models/xgb_f5_capacity_calibrated.joblib) and its frozen
-# sample must exist locally before building: scripts/train.py, scripts/calibrate.py,
-# scripts/freeze_artifact.py.
+# The champion directory (models/champion/: artifact, frozen sample, manifest) must
+# exist locally before building: scripts/promote.py writes it (docs/promotion.md).
 FROM python:3.12-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
@@ -23,12 +22,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Project code, configs and the served artifact.
 COPY src ./src
 COPY configs ./configs
-# The artifact and its frozen sample: the service refuses to start unless the
-# artifact reproduces the frozen probabilities (G8).
-COPY models/xgb_f5_capacity_calibrated.joblib \
-     models/xgb_f5_capacity_calibrated_frozen_sample.json \
-     models/xgb_f5_capacity_calibrated_frozen_expected.json \
-     ./models/
+# The champion and its frozen sample: the service refuses to start unless the
+# artifact reproduces the frozen probabilities (G8) and matches its manifest.
+COPY models/champion/ ./models/champion/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-group train
 

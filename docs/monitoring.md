@@ -44,7 +44,10 @@ discrete values).
 **training window** (the population the model and its frequency tables were
 fit on), and score distribution, action shares and performance from the
 **validation window** under the rank policy at the served budget. It is
-keyed to the artifact's sha256 and re-frozen with each retrain.
+keyed to the artifact's sha256 and re-frozen with each retrain. Since ADR
+0010 the served copy is `models/champion/model_monitor_reference.json`,
+written by `scripts/promote.py` at promotion; `scripts/monitor.py` reads
+the reference next to whatever `serving.yaml` loads.
 
 ## Demonstration: one validation day, then one reporting-window day
 

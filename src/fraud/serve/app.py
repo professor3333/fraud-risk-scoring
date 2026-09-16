@@ -21,6 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
+from fraud.evaluate.explain import explain
 from fraud.evaluate.policy import apply_daily_rank_policy
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
@@ -39,6 +40,7 @@ from fraud.serve.schemas import (
     BatchPredictionResponse,
     CsvPredictionResponse,
     CsvSummary,
+    ExplanationResponse,
     HealthResponse,
     ModelInfoResponse,
     OutcomesRequest,
@@ -479,6 +481,28 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = "1"
         return result
+
+    @app.post("/explain", response_model=ExplanationResponse)
+    def explain_one(
+        body: TransactionRequest,  # type: ignore[valid-type]
+        request: Request,
+        top_k: int = 8,
+    ) -> ExplanationResponse:
+        """Which inputs moved this transaction's score, and how far (docs/explanation.md).
+        Not audited: it decides nothing."""
+        state: ServingState = request.app.state.serving
+        frame = request_to_frame(body.model_dump())  # type: ignore[attr-defined]
+        e = explain(state.model, frame, top_k=max(1, min(top_k, 50)))
+        return ExplanationResponse(
+            model_version=state.model_version,
+            note=(
+                "contributions are log-odds on the model's raw score and sum with the bias to"
+                " raw_margin; fraud_probability is the raw score after calibration. Under the"
+                " label definition this explains why the transaction ranks high, not whether"
+                " this purchase itself was fraudulent."
+            ),
+            **e.as_dict(),
+        )
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
     def predict_batch(

@@ -182,6 +182,30 @@ class AuditEvent(BaseModel):
     transaction_dt: int | None = None
 
 
+class SignalResponse(BaseModel):
+    feature: str
+    value: str
+    contribution: float  # log-odds on the raw score; positive raises the score
+    family: str
+
+
+class ExplanationResponse(BaseModel):
+    """Why one transaction scores as it does (POST /explain): TreeSHAP contributions of the
+    booster, summed per source column and per feature family, on the raw score's log-odds.
+    The served probability is the raw score after the calibration map; both are reported."""
+
+    transaction_id: int
+    model_version: str
+    fraud_probability: float
+    raw_probability: float
+    raw_margin: float
+    bias: float
+    signals: list[SignalResponse]
+    other_contribution: float
+    families: dict[str, float]
+    note: str
+
+
 class Outcome(BaseModel):
     """A delayed label for a scored transaction (POST /outcomes)."""
 

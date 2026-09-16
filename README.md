@@ -179,7 +179,9 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Sigmoid / isotonic calibration on out-of-fold scores, chosen by rule.
 - Amount-weighted cost curve, sensitivity table, train-only cross-check;
   three-action review policy sized to an analyst budget.
-- Gain, group-permutation and group-ablation importance.
+- Gain, group-permutation and group-ablation importance; subgroup
+  robustness table (product, card, identity, e-mail family, device, amount,
+  time) under the served policy (`docs/subgroups.md`).
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
   returning one authoritative `action` (approve / review / block) from the
@@ -222,14 +224,14 @@ docs/             eda.md, decisions/ (ADR 0001–0010), EXPERIMENT_LOG.md (4-col
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
                   backtest.md, retraining.md, deployment.md, monitoring.md,
-                  feedback.md, promotion.md, defending_the_decisions.md,
-                  model_card.md
+                  feedback.md, promotion.md, subgroups.md,
+                  defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   backtest, retrain, learning_curve, calibrate, select_threshold,
                   review_policy, freeze_artifact, monitor_reference, monitor,
-                  feedback, simulate_feedback, promote, ablation,
+                  feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report,
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
@@ -300,6 +302,7 @@ uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity          #
 uv run python scripts/simulate_feedback.py --fresh                             # delayed labels played forward, ~1 min
 uv run python scripts/retrain.py --label-maturity-days 30 --out-dir models/retrain_delay30 --report-dir reports/retrain/delay30
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
+uv run python scripts/subgroups.py                                             # champion by subgroup, validation
 uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # reporting window; logged in ADR 0002
 uv run python scripts/final_report.py --run-name xgb_f5_capacity               # reports/final/ + error table
 uv run mlflow ui --backend-store-uri sqlite:///mlflow.db                      # browse runs
@@ -479,7 +482,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 113 fixture tests, no data, no network, ~40 s
+uv run pytest              # 115 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
@@ -516,4 +519,6 @@ provider's engineered columns are taken as point-in-time on the host's
 word; one month of drift costs 0.06 PR-AUC; the cost model is assumed and
 the threshold moves with it; serving is stateless by design; production
 labels mature 120 days after the transaction, so a month's eventual
-performance is unknown for four months (`docs/feedback.md`).
+performance is unknown for four months (`docs/feedback.md`); the global
+PR-AUC blends 0.80 on transactions with an identity record and 0.46 on the
+82 % without one (`docs/subgroups.md`).

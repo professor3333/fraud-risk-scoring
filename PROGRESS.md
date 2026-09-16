@@ -54,7 +54,7 @@ Next: Stage 4 — calibrate, choose the threshold, learning curves.
 | Features | F0 → F7 (E005 – E017), ladder + family cuts (E018 – E020), `docs/feature_sets.md` |
 | Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped and confirmed by E023; monthly lifecycle `scripts/retrain.py` (E024) |
 | Imbalance | ADR 0003 |
-| Evaluation | PR-AUC, ROC-AUC, threshold metrics, top-k/day, Brier/ECE; `reports/final/` |
+| Evaluation | PR-AUC, ROC-AUC, threshold metrics, top-k/day, Brier/ECE; `reports/final/`; subgroup robustness (`docs/subgroups.md`, `reports/subgroups/`) |
 | Experiments | MLflow (`sqlite:///mlflow.db`), provenance hashes per run |
 | Reasoning | `docs/EXPERIMENT_LOG.md`, `docs/experiments.md` |
 | Operations | threshold 0.08 (ADR 0006), review policy (`docs/review_policy.md`); delayed-label loop — outcomes → predictions → cohort-aged monitoring → retraining on matured labels (ADR 0009, `docs/feedback.md`, `reports/feedback/`) |

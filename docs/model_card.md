@@ -99,6 +99,17 @@ cuts cost by 43 % against approving everything (55 % on validation). A
 deployed version would retrain on a schedule and re-select the threshold;
 the drift rate here says monthly.
 
+**By subgroup** (`docs/subgroups.md`, validation, served thresholds held
+fixed). The global PR-AUC is a blend of two segments: transactions with an
+identity record (18 % of rows, half the fraud) score **0.80** and the
+policy reaches 89 % of their fraud at block + review; transactions without
+one — product `W`, 82 % of rows, the other half of the fraud — score
+**0.46** and the policy reaches 67 %. Calibration holds in every group
+(mean score within ~0.01 of prevalence). The 80 % block-precision bar is
+missed for amounts under 25 (0.66 on 289 blocks) and for discover cards
+(0.67 on 57); block + review recall falls to 56 % above 1,000 (27 fraud).
+Within the month, PR-AUC drifts 0.72 → 0.61 → 0.57 across ten-day blocks.
+
 ## What the model relies on (`docs/ablation.md`)
 
 The provider's `C*` counts and the `card*` fields are irreplaceable (−0.05
@@ -158,9 +169,14 @@ on E022 with the same profile.
   costs 30 % less on validation; on test the block precision drifts from
   0.80 to 0.71 and a fixed review threshold overshoots its budget by 25 %,
   so reviewing should be rank-based.
-- **Fairness.** No demographic attributes exist in the data; disparate impact
-  across, e.g., email domain or device type has not been assessed and would
-  need an argument before this model made autonomous decline decisions.
+- **Fairness.** No demographic attributes exist in the data, so no fairness
+  claim is made. Subgroup robustness by product, card network and type,
+  identity presence, e-mail provider family, device class, amount band and
+  time is assessed (`docs/subgroups.md`): no group is scored above its own
+  fraud rate, and the weak segment (no identity record) is a coverage gap,
+  not an over-flagging one. Autonomous decline decisions would still need an
+  argument about who bears the false blocks that these groupings cannot
+  make.
 - **Serving keeps no feature state**: every input is in the request; any
   future history-based feature (ADR 0004) requires a feature store and a
   parity test before it enters the served model. The only state is the

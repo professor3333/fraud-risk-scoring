@@ -132,14 +132,49 @@ rank-based review recommendation stands.
 ## Implemented in the service
 
 `POST /predict/batch` and `POST /predict/csv` apply this policy by default
-(`policy: "rank"`, `review_budget` per request, server default 200): block
-at `bands.block`, review the highest-scored remaining rows up to the budget,
-approve the rest, and report the lowest probability actually reviewed
+(`policy: "rank"`, server default budget 200): block at `bands.block`,
+review the highest-scored remaining rows up to the budget, approve the
+rest, and report the lowest probability actually reviewed
 (`policy.review_cutoff`). Live check, budget 200: validation day 130 →
 block 47 / review **200** / approve 2,560; test day 170 → block 54 / review
 **200** / approve 2,155. The fixed-threshold policy on the same two days
-reviews 141 and 222. `fraud.evaluate.policy.apply_rank_policy` is the
-function; `policy: "threshold"` keeps the fixed bands for comparison.
+reviews 141 and 222. `policy: "threshold"` keeps the fixed bands for
+comparison.
+
+**The budget is per transaction day, not per request.** The policy above
+was sized on whole days; a request is whatever a client happens to send.
+Before this change the service reviewed up to `review_budget` rows *per call*, so
+a day scored as ten batches could review ten budgets and a six-row batch
+reviewed every non-blocked row. Now (`fraud.evaluate.policy.
+apply_daily_rank_policy`):
+
+- rows are ranked within their `TransactionDT` day; each day has its own
+  capacity;
+- the budget is **released through the day**: by the time of the day's
+  latest transaction in the request, `ceil(budget × fraction of the day
+  elapsed)` reviews exist. A whole-day upload gets the full budget; a
+  batch of the first hour gets a twelfth of it, so the morning cannot take
+  the evening's queue;
+- what is released is charged with the transactions of that day whose
+  **latest** decision in the audit trail is `review` — excluding the ones
+  in the current request, whose new decision replaces the old one. So ten
+  batches of one day share one budget, re-uploading a file to try another
+  capacity works (the dashboard does this), and a `/predict` call that
+  sends a row to review under the threshold policy charges the day too;
+- the response reports `policy.review_capacity` (what this request could
+  still review, summed over the days it spans) and
+  `policy.budget_accounting`: `audit_trail`, or `per_request` when auditing
+  is disabled and the service has no memory.
+
+Live check, validation day 130 as ten consecutive batches of ~280 rows,
+budget 200: capacities 14 / 25 / 70 / 17 / 11 / 13 / 12 / 13 / 12 / 13,
+every one used in full — block 47 / review **200** / approve 2,560, the
+same totals as the single whole-day upload. What it does not do: within
+what a slice of the day releases it is first-come; a later batch with
+higher-scored rows gets what that slice left. That is the price of
+deciding at request time rather than at the end of the day; the daily CSV
+upload (one request, one day) is the form in which the policy is exactly
+what was sized.
 
 The service returns **one** command per transaction (`action`) with its
 `risk_level`; the single-threshold `decision` at 0.08 was removed from the

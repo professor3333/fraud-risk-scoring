@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -20,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from fraud.data import schema
-from fraud.evaluate.policy import apply_rank_policy
+from fraud.evaluate.policy import apply_daily_rank_policy
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
 from fraud.serve.frames import (
@@ -52,6 +53,7 @@ from fraud.serve.schemas import (
 )
 
 MAX_CSV_ROWS = 5_000
+SECONDS_PER_DAY = 86_400
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # serving.yaml max_upload_bytes overrides
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -145,19 +147,60 @@ def _response(
     )
 
 
+def review_capacity(
+    state: ServingState,
+    budget: int,
+    transaction_dt: np.ndarray,
+    transaction_ids: np.ndarray,
+) -> dict[int, int]:
+    """Reviews this request may still issue per transaction day.
+
+    The budget is per day, not per request, and it is released through the day:
+    by the time of a day's latest transaction in this request, the day has made
+    ``ceil(budget * fraction of the day elapsed)`` reviews available, so a morning
+    batch cannot take the whole day's queue. Transactions of the day already sent
+    to review by earlier requests are charged against it, except the ones in this
+    request, whose new decision replaces the old one. Without an audit trail there
+    is no memory of earlier requests.
+    """
+    ids = {int(t) for t in transaction_ids}
+    days = transaction_dt // SECONDS_PER_DAY
+    capacity: dict[int, int] = {}
+    for day in np.unique(days):
+        latest = int(transaction_dt[days == day].max())
+        elapsed = (latest - int(day) * SECONDS_PER_DAY + 1) / SECONDS_PER_DAY
+        released = int(math.ceil(budget * elapsed))
+        spent = 0
+        if state.audit is not None:
+            spent = len(state.audit.reviewed_transactions(int(day)) - ids)
+        capacity[int(day)] = max(released - spent, 0)
+    return capacity
+
+
 def assign_actions(
-    state: ServingState, probabilities: np.ndarray, policy: Policy, review_budget: int | None
+    state: ServingState,
+    probabilities: np.ndarray,
+    policy: Policy,
+    review_budget: int | None,
+    frame: pd.DataFrame | None = None,
 ) -> tuple[list[Action], PolicyApplied]:
     """Actions for a scored batch: rank-based (default) or fixed-threshold bands."""
     if policy == "rank":
+        if frame is None:
+            raise ValueError("the rank policy needs the scored frame (transaction days and ids)")
         budget = state.default_review_budget if review_budget is None else review_budget
-        actions, cutoff = apply_rank_policy(probabilities, state.bands.block, budget)
+        dt = frame[schema.TIME_COL].to_numpy().astype(int)
+        days = dt // SECONDS_PER_DAY
+        capacity = review_capacity(state, budget, dt, frame[schema.ID_COL].to_numpy())
+        actions, cutoff = apply_daily_rank_policy(probabilities, days, state.bands.block, capacity)
         applied = PolicyApplied(
             policy="rank",
             block_threshold=state.bands.block,
             review_budget=budget,
             review_threshold=None,
             review_cutoff=cutoff,
+            review_capacity=int(sum(capacity.values())),
+            budget_accounting="audit_trail" if state.audit is not None else "per_request",
         )
         return [str(a) for a in actions], applied  # type: ignore[misc]
     actions_t: list[Action] = [classify(float(p), state.bands)[1] for p in probabilities]
@@ -189,7 +232,7 @@ def score_batch(
     if frame is None:
         frame = payloads_to_frame(payloads)
     probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
-    actions, applied = assign_actions(state, probabilities, policy, review_budget)
+    actions, applied = assign_actions(state, probabilities, policy, review_budget, frame)
     order = np.argsort(-probabilities, kind="stable")
     ranked = []
     for rank, i in enumerate(order.tolist(), start=1):
@@ -212,7 +255,7 @@ def score_table(
     """Score an uploaded table; apply the policy; rank rows and summarise for the analyst view."""
     frame, ignored = table_to_frame(table)
     probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
-    actions, applied = assign_actions(state, probabilities, policy, review_budget)
+    actions, applied = assign_actions(state, probabilities, policy, review_budget, frame)
     order = np.argsort(-probabilities, kind="stable")
     rows: list[ScoredRow] = []
     counts = {"approve": 0, "review": 0, "block": 0}

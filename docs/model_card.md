@@ -112,6 +112,10 @@ Within the month, PR-AUC drifts 0.72 → 0.61 → 0.57 across ten-day blocks.
 
 ## What the model relies on (`docs/ablation.md`)
 
+Per transaction, `POST /explain` gives the TreeSHAP contributions of the
+booster summed per source column and family, with the calibration step
+stated separately (`docs/explanation.md`); it explains rank, not fraud.
+
 The provider's `C*` counts and the `card*` fields are irreplaceable (−0.05
 PR-AUC each when removed). The 339 `V` columns take 76 % of split gain but
 are almost fully substitutable (−0.005 when removed). `has_identity` is

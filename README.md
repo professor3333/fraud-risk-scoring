@@ -181,11 +181,14 @@ columns carry 76 % of split gain but are almost fully substitutable
   three-action review policy sized to an analyst budget.
 - Gain, group-permutation and group-ablation importance; subgroup
   robustness table (product, card, identity, e-mail family, device, amount,
-  time) under the served policy (`docs/subgroups.md`).
+  time) under the served policy (`docs/subgroups.md`); per-prediction
+  explanation from XGBoost's own TreeSHAP contributions, summed per source
+  column and family with the calibration step stated (`POST /explain`,
+  shown in the dashboard's row inspector; `docs/explanation.md`).
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
   returning one authoritative `action` (approve / review / block) from the
-  rank-based review policy, `/model-info`, `/audit/recent`; startup parity
+  rank-based review policy, `/explain`, `/model-info`, `/audit/recent`; startup parity
   check against a frozen golden; every scored transaction, every request
   and an input snapshot persisted to a SQLite audit trail.
 - Monitoring: a frozen reference per artifact and a report over any window
@@ -204,7 +207,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 118 fixture-based tests (no data, no network) + 4 slow real-data tests.
+- 121 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -224,7 +227,7 @@ docs/             eda.md, decisions/ (ADR 0001–0010), EXPERIMENT_LOG.md (4-col
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
                   backtest.md, retraining.md, deployment.md, monitoring.md,
-                  feedback.md, promotion.md, subgroups.md,
+                  feedback.md, promotion.md, subgroups.md, explanation.md,
                   defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
@@ -433,6 +436,14 @@ plays the validation month forward (`reports/feedback/timeline.csv`);
 `scripts/retrain.py --label-maturity-days D` runs the lifecycle on labels
 that have actually matured and scores the month each artifact served.
 
+**Explain** (`docs/explanation.md`) — `POST /explain` with a `/predict`
+body returns the top-*k* signed contributions (XGBoost `pred_contribs`,
+summed per source column and per feature family, with the row's values),
+the bias, the raw score they sum to and the calibrated probability the
+service returns. The dashboard's row inspector shows it as *Why this
+score*. It explains why a transaction ranks where it does, not whether the
+purchase was fraud.
+
 **Model info** — what is being served:
 
 ```bash
@@ -524,7 +535,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 118 fixture tests, no data, no network, ~20 s
+uv run pytest              # 121 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

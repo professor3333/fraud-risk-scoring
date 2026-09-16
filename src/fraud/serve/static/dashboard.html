@@ -52,6 +52,17 @@
   .kv div { border-bottom:1px solid var(--line); padding:3px 0; display:flex; justify-content:space-between; gap:8px; }
   .kv b { color:var(--muted); font-weight:500; }
   .panel .close { float:right; }
+  /* explanation */
+  .why { margin:10px 0 12px; }
+  .why h3 { margin:0 0 4px; font-size:13px; color:var(--muted); font-weight:500; }
+  .why .row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(60px, .8fr) 2fr; gap:8px; align-items:center; font-size:12.5px; padding:2px 0; }
+  .why .val { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .why .cbar { position:relative; height:10px; background:var(--line); border-radius:5px; }
+  .why .cbar > i { position:absolute; top:0; height:100%; }
+  .why .cbar > i.up { background:#c8452b; }
+  .why .cbar > i.down { background:#1b7f5a; }
+  .why .num { font-variant-numeric:tabular-nums; margin-left:6px; font-size:11.5px; }
+  .why small { color:var(--muted); }
   @media (max-width:600px) { th:nth-child(6), td:nth-child(6), th:nth-child(7), td:nth-child(7) { display:none; } }
 </style>
 </head>
@@ -118,6 +129,7 @@
     <button class="close" onclick="document.getElementById('inspect').classList.remove('open')">close</button>
     <h2 id="i-title"></h2>
     <div class="meta" id="i-meta"></div>
+    <div class="why" id="i-why"></div>
     <div class="kv" id="i-kv"></div>
   </div>
 </div>
@@ -224,6 +236,27 @@ function inspect(r) {
   const keys = Object.keys(r.details).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
   for (const k of keys) { const d = document.createElement("div"); d.innerHTML = `<b>${k}</b><span>${r.details[k]}</span>`; kv.appendChild(d); }
   $("inspect").classList.add("open");
+  explain(r);
+}
+
+async function explain(r) {
+  const why = $("i-why"); why.innerHTML = `<h3>Why this score</h3><small>computing…</small>`;
+  const body = {}; for (const [k, v] of Object.entries(r.details)) if (k !== "has_identity") body[k] = v;
+  try {
+    const res = await fetch("/explain?top_k=8", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+    if (!res.ok) throw new Error(await res.text());
+    const e = await res.json();
+    const scale = Math.max(...e.signals.map(s => Math.abs(s.contribution)), 1e-6);
+    const rows = e.signals.map(s => {
+      const w = Math.min(50, 50 * Math.abs(s.contribution) / scale), up = s.contribution > 0;
+      const i = `<i class="${up ? "up" : "down"}" style="left:${up ? 50 : 50 - w}%;width:${w}%"></i>`;
+      return `<div class="row"><b>${s.feature}</b><span class="val" title="${s.value}">${s.value}</span><span><span class="cbar">${i}</span><span class="num">${up ? "+" : ""}${s.contribution.toFixed(2)} ${up ? "↑ risk" : "↓ risk"}</span></span></div>`;
+    }).join("");
+    const fam = Object.entries(e.families).slice(0, 5).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v.toFixed(2)}`).join(" · ");
+    why.innerHTML = `<h3>Why this score</h3>${rows}
+      <small>log-odds: baseline ${e.bias.toFixed(2)} + shown ${(e.raw_margin - e.bias - e.other_contribution).toFixed(2)} + ${e.signals.length ? "other" : "all"} ${e.other_contribution.toFixed(2)} = ${e.raw_margin.toFixed(2)} → raw ${fmt(e.raw_probability)} → calibrated <b>${fmt(e.fraud_probability)}</b>. By family: ${fam}.
+      This is why the transaction ranks where it does; under the label definition it is not proof this purchase was fraudulent.</small>`;
+  } catch (err) { why.innerHTML = `<h3>Why this score</h3><small class="error">${err.message}</small>`; }
 }
 
 $("download").onclick = () => {

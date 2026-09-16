@@ -3,66 +3,22 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from fraud.data import schema
 from fraud.data.load import load_train
 from fraud.data.split import load_split_config, split
-from fraud.features.columns import load_feature_spec
-from fraud.pipeline.build import build_pipeline
-from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.app import create_app, request_to_frame
-from fraud.serve.parity import choose_sample, freeze
 from fraud.serve.schemas import IDENTITY_FIELDS
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.fixture(scope="module")
-def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
-    """A calibrated model trained on the fixture, saved under a temporary serving root."""
-    root = tmp_path_factory.mktemp("serving")
-    (root / "configs").mkdir()
-    (root / "models").mkdir()
-    df = load_train(fixture_raw_dir)
-    parts = split(df, load_split_config(ROOT / "configs" / "split.yaml"))
-    spec = load_feature_spec(ROOT / "configs" / "features" / "v2_freq.yaml")
-    pipe = build_pipeline(spec, {"type": "xgboost", "params": {"n_estimators": 30}}, seed=0)
-    pipe.fit(parts["train"], parts["train"][spec.target])
-    held = parts["validation"]
-    model = CalibratedModel(pipe, method="sigmoid").fit_calibrator(
-        pipe.predict_proba(held)[:, 1], held[spec.target]
-    )
-    joblib.dump(model, root / "models" / "m.joblib")
-    freeze(model, root / "models" / "m.joblib", choose_sample(parts["test"], n_per_group=5))
-    cfg = root / "configs" / "serving.yaml"
-    cfg.write_text(
-        "model_path: models/m.joblib\n"
-        "audit_db: models/audit.sqlite\n"
-        "model_version: fixture-model\nbands: {review: 0.062, block: 0.42}\n"
-        "model_info: {model: xgboost, experiment: fixture, feature_set: v2_freq, "
-        "primary_metric: pr_auc, validation_pr_auc: 0.5, test_pr_auc: 0.4, calibration: sigmoid, "
-        "training_window_days: [1, 122], validation_window_days: [123, 152]}\n"
-    )
-    return {
-        "config": cfg,
-        "model": model,
-        "rows": parts["test"],
-        "audit_db": root / "models" / "audit.sqlite",
-    }
-
-
-@pytest.fixture(scope="module")
-def client(served: dict[str, Any]) -> Iterator[TestClient]:
-    with TestClient(create_app(served["config"])) as c:
-        yield c
 
 
 def _payload(row: pd.Series) -> dict[str, Any]:
@@ -153,7 +109,7 @@ def test_index_page_is_served(client: TestClient) -> None:
 def test_real_model_parity_on_real_rows(full_raw_dir: Path) -> None:
     """The deployed artifact scores real validation rows identically via the API and offline."""
     cfg = ROOT / "configs" / "serving.yaml"
-    model_path = ROOT / "models" / "xgb_f5_capacity_calibrated.joblib"
+    model_path = ROOT / yaml.safe_load(cfg.read_text())["model_path"]
     if not model_path.exists():
         pytest.skip("served artifact not built")
     df = load_train(full_raw_dir, cache_dir=full_raw_dir.parent / "processed")

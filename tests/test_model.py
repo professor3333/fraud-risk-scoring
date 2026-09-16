@@ -397,6 +397,7 @@ def test_monthly_lifecycle_runs_on_fixture(df: pd.DataFrame, tmp_path: Path) -> 
         calibration_folds=(1,),
         promotion_margin=0.005,
         block_min_precision=0.5,
+        served_eval_through=152,
     )
     table = run_lifecycle(df, cfg, tmp_path / "retrain", seed=0)
     assert table["cutoff"].tolist() == [120, 150]
@@ -414,3 +415,33 @@ def test_monthly_lifecycle_runs_on_fixture(df: pd.DataFrame, tmp_path: Path) -> 
         assert table.loc[1, "delta"] >= 0.005
     else:
         assert table.loc[1, "serving"] == table.loc[0, "serving"]
+    # with labels final on the day, cut-off 120 validates on 91-120 and serves 121-150
+    assert table.loc[0, "mature_through"] == 120 and table.loc[0, "month"] == "91-120"
+    assert table.loc[0, "served_month"] == "121-150" and 0 <= table.loc[0, "served_pr_auc"] <= 1
+    assert table.loc[0, "staleness_days"] == 60
+    assert pd.isna(table.loc[1, "served_month"])  # 151-180 ends past served_eval_through
+
+
+def test_lifecycle_waits_for_labels_to_mature(df: pd.DataFrame, tmp_path: Path) -> None:
+    """A 30-day maturity shifts every window back a month and adds a month of staleness."""
+    from fraud.train.lifecycle import RetrainConfig, run_lifecycle
+
+    cfg = RetrainConfig(
+        model_config=CONFIGS / "model" / "xgboost.yaml",
+        month_days=30,
+        cutoffs=(120,),
+        calibration_folds=(1,),
+        promotion_margin=0.005,
+        block_min_precision=0.5,
+        label_maturity_days=30,
+        served_eval_through=152,
+    )
+    table = run_lifecycle(df, cfg, tmp_path / "retrain", seed=0)
+    r = table.iloc[0]
+    assert r["mature_through"] == 90 and r["train_end"] == 60 and r["month"] == "61-90"
+    assert r["serving"].endswith("through_day60")
+    assert r["served_month"] == "121-150" and r["staleness_days"] == 90
+    # too long a wait leaves nothing to train on, and says so
+    with pytest.raises(ValueError, match="nothing to train on"):
+        run_lifecycle(df, RetrainConfig(**{**cfg.__dict__, "label_maturity_days": 90}),
+                      tmp_path / "r2", seed=0)  # fmt: skip

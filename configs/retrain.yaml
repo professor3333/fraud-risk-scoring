@@ -5,6 +5,13 @@ month_days: 30
 # reporting window (153-183) is excluded by default; --include-reporting-window
 # adds a cut-off at 183 and is logged as a test-window consultation (ADR 0002).
 cutoffs: [120, 150]
+# Labels are final only this many days after the transaction (docs/feedback.md, ADR 0009):
+# at cut-off T the cycle may use labels through T - label_maturity_days. 0 keeps the
+# original simulation (labels final on the day); --label-maturity-days overrides.
+label_maturity_days: 0
+# The month an artifact serves (T+1 .. T+30) is scored after the fact, but only while it
+# ends inside the development data; past this day it would consult the reporting window.
+served_eval_through: 152
 # Out-of-fold folds for calibration, relative to the training end E = T - month_days:
 # fit on days <= E - k*month_days, score the following month, for k in ...
 calibration_folds: [2, 1]

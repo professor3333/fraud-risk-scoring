@@ -23,6 +23,7 @@ from fraud.monitor.drift import (
     numeric_summary,
     psi,
 )
+from fraud.monitor.feedback import attach_outcomes, early_section, label_section
 from fraud.monitor.reference import BINARY, CATEGORICAL, NUMERIC
 
 
@@ -121,18 +122,13 @@ def data_section(inputs: pd.DataFrame, ref: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def model_section(
-    events: pd.DataFrame, ref: dict[str, Any], labels: pd.DataFrame | None
-) -> dict[str, Any]:
-    out: dict[str, Any] = {"reference_performance": ref["performance"]}
-    if labels is None or events.empty:
-        out["eventual"] = None
-        return out
-    joined = events.merge(labels, on="transaction_id", how="inner")
-    if joined.empty:
-        out["eventual"] = {"n_labelled": 0}
-        return out
-    y = joined["isFraud"].to_numpy(dtype=int)
+def _evaluable(joined: pd.DataFrame) -> bool:
+    """Ranking and calibration metrics need both classes present."""
+    return len(joined) > 0 and joined["is_fraud"].nunique() == 2
+
+
+def _performance(joined: pd.DataFrame, ref: dict[str, Any]) -> dict[str, Any]:
+    y = joined["is_fraud"].to_numpy(dtype=int)
     p = joined["fraud_probability"].to_numpy(dtype=float)
     blocked = joined["action"] == "block"
     flagged = joined["action"] != "approve"
@@ -154,7 +150,48 @@ def model_section(
     perf["delta_block_precision_vs_reference"] = (
         None if perf["block_precision"] is None else perf["block_precision"] - r["block_precision"]
     )
-    out["eventual"] = perf
+    return perf
+
+
+def model_section(
+    events: pd.DataFrame,
+    ref: dict[str, Any],
+    outcomes: pd.DataFrame | None,
+    clock: int | None = None,
+    maturity_days: int = 0,
+) -> dict[str, Any]:
+    """Eventual performance from outcomes joined onto events.
+
+    `clock` is the TransactionDT time the label feed has reached. With it, eventual
+    metrics use only cohorts whose reporting window has closed and the open cohorts
+    contribute an early signal (fraud.monitor.feedback). Without it the outcomes are
+    taken as complete and final (a fully matured label file).
+    """
+    out: dict[str, Any] = {
+        "reference_performance": ref["performance"],
+        "labels": None,
+        "early": None,
+    }
+    if outcomes is None or events.empty:
+        out["eventual"] = None
+        return out
+    if clock is None:
+        joined = events.merge(
+            outcomes[["transaction_id", "is_fraud"]].drop_duplicates("transaction_id"),
+            on="transaction_id",
+            how="inner",
+        )
+        out["eventual"] = (
+            _performance(joined, ref) if _evaluable(joined) else {"n_labelled": len(joined)}
+        )
+        return out
+    attached = attach_outcomes(events, outcomes, clock, maturity_days)
+    out["labels"] = label_section(attached, clock, maturity_days)
+    out["early"] = early_section(attached)
+    closed = attached.loc[attached["cohort_closed"] & (attached["label_status"] == "matured")]
+    out["eventual"] = (
+        _performance(closed, ref) if _evaluable(closed) else {"n_labelled": len(closed)}
+    )
     return out
 
 
@@ -179,6 +216,12 @@ def _flags(report: dict[str, Any]) -> list[str]:
     d_bp = ev.get("delta_block_precision_vs_reference")
     if d_bp is not None and d_bp < -0.05:
         flags.append(f"block precision {ev['block_precision']:.2f} is {d_bp:+.2f} vs reference")
+    labels: dict[str, Any] = report["model"].get("labels") or {}
+    if labels.get("overdue"):
+        flags.append(
+            f"label feed gap: {labels['overdue']} transactions past the"
+            f" {labels['maturity_days']}-day window without an outcome"
+        )
     return flags
 
 
@@ -187,8 +230,10 @@ def build_report(
     events: pd.DataFrame,
     inputs: pd.DataFrame,
     ref: dict[str, Any],
-    labels: pd.DataFrame | None = None,
+    outcomes: pd.DataFrame | None = None,
     window: tuple[str | None, str | None] = (None, None),
+    clock: int | None = None,
+    maturity_days: int = 0,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -196,10 +241,10 @@ def build_report(
         "api": api_section(requests),
         "predictions": predictions_section(events, ref),
         "data": data_section(inputs, ref),
-        "model": model_section(events, ref, labels),
+        "model": model_section(events, ref, outcomes, clock, maturity_days),
     }
     flags = _flags(report)
-    serious = ("alert", "eventual", "block precision", "error rate")
+    serious = ("alert", "eventual", "block precision", "error rate", "label feed gap")
     report["flags"] = flags
     report["status"] = (
         "alert" if any(any(k in f for k in serious) for f in flags) else "warn" if flags else "ok"
@@ -259,6 +304,10 @@ def _data_lines(data: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1%}"
+
+
 def _model_lines(model: dict[str, Any]) -> list[str]:
     r = model["reference_performance"]
     lines = [
@@ -266,11 +315,43 @@ def _model_lines(model: dict[str, Any]) -> list[str]:
         f" · block precision {r['block_precision']:.2f} · Brier {r['cal_brier']:.4f}"
         f" · ECE {r['cal_ece']:.4f}"
     ]
+    lab = model.get("labels")
+    if lab:
+        lines += [
+            f"- labels as of day {lab['as_of_day']} ({lab['maturity_days']}-day window):"
+            f" {lab['matured']} matured · {lab['pending']} pending · {lab['overdue']} overdue"
+            + (f" · {lab['unknown_time']} without a time" if lab["unknown_time"] else "")
+            + f"; closed cohort {lab['closed_cohort']} ({_pct(lab['closed_share'])} of the window)",
+            f"- positive rate: closed cohort {_pct(lab['positive_rate_closed'])} vs labels that"
+            f" have arrived {_pct(lab['positive_rate_arrived'])} (the latter is biased while"
+            " cohorts are open)",
+        ]
+        if lab["report_lag_days_median"] is not None:
+            lines.append(
+                f"- report lag of arrived fraud: median {lab['report_lag_days_median']:.0f} d"
+                f" · p90 {lab['report_lag_days_p90']:.0f} d"
+            )
+    early = model.get("early")
+    if early and early["fraud_reported_so_far"]:
+        lines.append(
+            f"- early signal on {early['open_cohort']} open rows: {early['fraud_reported_so_far']}"
+            f" fraud reported so far ({early['reported_rate_so_far']:.2%} and rising);"
+            f" of those blocked {early['early_recall_block']:.2f}, blocked or reviewed"
+            f" {early['early_recall_block_plus_review']:.2f}"
+        )
     ev = model.get("eventual")
     if ev is None:
-        lines.append("- eventual performance: no labels supplied (--labels transaction_id,isFraud)")
-    elif not ev.get("n_labelled"):
-        lines.append("- eventual performance: no labelled transactions in the window")
+        lines.append(
+            "- eventual performance: no outcomes (run scripts/feedback.py, POST /outcomes,"
+            " or pass --labels)"
+        )
+    elif "pr_auc" not in ev:
+        lines.append(
+            f"- eventual performance: {ev['n_labelled']} labelled in closed cohorts, too few"
+            " (or one class only) to evaluate"
+            if lab
+            else f"- eventual performance: {ev['n_labelled']} labelled, too few to evaluate"
+        )
     else:
         lines += [
             f"- eventual ({ev['n_labelled']} labelled, positive rate {ev['positive_rate']:.3f}):"

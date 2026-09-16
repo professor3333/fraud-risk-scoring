@@ -189,6 +189,11 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Monitoring: a frozen reference per artifact and a report over any window
   of stored predictions — API rate / latency / errors, score and action
   PSI, per-feature drift, eventual performance and calibration with labels.
+- Delayed-label feedback loop: outcomes arrive later (`POST /outcomes` or
+  a simulated feed), attach to their predictions, age against the 120-day
+  reporting window (matured / pending / overdue); eventual metrics on
+  closed cohorts only, an early signal on open ones, retraining that
+  waits for maturity (ADR 0009, `docs/feedback.md`).
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
@@ -205,20 +210,21 @@ matplotlib · pytest · ruff · mypy · Docker.
 ```
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   tuning/*.yaml, backtest.yaml, retrain.yaml, threshold.yaml,
-                  policy.yaml, serving.yaml
+                  policy.yaml, serving.yaml, feedback.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0008), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0009), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
                   backtest.md, retraining.md, deployment.md, monitoring.md,
-                  defending_the_decisions.md, model_card.md
+                  feedback.md, defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   backtest, retrain, learning_curve, calibrate, select_threshold,
                   review_policy, freeze_artifact, monitor_reference, monitor,
-                  ablation, feature_ladder, evaluate_test, final_report,
+                  feedback, simulate_feedback, ablation, feature_ladder,
+                  evaluate_test, final_report,
                   split_comparison, deploy_check, make_fixture_artifact
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
@@ -284,6 +290,8 @@ uv run python scripts/select_threshold.py --run-name xgb_f5_capacity
 uv run python scripts/review_policy.py --run-name xgb_f5_capacity --with-test
 uv run python scripts/freeze_artifact.py --run-name xgb_f5_capacity            # frozen golden for parity
 uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity          # frozen monitoring reference
+uv run python scripts/simulate_feedback.py --fresh                             # delayed labels played forward, ~1 min
+uv run python scripts/retrain.py --label-maturity-days 30 --out-dir models/retrain_delay30 --report-dir reports/retrain/delay30
 uv run python scripts/ablation.py --model-config configs/model/xgboost_v2_tuned.yaml
 uv run python scripts/evaluate_test.py --run-name xgb_f5_capacity              # reporting window; logged in ADR 0002
 uv run python scripts/final_report.py --run-name xgb_f5_capacity               # reports/final/ + error table
@@ -387,6 +395,17 @@ precision, recall and calibration against the reference. Demonstrated on
 one validation day (eventual PR-AUC 0.655) and one reporting-window day
 (0.617, Brier worse) in `reports/monitoring/`.
 
+**Delayed labels** (`docs/feedback.md`, ADR 0009) — outcomes arrive after
+the fact: `POST /outcomes` (or `scripts/feedback.py`, which simulates the
+chargeback stream from the dataset's labels) stores them next to the
+predictions, and the monitor ages every scored transaction against the
+host's 120-day reporting window. Eventual metrics come from closed cohorts
+only; the arrived-label positive rate is shown beside the true one because
+for 90 days after a month ends it is 100 %. `scripts/simulate_feedback.py`
+plays the validation month forward (`reports/feedback/timeline.csv`);
+`scripts/retrain.py --label-maturity-days D` runs the lifecycle on labels
+that have actually matured and scores the month each artifact served.
+
 **Model info** — what is being served:
 
 ```bash
@@ -444,7 +463,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 106 fixture tests, no data, no network, ~40 s
+uv run pytest              # 109 fixture tests, no data, no network, ~40 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
@@ -479,4 +498,6 @@ the hypothesis written before the run.
 See `docs/model_card.md`. In short: the label is partly account-level; the
 provider's engineered columns are taken as point-in-time on the host's
 word; one month of drift costs 0.06 PR-AUC; the cost model is assumed and
-the threshold moves with it; serving is stateless by design.
+the threshold moves with it; serving is stateless by design; production
+labels mature 120 days after the transaction, so a month's eventual
+performance is unknown for four months (`docs/feedback.md`).

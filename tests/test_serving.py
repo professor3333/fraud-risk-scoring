@@ -373,6 +373,50 @@ def test_csv_upload_is_audited_with_one_request_id(
     events = [e for e in client.get("/audit/recent?limit=50").json() if e["request_id"] == rid]
     assert len(events) == 15 and {e["endpoint"] for e in events} == {"/predict/csv"}
     assert {e["review_budget"] for e in events} == {3}
+    # every event carries the transaction's own clock, so a delayed label can be aged later
+    by_id = {e["transaction_id"]: e["transaction_dt"] for e in events}
+    assert by_id == dict(zip(rows[schema.ID_COL], rows[schema.TIME_COL], strict=True))
+
+
+def test_outcomes_attach_to_scored_transactions(client: TestClient, served: dict[str, Any]) -> None:
+    import sqlite3
+
+    rows: pd.DataFrame = served["rows"].head(3)
+    for _, row in rows.iterrows():
+        assert client.post("/predict", json=_payload(row)).status_code == 200
+    outcomes = [
+        {
+            "transaction_id": int(r[schema.ID_COL]),
+            "is_fraud": bool(r[schema.TARGET_COL]),
+            "event_dt": int(r[schema.TIME_COL]),
+            "observed_dt": int(r[schema.TIME_COL]) + 30 * 86_400,
+        }
+        for _, r in rows.iterrows()
+    ]
+    r = client.post("/outcomes", json={"outcomes": outcomes, "source": "chargebacks"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["received"] == 3 and body["recorded"] == 3 and body["total"] >= 3
+    # a second delivery of the same transactions changes nothing: first label wins
+    again = client.post("/outcomes", json={"outcomes": outcomes}).json()
+    assert again["recorded"] == 0 and again["total"] == body["total"]
+    db = sqlite3.connect(served["audit_db"])
+    stored = dict(db.execute("SELECT transaction_id, is_fraud FROM outcomes").fetchall())
+    for o in outcomes:
+        assert stored[o["transaction_id"]] == int(o["is_fraud"])
+    assert db.execute("SELECT MAX(as_of_dt) FROM label_feed").fetchone()[0] == max(
+        o["observed_dt"] for o in outcomes
+    )
+    # validation: an unknown field, an empty list, a negative clock
+    bad = client.post("/outcomes", json={"outcomes": [{**outcomes[0], "note": "x"}]})
+    assert bad.status_code == 422
+    assert client.post("/outcomes", json={"outcomes": []}).status_code == 422
+    assert (
+        client.post(
+            "/outcomes", json={"outcomes": [{**outcomes[0], "observed_dt": -1}]}
+        ).status_code
+        == 422
+    )
 
 
 def test_audit_can_be_disabled(

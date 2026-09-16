@@ -1,11 +1,16 @@
 """Monthly retraining lifecycle, simulated offline (champion / challenger).
 
-At each cut-off T: train the challenger on days <= T - month_days, calibrate it on
-out-of-fold folds inside its training data, score the latest mature month
-(T - month_days + 1 .. T) with both challenger and incumbent, promote the
-challenger if it beats the incumbent by the margin, re-select the block threshold
-on that month, and freeze the promoted artifact with a golden for parity.
-No step reads days > T.
+At each calendar cut-off T the labels are final only through M = T -
+label_maturity_days (docs/feedback.md): a transaction younger than that has a
+label only if it was reported, and training on those would be training on a
+positive-enriched sample. So: train the challenger on days <= M - month_days,
+calibrate it on out-of-fold folds inside its training data, score the latest
+mature month (M - month_days + 1 .. M) with both challenger and incumbent, promote
+the challenger if it beats the incumbent by the margin, re-select the block
+threshold on that month, and freeze the promoted artifact with a golden for
+parity. No decision reads labels past M. The month the artifact then serves
+(T + 1 .. T + month_days) is scored after the fact as the eventual number the
+monitor would report once those labels mature; it informs nothing in the cycle.
 """
 
 from __future__ import annotations
@@ -40,10 +45,13 @@ class RetrainConfig:
     calibration_folds: tuple[int, ...]
     promotion_margin: float
     block_min_precision: float
+    label_maturity_days: int = 0  # 0: labels are final the day the transaction happens
+    served_eval_through: int | None = None  # last day the served month may be scored on
 
 
 def load_retrain_config(path: Path) -> RetrainConfig:
     raw = yaml.safe_load(path.read_text())
+    served = raw.get("served_eval_through")
     return RetrainConfig(
         model_config=Path(raw["model_config"]),
         month_days=int(raw["month_days"]),
@@ -51,6 +59,8 @@ def load_retrain_config(path: Path) -> RetrainConfig:
         calibration_folds=tuple(int(k) for k in raw["calibration_folds"]),
         promotion_margin=float(raw["promotion_margin"]),
         block_min_precision=float(raw["block_min_precision"]),
+        label_maturity_days=int(raw.get("label_maturity_days", 0)),
+        served_eval_through=None if served is None else int(served),
     )
 
 
@@ -111,6 +121,41 @@ def select_block_threshold(
     return block_threshold(points, min_precision)
 
 
+def eventual_on_served_month(
+    model: CalibratedModel,
+    df: pd.DataFrame,
+    cutoff: int,
+    block_t: float,
+    target: str,
+    cfg: RetrainConfig,
+) -> dict[str, Any]:
+    """The month this artifact serves, scored once its labels would have matured.
+
+    Descriptive only: the number the monitor reports label_maturity_days after the
+    month ends. Skipped past served_eval_through so the reporting window is not
+    consulted by accident (ADR 0002).
+    """
+    end = cutoff + cfg.month_days
+    if cfg.served_eval_through is not None and end > cfg.served_eval_through:
+        return {"served_month": None}
+    day = _day(df)
+    served = df.loc[(day > cutoff) & (day <= end)]
+    if served.empty:
+        return {"served_month": None}
+    p = model.predict_proba(served)[:, 1]
+    y = served[target].to_numpy(dtype=int)
+    m = compute_metrics(y, p, block_t)
+    blocked = p >= block_t
+    return {
+        "served_month": f"{cutoff + 1}-{end}",
+        "served_positives": int(y.sum()),
+        "served_pr_auc": m["pr_auc"],
+        "served_block_precision": float(y[blocked].mean()) if blocked.any() else None,
+        "served_recall_block": float(y[blocked].sum() / max(y.sum(), 1)),
+        "staleness_days": end - (cutoff - cfg.label_maturity_days - cfg.month_days),
+    }
+
+
 def run_lifecycle(
     df: pd.DataFrame, cfg: RetrainConfig, out_dir: Path, seed: int | None = None
 ) -> pd.DataFrame:
@@ -123,16 +168,23 @@ def run_lifecycle(
     rows: list[dict[str, Any]] = []
     day = _day(df)
     for t in cfg.cutoffs:
-        train_end = t - cfg.month_days
-        month = df.loc[(day > train_end) & (day <= t)]
+        mature_through = t - cfg.label_maturity_days
+        train_end = mature_through - cfg.month_days
+        if train_end < cfg.month_days:
+            raise ValueError(
+                f"cut-off {t}: labels are final only through day {mature_through} "
+                f"({cfg.label_maturity_days}-day maturity); nothing to train on"
+            )
+        month = df.loc[(day > train_end) & (day <= mature_through)]
         if month.empty:
-            raise ValueError(f"no rows in the validation month ending on day {t}")
+            raise ValueError(f"no rows in the validation month ending on day {mature_through}")
         challenger = fit_challenger(df, spec, tc.model, seed, train_end, cfg)
         ch = evaluate_on_month(challenger, month, spec.target)
         row: dict[str, Any] = {
             "cutoff": t,
+            "mature_through": mature_through,
             "train_end": train_end,
-            "month": f"{train_end + 1}-{t}",
+            "month": f"{train_end + 1}-{mature_through}",
             "n_month": len(month),
             "positives": int(month[spec.target].sum()),
             "challenger_pr_auc": ch["pr_auc"],
@@ -187,6 +239,7 @@ def run_lifecycle(
                 "serving_pr_auc": chosen_metrics["pr_auc"],
                 "serving_recall_at_p90": chosen_metrics["recall_at_precision_0.90"],
                 "artifact": str(artifact),
+                **eventual_on_served_month(chosen, df, t, block_t, spec.target, cfg),
             }
         )
         rows.append(row)

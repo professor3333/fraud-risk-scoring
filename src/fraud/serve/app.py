@@ -40,6 +40,8 @@ from fraud.serve.schemas import (
     CsvSummary,
     HealthResponse,
     ModelInfoResponse,
+    OutcomesRequest,
+    OutcomesResponse,
     Policy,
     PolicyApplied,
     PredictionResponse,
@@ -249,9 +251,13 @@ def record_events(
     if state.audit is None:
         return
     now = utc_now()
+    when: dict[int, int] = {}
     if frame is not None:
         state.audit.record_inputs(
             [{"request_id": request_id, "scored_at": now, **f} for f in monitored_fields(frame)]
+        )
+        when = dict(
+            zip(frame[schema.ID_COL].astype(int), frame[schema.TIME_COL].astype(int), strict=True)
         )
     state.audit.record(
         [
@@ -271,6 +277,7 @@ def record_events(
                 review_cutoff=applied.review_cutoff,
                 batch_size=len(rows),
                 latency_ms=latency_ms,
+                transaction_dt=when.get(tid),
             )
             for tid, p, level, action in rows
         ]
@@ -460,6 +467,23 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         if s.audit is None:
             raise HTTPException(404, "prediction auditing is disabled on this server")
         return [AuditEvent(**e) for e in s.audit.recent(min(limit, 1000), transaction_id)]
+
+    @app.post("/outcomes", response_model=OutcomesResponse)
+    def post_outcomes(body: OutcomesRequest, request: Request) -> OutcomesResponse:
+        """Delayed labels arriving for scored transactions (docs/feedback.md)."""
+        s: ServingState = request.app.state.serving
+        if s.audit is None:
+            raise HTTPException(404, "prediction auditing is disabled on this server")
+        now = utc_now()
+        rows = [
+            {**o.model_dump(), "is_fraud": int(o.is_fraud), "recorded_at": now,
+             "source": body.source}
+            for o in body.outcomes
+        ]  # fmt: skip
+        recorded = s.audit.record_outcomes(rows)
+        clock = max(o.observed_dt for o in body.outcomes)
+        total = s.audit.record_feed_run(clock, recorded, body.source)
+        return OutcomesResponse(received=len(rows), recorded=recorded, total=total)
 
     return app
 

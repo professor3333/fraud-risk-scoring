@@ -34,6 +34,10 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=ROOT / "configs" / "retrain.yaml")
     parser.add_argument("--model-config", type=Path, default=None, help="challenger recipe")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--label-maturity-days", type=int, default=None,
+        help="labels are final only this many days after the transaction (docs/feedback.md)",
+    )  # fmt: skip
     parser.add_argument("--include-reporting-window", action="store_true")
     parser.add_argument("--out-dir", type=Path, default=ROOT / "models" / "retrain")
     parser.add_argument("--report-dir", type=Path, default=ROOT / "reports" / "retrain")
@@ -43,8 +47,10 @@ def main() -> None:
     cfg = load_retrain_config(args.config)
     if args.model_config is not None:
         cfg = replace(cfg, model_config=args.model_config)
+    if args.label_maturity_days is not None:
+        cfg = replace(cfg, label_maturity_days=args.label_maturity_days)
     if args.include_reporting_window:
-        cfg = replace(cfg, cutoffs=tuple(cfg.cutoffs) + (183,))
+        cfg = replace(cfg, cutoffs=tuple(cfg.cutoffs) + (183,), served_eval_through=None)
         print("NOTE: cut-off 183 scores the reporting window; record it in ADR 0002's log.")
     df = load_train(ROOT / "data" / "raw", cache_dir=ROOT / "data" / "processed")
 
@@ -58,6 +64,7 @@ def main() -> None:
                 "cutoffs": ",".join(map(str, cfg.cutoffs)),
                 "promotion_margin": cfg.promotion_margin,
                 "block_min_precision": cfg.block_min_precision,
+                "label_maturity_days": cfg.label_maturity_days,
             }
         )
         table = run_lifecycle(df, cfg, args.out_dir, args.seed)
@@ -66,15 +73,18 @@ def main() -> None:
                 f"challenger_pr_auc_cutoff{int(r.cutoff)}", float(r.challenger_pr_auc)
             )
             mlflow.log_metric(f"serving_pr_auc_cutoff{int(r.cutoff)}", float(r.serving_pr_auc))
+            if pd.notna(r.get("served_pr_auc")):
+                mlflow.log_metric(f"served_pr_auc_cutoff{int(r.cutoff)}", float(r.served_pr_auc))
         args.report_dir.mkdir(parents=True, exist_ok=True)
         table.drop(columns=["artifact"]).to_csv(args.report_dir / "lifecycle.csv", index=False)
         mlflow.log_text(table.to_csv(index=False), "lifecycle.csv")
     pd.set_option("display.width", 220)
     cols = [
-        "cutoff", "month", "positives", "incumbent_pr_auc", "challenger_pr_auc",
-        "promoted", "serving", "block_threshold", "serving_pr_auc",
+        "cutoff", "mature_through", "month", "positives", "incumbent_pr_auc", "challenger_pr_auc",
+        "promoted", "serving", "block_threshold", "serving_pr_auc", "served_month", "served_pr_auc",
+        "served_block_precision",
     ]  # fmt: skip
-    print(table[cols].round(4).to_string(index=False))
+    print(table[[c for c in cols if c in table]].round(4).to_string(index=False))
 
 
 if __name__ == "__main__":

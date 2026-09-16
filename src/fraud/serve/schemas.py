@@ -173,3 +173,28 @@ class AuditEvent(BaseModel):
     review_cutoff: float | None
     batch_size: int
     latency_ms: float
+    transaction_dt: int | None = None
+
+
+class Outcome(BaseModel):
+    """A delayed label for a scored transaction (POST /outcomes)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transaction_id: int
+    is_fraud: bool
+    event_dt: int = Field(ge=0, description="TransactionDT of the transaction")
+    observed_dt: int = Field(ge=0, description="TransactionDT clock when the label became known")
+
+
+class OutcomesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcomes: list[Outcome] = Field(min_length=1, max_length=10_000)
+    source: str = Field(default="api", max_length=64)
+
+
+class OutcomesResponse(BaseModel):
+    received: int
+    recorded: int  # new rows; a transaction already labelled keeps its first label
+    total: int

@@ -131,8 +131,13 @@ on E022 with the same profile.
   that was later reported. A "false positive" on such an account is not a
   model error under this label; error analysis must not treat it as one.
 - **Label maturity.** Training labels are fully mature; production labels
-  for the most recent weeks would not be. This makes the offline numbers
-  slightly optimistic in a time-invariant way (ADR 0002).
+  are not for 120 days (the host's reporting window). The feedback loop
+  (`docs/feedback.md`, ADR 0009) ages every scored transaction against
+  that window: eventual performance is computed on closed cohorts only,
+  because for 90 days after a month ends every arrived label is a
+  positive, and the first cohorts to close are the ones nearest the
+  training window (their PR-AUC 0.743 vs 0.637 for the full month).
+  Retraining on matured labels adds the window to the model's staleness.
 - **Provider features as point-in-time.** `C*`, `D*`, `M*`, `V*`, `id_*` are
   accepted as available at authorization on the host's statement; this
   cannot be verified from anonymised data (`docs/leakage_audit.md`).

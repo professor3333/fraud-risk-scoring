@@ -207,6 +207,25 @@ same artifact bytes — the fixture golden pins the preprocessed matrix
 instead, because XGBoost on a 260-row fixture builds different trees on
 Linux than on macOS (found by CI).
 
+### "Your labels arrive months late. How do you know the model still works?"
+
+I don't, for 120 days — and the system says so instead of pretending. A
+chargeback is reported some weeks after the transaction; "legitimate" is
+only the absence of a report by the time the host's 120-day window closes.
+So the audit trail stores every outcome with the time it became known,
+ages every scored transaction against the window (matured / pending /
+overdue), and computes eventual performance on closed cohorts only. The
+simulation (`docs/feedback.md`) shows why that rule matters: for 90 days
+after a month ends, every label that has arrived is a positive, and the
+first cohorts to close are the ones nearest training (PR-AUC 0.743 on the
+first week alone, 0.637 for the whole month). Until then two things are
+watchable: distribution drift (score and feature PSI, immediately) and an
+early recall on the fraud reported so far — a leading indicator with a
+known optimistic tilt. Retraining reads the closed cohort as well, which
+adds the window to the model's staleness; the lifecycle reports that cost
+rather than hiding it. A transaction past the window with no outcome is
+flagged as a feed gap, never assumed legitimate.
+
 ### "What would you do next, and what would you not do?"
 
 Next, in order: a drift-aware validation horizon (ADR before any further

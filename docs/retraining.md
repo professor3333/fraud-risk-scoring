@@ -21,6 +21,13 @@ No step reads days > T. Cut-offs at 120 and 150 use development data only;
 `--include-reporting-window` adds a cut-off at 183 and must be logged as a
 test-window consultation (ADR 0002).
 
+The table below assumes labels are final on the day (`label_maturity_days:
+0`). They are not: a legitimate label is only the absence of a report
+within 120 days (ADR 0009). `--label-maturity-days D` makes the cycle use
+labels through T − D and scores the month each artifact actually served
+once those labels mature; `docs/feedback.md` has that run and the
+staleness it implies.
+
 ## Result (challenger recipe E022)
 
 | cut-off | validation month | positives | incumbent | challenger | decision | block threshold | serving PR-AUC |
@@ -47,9 +54,10 @@ Reading:
 
 ## What would make this a scheduled job
 
-1. A label feed: the cycle assumes labels through day T are mature. In
-   production that is "reports received by T + reporting window"; the
-   cut-off must trail the calendar by that window.
+1. A label feed: `POST /outcomes` and the `outcomes` table exist
+   (`docs/feedback.md`); the cycle reads the closed cohort
+   (`fraud.monitor.feedback.mature_rows`) rather than the raw label file,
+   which in this simulation is the same thing.
 2. A trigger: the monitor's labelled report (`docs/monitoring.md`) drops
    below the reference → run the cycle; or simply monthly.
 3. Deployment: the promoted artifact + golden replace the served files;

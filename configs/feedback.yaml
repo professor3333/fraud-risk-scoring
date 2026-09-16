@@ -1,0 +1,13 @@
+# Delayed-label feedback (ADR 0009, docs/feedback.md). Days are TransactionDT // 86400.
+# A transaction is called legitimate only when no chargeback has been reported within
+# this window — the host's own rule (ADR 0001). Until then a missing label means
+# "not reported yet", not "legitimate".
+maturity_days: 120
+# The dataset has no report dates; the simulated feed draws one per fraud row from a
+# log-normal in days, clipped to the window. Median 21 d, sigma 0.8 puts the 90th
+# percentile near 60 d and the 99th near 135 d (clipped) — an assumption about
+# chargeback timing, not a measurement; change it here and rerun scripts/feedback.py.
+report_lag:
+  median_days: 21
+  sigma: 0.8
+seed: 20260916

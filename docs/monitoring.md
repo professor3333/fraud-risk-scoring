@@ -12,8 +12,13 @@ serving ─► prediction_events (score, action, policy, model, latency)
         ─► requests          (every call incl. errors, latency, rows)
                      │
                      ▼
+        ─► outcomes          (delayed labels: POST /outcomes or scripts/feedback.py)
+                     │
+                     ▼
 scripts/monitor.py  ──  reference (frozen from train + validation)  ──►  report .md/.json
-                          + optional labels  →  eventual PR-AUC / precision / calibration
+                          + outcomes as of the feed clock  →  matured / pending / overdue,
+                            eventual PR-AUC / precision / calibration on closed cohorts,
+                            early signal on open cohorts (docs/feedback.md)
 ```
 
 ## What is monitored
@@ -23,11 +28,12 @@ scripts/monitor.py  ──  reference (frozen from train + validation)  ──�
 | API | requests, requests/s, rows scored, latency p50 / p95 / max, errors and error rate, per endpoint | `requests` table (a middleware records every `/predict*` call, successful or not) |
 | Predictions | mean / p50 / p99 probability, score PSI against the validation distribution, block / review / approve shares vs reference, model versions and policies seen | `prediction_events` |
 | Data | PSI per monitored input: product, card4, card6, device type, hour, identity presence, address missing, e-mail presence, amount, missing-field counts | `input_features` (a compact snapshot per scored row) |
-| Model | score drift, feature drift; with labels: eventual PR-AUC, ROC-AUC, block precision, recall (block, block + review), Brier, ECE, each against the reference | events × labels |
+| Model | score drift, feature drift; with outcomes: label coverage (matured / pending / overdue), eventual PR-AUC, ROC-AUC, block precision, recall (block, block + review), Brier, ECE on closed cohorts, each against the reference; early recall on open cohorts | events × outcomes |
 
 PSI thresholds: ≥ 0.10 warn, ≥ 0.20 alert. Eventual PR-AUC more than 0.03
-below reference, block precision more than 0.05 below, or error rate > 5 %
-raise an alert. Categoricals are compared on the reference's own level set;
+below reference, block precision more than 0.05 below, error rate > 5 %,
+or any transaction past the reporting window without an outcome (a label
+feed gap) raise an alert. Categoricals are compared on the reference's own level set;
 count-like features use equal-width bins (quantile bins collapse on
 discrete values).
 
@@ -85,10 +91,14 @@ Reading:
 ```bash
 uv run python scripts/monitor_reference.py --run-name xgb_f5_capacity     # once per artifact
 uv run python scripts/monitor.py --since 2026-09-15T00:00 --until 2026-09-16T00:00
-uv run python scripts/monitor.py --since … --until … --labels matured_labels.csv
+uv run python scripts/feedback.py --as-of-day 200                         # simulated label feed
+uv run python scripts/monitor.py --since … --until … --labels matured_labels.csv   # a final label file
 ```
 
-Reports land in `reports/monitoring/<stamp>.md` and `.json`. A scheduler
-that runs the labelled report when a month's labels mature, and the
-unlabelled one daily, is the natural next step; the retraining lifecycle
-(`scripts/retrain.py`) is what an alert should trigger.
+Without `--labels` the report reads the `outcomes` table as of the label
+feed's clock and treats every label as delayed (`docs/feedback.md`); the
+two demonstration days above were produced with a complete label file,
+which is the `--labels` path. Reports land in `reports/monitoring/<stamp>.md`
+and `.json`. A scheduler that runs the report daily (the eventual section
+fills in by itself as cohorts close) is the natural next step; the
+retraining lifecycle (`scripts/retrain.py`) is what an alert should trigger.

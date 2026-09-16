@@ -33,10 +33,33 @@ CREATE TABLE IF NOT EXISTS prediction_events (
     review_budget     INTEGER,                   -- rank policy
     review_cutoff     REAL,                      -- lowest probability reviewed in the batch
     batch_size        INTEGER NOT NULL,
-    latency_ms        REAL    NOT NULL           -- whole request, shared by its rows
+    latency_ms        REAL    NOT NULL,          -- whole request, shared by its rows
+    transaction_dt    INTEGER                    -- the transaction's own clock (TransactionDT)
 );
 CREATE INDEX IF NOT EXISTS ix_prediction_events_txn ON prediction_events (transaction_id);
 CREATE INDEX IF NOT EXISTS ix_prediction_events_time ON prediction_events (scored_at);
+
+-- the delayed label: what a scored transaction turned out to be, once that was known
+-- (docs/feedback.md). One row per transaction; observed_dt is on the TransactionDT clock.
+CREATE TABLE IF NOT EXISTS outcomes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id INTEGER NOT NULL UNIQUE,
+    is_fraud       INTEGER NOT NULL,
+    event_dt       INTEGER NOT NULL,             -- TransactionDT of the transaction
+    observed_dt    INTEGER NOT NULL,             -- TransactionDT clock when the label became known
+    recorded_at    TEXT    NOT NULL,             -- UTC, when it was written here
+    source         TEXT    NOT NULL              -- e.g. simulated_feed, api
+);
+
+-- every run of the label feed: the clock it advanced to and what it appended
+CREATE TABLE IF NOT EXISTS label_feed (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of_dt    INTEGER NOT NULL,
+    recorded_at TEXT    NOT NULL,
+    n_new       INTEGER NOT NULL,
+    n_total     INTEGER NOT NULL,
+    source      TEXT    NOT NULL
+);
 
 -- every API call to a scoring endpoint, successful or not (monitoring: rate, latency, errors)
 CREATE TABLE IF NOT EXISTS requests (
@@ -82,7 +105,13 @@ COLUMNS = (
     "request_id", "endpoint", "scored_at", "transaction_id", "model_version",
     "fraud_probability", "risk_level", "action", "policy", "block_threshold",
     "review_threshold", "review_budget", "review_cutoff", "batch_size", "latency_ms",
+    "transaction_dt",
 )  # fmt: skip
+
+OUTCOME_COLUMNS = ("transaction_id", "is_fraud", "event_dt", "observed_dt", "recorded_at", "source")
+
+# columns added after the first release; applied to an existing file at open time
+_MIGRATIONS = (("prediction_events", "transaction_dt", "INTEGER"),)
 
 
 @dataclass(frozen=True)
@@ -102,6 +131,7 @@ class PredictionEvent:
     review_cutoff: float | None
     batch_size: int
     latency_ms: float
+    transaction_dt: int | None = None
 
 
 def new_request_id() -> str:
@@ -122,6 +152,10 @@ class AuditLog:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        for table, column, sql_type in _MIGRATIONS:
+            present = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in present:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
         self._conn.commit()
 
     def record(self, events: list[PredictionEvent]) -> int:
@@ -158,11 +192,42 @@ class AuditLog:
             self._conn.commit()
         return len(rows)
 
+    def record_outcomes(self, rows: list[dict[str, Any]]) -> int:
+        """Append delayed labels; a transaction already labelled is left as first recorded."""
+        if not rows:
+            return 0
+        placeholders = ", ".join("?" for _ in OUTCOME_COLUMNS)
+        sql = (
+            f"INSERT OR IGNORE INTO outcomes ({', '.join(OUTCOME_COLUMNS)}) VALUES ({placeholders})"
+        )
+        with self._lock:
+            before = self._conn.total_changes
+            self._conn.executemany(sql, [tuple(r[c] for c in OUTCOME_COLUMNS) for r in rows])
+            self._conn.commit()
+            return self._conn.total_changes - before
+
+    def record_feed_run(self, as_of_dt: int, n_new: int, source: str) -> int:
+        with self._lock:
+            total = int(self._conn.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0])
+            self._conn.execute(
+                "INSERT INTO label_feed (as_of_dt, recorded_at, n_new, n_total, source) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (int(as_of_dt), utc_now(), int(n_new), total, source),
+            )
+            self._conn.commit()
+        return total
+
+    def feed_clock(self) -> int | None:
+        """The TransactionDT clock the label feed has advanced to (None: never run)."""
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(as_of_dt) FROM label_feed").fetchone()
+        return None if row[0] is None else int(row[0])
+
     def frame(self, table: str, since: str | None = None, until: str | None = None) -> Any:
         """A pandas frame of one table within a time window (monitoring reads)."""
         import pandas as pd
 
-        time_col = "started_at" if table == "requests" else "scored_at"
+        time_col = {"requests": "started_at", "outcomes": "recorded_at"}.get(table, "scored_at")
         clauses, params = [], []
         if since:
             clauses.append(f"{time_col} >= ?")

@@ -33,7 +33,9 @@ container health check (`.github/workflows/ci.yml`).
 | calibration preserves ranking; cost / policy arithmetic | `test_model::test_calibrated_model_keeps_ranking_and_improves_brier`, `test_cost_curve_prefers_catching_expensive_fraud`, `test_policy_bands_and_budget_sizing`, `test_top_k_per_day_reviews_the_highest_scores` |
 | experiment record complete (provenance, metrics, artifacts) | `test_model::test_run_logs_provenance_and_artifacts` |
 | monitoring: PSI arithmetic, reference from the fixture, report over stored traffic with and without labels; requests table records errors; input snapshots stored | `test_monitoring`, `test_serving::test_requests_and_inputs_are_recorded_for_monitoring` |
-| prediction audit trail (single, batch and CSV events; request id echoed; per-transaction lookup; disable switch) | `test_serving::test_predictions_are_audited`, `test_csv_upload_is_audited_with_one_request_id`, `test_audit_can_be_disabled` |
+| prediction audit trail (single, batch and CSV events; request id echoed; per-transaction lookup; disable switch; transaction clock stored) | `test_serving::test_predictions_are_audited`, `test_csv_upload_is_audited_with_one_request_id`, `test_audit_can_be_disabled` |
+| delayed labels: outcomes attach to predictions (first label wins, redelivery is a no-op, bad bodies rejected); simulated arrivals respect the window and the seed; arrived-label positive rate is biased, closed-cohort rate is not; eventual metrics only on closed cohorts and equal the complete-label ones once all close; a feed gap is an alert | `test_serving::test_outcomes_attach_to_scored_transactions`, `test_monitoring::test_simulated_arrivals_respect_the_window_and_the_seed`, `test_reference_and_report_on_fixture` |
+| retraining waits for label maturity (windows shift back, staleness reported, refuses when nothing is mature) | `test_model::test_lifecycle_waits_for_labels_to_mature`, `test_monthly_lifecycle_runs_on_fixture` |
 
 ## Fixture
 

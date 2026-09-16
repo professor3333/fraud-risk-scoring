@@ -230,7 +230,7 @@ docs/             eda.md, decisions/ (ADR 0001–0010), EXPERIMENT_LOG.md (4-col
                   error_analysis.md, xgboost_progression.md, testing.md,
                   backtest.md, retraining.md, deployment.md, monitoring.md,
                   feedback.md, promotion.md, subgroups.md, explanation.md,
-                  defending_the_decisions.md, model_card.md
+                  tuning.md, defending_the_decisions.md, model_card.md
 reports/          committed evidence: EDA figures, curves, calibration,
                   threshold, policy, ablation, feature sets, test, final
 scripts/          download_data, validate_data, eda, train, tune, param_sweep,

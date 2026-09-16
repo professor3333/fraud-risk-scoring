@@ -22,7 +22,7 @@ Stage checklist. Each stage is a working system before the next begins.
 ## Stage 3 — Feature engineering + XGBoost
 - [x] Feature ADRs and leakage audit rows per family (ADR 0005 frequency encoding accepted as E006; hour/weekday rejected as E005)
 - [x] XGBoost pipeline beats baselines on validation (E003 val PR-AUC 0.570, gap 0.22); seed noise measured (E004, sd 0.002)
-- [ ] Tuning run compared to untuned
+- [x] Tuning run compared to untuned (`docs/tuning.md`: +0.036 on the same features, then +0.017 seed-paired)
 
 ## Stage 4 — Threshold policy and calibration
 - [x] Cost-model ADR, threshold document (threshold 0.08; `docs/threshold.md`)
@@ -39,10 +39,7 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] README complete and verified from a clean clone (v0.1.0 tagged)
 
 ## Current stage: **all six complete — operating and hardening**
-Every stage box above is ticked except the tuning-vs-untuned comparison in
-Stage 3, which the expanding-window search (E008) and the one-axis sweeps
-(E021) cover in substance (`docs/xgboost_progression.md`); it stays unticked
-until written up as one comparison. Work since v0.5.0 is post-stage
+Every stage box above is ticked. Work since v0.5.0 is post-stage
 operations: label feedback (ADR 0009), promotion gates (ADR 0010),
 subgroup robustness, upload limits, the API benchmark, the per-day review
 budget. Per-prediction explanation added (`docs/explanation.md`). API key, time budget and structured request logs added

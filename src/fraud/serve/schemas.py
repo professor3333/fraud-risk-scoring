@@ -111,6 +111,8 @@ class HealthResponse(BaseModel):
     parity_rows: int  # frozen rows re-scored at startup; startup fails on a mismatch
     audit_events: int | None  # rows in the prediction audit trail; None when disabled
     auth: Literal["open", "api_key"] = "open"  # scoring endpoints need X-API-Key when api_key
+    # /outcomes and /audit/* need the admin key; "disabled" = closed until FRAUD_ADMIN_API_KEY
+    admin: Literal["disabled", "api_key"] = "disabled"
 
 
 class ModelInfoResponse(BaseModel):

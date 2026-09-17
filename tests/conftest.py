@@ -82,7 +82,13 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
     }
 
 
+ADMIN_KEY = "fixture-admin-key"  # /outcomes and /audit/* are closed without one
+
+
 @pytest.fixture(scope="session")
 def client(served: dict[str, Any]) -> Iterator[TestClient]:
-    with TestClient(create_app(served["config"])) as c:
-        yield c
+    """A service whose admin endpoints are enabled, with the admin key sent by default."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("FRAUD_ADMIN_API_KEY", ADMIN_KEY)
+        with TestClient(create_app(served["config"]), headers={"X-API-Key": ADMIN_KEY}) as c:
+            yield c

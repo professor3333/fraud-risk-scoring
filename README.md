@@ -199,9 +199,11 @@ columns carry 76 % of split gain but are almost fully substitutable
   returning one authoritative `action` (approve / review / block) from the
   rank-based review policy, `/explain`, `/model-info`, `/audit/recent`; startup parity
   check against a frozen golden; every scored transaction, every request
-  and an input snapshot persisted to a SQLite audit trail; API key
-  (`FRAUD_API_KEY`), upload cap, per-request time budget, request IDs and
-  one JSON log line per call for the public URL (`docs/deployment.md`).
+  and an input snapshot persisted to a SQLite audit trail; two-tier access
+  (`FRAUD_API_KEY` for scoring, `FRAUD_ADMIN_API_KEY` for `/outcomes` and
+  `/audit/*`, which stay closed without it), upload cap, per-request time
+  budget, request IDs and one JSON log line per call for the public URL
+  (`docs/deployment.md`).
 - Monitoring: a frozen reference per artifact and a report over any window
   of stored predictions — API rate / latency / errors, score and action
   PSI, per-feature drift, eventual performance and calibration with labels.
@@ -218,7 +220,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 135 fixture-based tests (no data, no network) + 4 slow real-data tests.
+- 136 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -277,7 +279,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 135 fixture tests; no data/network required
+uv run pytest            # 136 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -411,8 +413,12 @@ latency. `GET /audit/recent?limit=50&transaction_id=…` reads the tail;
 overridden by `FRAUD_AUDIT_DB`; `null` disables it. In Docker the file lives
 on the `/app/audit` volume.
 
+`/audit/recent` and `POST /outcomes` are admin endpoints: they answer only
+to `FRAUD_ADMIN_API_KEY` and return 403 while it is unset (the public demo).
+
 ```bash
-curl "http://127.0.0.1:8000/audit/recent?limit=1"
+export FRAUD_ADMIN_API_KEY=dev     # before starting the server
+curl -H "X-API-Key: $FRAUD_ADMIN_API_KEY" "http://127.0.0.1:8000/audit/recent?limit=1"
 # [{"id":201,"request_id":"1057101e…","endpoint":"/predict/csv","scored_at":"2026-09-15T16:27:43.597+00:00",
 #   "transaction_id":2987069,"model_version":"xgb_f5_capacity+sigmoid@7af85ec92813","fraud_probability":0.0172,
 #   "risk_level":"low","action":"approve","policy":"rank","block_threshold":0.42,"review_threshold":null,
@@ -458,11 +464,16 @@ service returns. The dashboard's row inspector shows it as *Why this
 score*. It explains why a transaction ranks where it does, not whether the
 purchase was fraud.
 
-**Access** — set `FRAUD_API_KEY` and the scoring, explanation, outcome and
-audit endpoints require `X-API-Key`; `/health` reports `auth: api_key` and
-the dashboard asks for the key. Every guarded call is logged as one JSON
-line with its request id and bounded by `request_timeout_s`
-(`docs/deployment.md` → Hardening).
+**Access** — two keys, two audiences. `FRAUD_API_KEY` guards scoring and
+explanation (`/predict*`, `/explain`); unset, they are open, `/health`
+reports `auth: open`, and the dashboard needs no key. `FRAUD_ADMIN_API_KEY`
+guards the operational endpoints (`POST /outcomes` writes the delayed-label
+store, `GET /audit/recent` reads scored rows); unset, they return 403 and
+`/health` reports `admin: disabled`. Neither key unlocks the other's routes.
+The public demo sets neither: anyone can score, nobody can write labels or
+read the audit trail. Every guarded call is logged as one JSON line with its
+request id and bounded by `request_timeout_s` (`docs/deployment.md` →
+Hardening).
 
 **Model info** — what is being served:
 
@@ -569,7 +580,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 135 fixture tests, no data, no network, ~20 s
+uv run pytest              # 136 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

@@ -1,4 +1,5 @@
-"""Verify a deployed service end to end: health + parity, model-info, and a scored sample.
+"""Verify a deployed service end to end: health + parity, model-info, a scored sample, and
+that the admin endpoints (/outcomes, /audit/*) refuse anonymous callers.
 
 Standard library only, so it runs on a bare CI runner. When the service requires an
 API key (/health reports auth: api_key) it is read from FRAUD_API_KEY or --api-key.
@@ -14,6 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,15 @@ def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
 def get(url: str) -> dict:
     with urlopen(Request(url, headers=_headers()), timeout=60) as r:
         return json.load(r)
+
+
+def status_without_key(url: str) -> int:
+    """The HTTP status an anonymous GET receives (no X-API-Key at all)."""
+    try:
+        with urlopen(Request(url, headers={"accept": "application/json"}), timeout=60) as r:
+            return int(r.status)
+    except HTTPError as e:
+        return e.code
 
 
 def post_csv(url: str, path: Path) -> dict:
@@ -67,6 +78,12 @@ def main() -> None:
     assert health["parity_rows"] > 0, "service started without a parity check"
     if health.get("auth") == "api_key":
         assert API_KEY, "the service requires an API key; pass --api-key or set FRAUD_API_KEY"
+    admin = health.get("admin", "disabled")
+    refused = status_without_key(f"{base}/audit/recent?limit=1")
+    assert refused == {"disabled": 403, "api_key": 401}[admin], (
+        f"anonymous /audit/recent answered {refused}; the audit trail and /outcomes must not "
+        "be open on a public URL"
+    )
     info = get(f"{base}/model-info")
     assert info["version"] == health["model_version"]
     scored = post_csv(f"{base}/predict/csv", SAMPLE)
@@ -75,7 +92,7 @@ def main() -> None:
     top = scored["rows"][0]
     print(f"ok  {base}")
     print(f"    model {info['version']}  parity_rows {health['parity_rows']}")
-    print(f"    auth {health.get('auth', 'open')}")
+    print(f"    auth {health.get('auth', 'open')}  admin {admin} (anonymous /audit → {refused})")
     print(f"    bands {info['bands']}  default budget {info['default_review_budget']}")
     counts = f"block {s['high_risk']}, review {s['review']}, approve {s['approve']}"
     print(f"    sample: analysed {s['analysed']}, {counts}")

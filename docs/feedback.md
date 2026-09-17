@@ -170,7 +170,9 @@ uv run python scripts/retrain.py --label-maturity-days 30               # the li
 In production `POST /outcomes` replaces `scripts/feedback.py`: the
 chargeback system delivers `{transaction_id, is_fraud, event_dt,
 observed_dt}` batches, and delivers the legitimate outcomes when the
-window closes. The monitor never infers a negative: a transaction past the
+window closes. The endpoint writes the label store, so it is an admin
+route: it answers only to `FRAUD_ADMIN_API_KEY` and is closed (403) on a
+host where that key is unset, such as the public demo. The monitor never infers a negative: a transaction past the
 window with no delivered outcome is *overdue*, not legitimate, so a silent
 feed cannot masquerade as a clean month.
 

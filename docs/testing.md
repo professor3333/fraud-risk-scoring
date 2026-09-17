@@ -1,10 +1,17 @@
 # Testing
 
-`uv run pytest` — 125 tests on a synthetic 400-row fixture (`tests/fixtures/`),
+`uv run pytest` — 135 tests using synthetic fixtures (`tests/fixtures/`),
 no data download, no network, ~20 s. `uv run pytest -m slow` — 4 tests
 against the real files and the production artifact when present. CI runs
 the default set plus a smoke training through the CLI, a Docker build and a
 container health check (`.github/workflows/ci.yml`).
+
+Before a production tag, run `uv run python scripts/release.py vX.Y.Z --full-checks`.
+This runs both suites and rejects skipped slow tests or an empty slow suite, so
+missing local data or artifacts cannot silently satisfy the release gate. Without
+`--full-checks`, the release script retains the default fixture-only suite.
+`tests/test_release.py` checks ordering, failure/skip handling, conflicting flags,
+and dry-run behavior with Git, model loading and shell commands stubbed out.
 
 ## ML-specific properties and the test that owns each
 

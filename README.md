@@ -218,7 +218,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 125 fixture-based tests (no data, no network) + 4 slow real-data tests.
+- 135 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -277,7 +277,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 125 fixture tests; no data/network required
+uv run pytest            # 135 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -491,12 +491,16 @@ rest, cold start ~1 min, the 200-row sample in ~19 s. Fly.io remains wired
 as the paid alternative (`fly.toml`). `scripts/deploy_check.py <url>`
 verifies health + parity, model-info and a scored sample on any deployment.
 
-**Release:** `uv run python scripts/release.py vX.Y.Z` runs the checks,
+**Production release:** `uv run python scripts/release.py vX.Y.Z --full-checks` runs
+the fixture and real-data tests (no skipped slow tests allowed), lint and type checks,
 verifies the champion and pushes the tag; `.github/workflows/deploy.yml`
 then re-runs CI, triggers the Render deploy of the tag (and the Fly image
 if configured), waits for the tag's version to serve, runs
 `deploy_check.py` against the live URL and cuts the GitHub release. No
 runner ever sees the weights.
+
+The full preflight requires the IEEE training CSVs, champion files and source
+training pipeline on the release machine; see [deployment](docs/deployment.md#release-and-continuous-deployment).
 
 ## Performance
 
@@ -565,7 +569,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 125 fixture tests, no data, no network, ~20 s
+uv run pytest              # 135 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

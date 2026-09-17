@@ -1,18 +1,22 @@
 """Cut a release: checks → champion verified → git tag (→ deploy.yml deploys it).
 
 The pushed tag runs .github/workflows/deploy.yml: Render rebuilds main (== the tag)
-without the weights and the service fetches the champion from the private model repo
+without the weights and the service fetches the champion from its GitHub release
 at startup; the Fly leg, when configured, deploys the image this script can push with
 --fly-image. The weights never enter the repository or a public runner.
 
     uv run python scripts/release.py v0.6.0              # checks, tag, push
     uv run python scripts/release.py v0.6.0 --dry-run    # what would happen
     uv run python scripts/release.py v0.6.0 --fly-image  # also build + push the Fly image
+    uv run python scripts/release.py v0.6.0 --full-checks  # also require real-data tests
 
 Preconditions: on main, clean tree, tag unused, pyproject version == tag without the
 "v", models/champion present and reproducing its golden; for --fly-image, flyctl
-logged in. The champion must already be in the private model repo
+logged in. The champion must already be published as a GitHub release
 (scripts/publish_champion.py) for the hosted service to start.
+Production releases require --full-checks on the machine holding the real dataset
+and the production artifacts. Missing data, skipped tests or failing slow tests
+block the tag. --skip-checks is not a substitute for this production gate.
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ import re
 import subprocess
 import sys
 import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import joblib
 
@@ -47,6 +53,26 @@ def fly_app() -> str:
     return m.group(1)
 
 
+def check_slow_tests(*, dry_run: bool) -> None:
+    """Require the real-data suite to pass without silently skipping missing inputs."""
+    cmd = ("uv", "run", "pytest", "-q", "-m", "slow")
+    print("$", " ".join(cmd), flush=True)
+    if dry_run:
+        return
+    with TemporaryDirectory(prefix="fraud-release-") as tmp:
+        report = Path(tmp) / "slow-tests.xml"
+        sh(*cmd, "--junitxml", str(report))
+        results = ET.parse(report)
+        cases = list(results.iter("testcase"))
+        if not cases or any(
+            list(results.iter(outcome)) for outcome in ("skipped", "failure", "error")
+        ):
+            sys.exit(
+                "full checks require passing slow tests with no skips; check data and artifacts"
+            )
+        print(f"full checks: {len(cases)} slow tests passed, none skipped", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", help="vX.Y.Z")
@@ -54,7 +80,13 @@ def main() -> None:
     parser.add_argument(
         "--fly-image", action="store_true", help="also build and push the Fly image for the tag"
     )
-    parser.add_argument("--skip-checks", action="store_true", help="CI already ran on this commit")
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument("--skip-checks", action="store_true", help="CI already ran on this commit")
+    checks.add_argument(
+        "--full-checks",
+        action="store_true",
+        help="also require real-data tests to pass without skips",
+    )
     args = parser.parse_args()
     tag = args.tag
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
@@ -88,8 +120,12 @@ def main() -> None:
 
     # the ship sequence (§14): tests → lint → format → types
     if not args.skip_checks:
+        print("$ uv run pytest -q", flush=True)
+        if not args.dry_run:
+            sh("uv", "run", "pytest", "-q")
+        if args.full_checks:
+            check_slow_tests(dry_run=args.dry_run)
         for cmd in (
-            ("uv", "run", "pytest", "-q"),
             ("uv", "run", "ruff", "check", "."),
             ("uv", "run", "ruff", "format", "--check", "."),
             ("uv", "run", "mypy"),

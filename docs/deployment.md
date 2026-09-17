@@ -71,7 +71,7 @@ gh variable set RENDER_URL --body https://fraud-risk-scoring-m1fp.onrender.com
 gh secret set RENDER_DEPLOY_HOOK --body '<the hook URL>'
 ```
 
-From then on `uv run python scripts/release.py vX.Y.Z` cuts a release
+From then on `uv run python scripts/release.py vX.Y.Z --full-checks` cuts a release
 whose tag posts the deploy hook, waits until the served version is the
 tag's, runs `deploy_check.py` against the live URL and cuts the GitHub
 release. The live URL goes into the README's *Live demo* line.
@@ -84,7 +84,8 @@ flyctl auth login
 flyctl apps create fraud-risk-scoring
 flyctl secrets set FRAUD_API_KEY=…            # optional
 flyctl volumes create fraud_audit --size 1    # persistent audit trail (mounted at /app/audit)
-uv run python scripts/release.py vX.Y.Z --fly-image   # builds + pushes registry.fly.io/<app>:vX.Y.Z
+uv run python scripts/release.py vX.Y.Z --full-checks --fly-image
+# also builds + pushes registry.fly.io/<app>:vX.Y.Z
 gh variable set FLY_APP --body fraud-risk-scoring && gh secret set FLY_API_TOKEN --body "$(flyctl tokens create deploy -x 999999h)"
 ```
 
@@ -113,10 +114,10 @@ gates.
 ## Release and continuous deployment
 
 ```
-scripts/release.py vX.Y.Z   (the machine that holds models/champion)
+scripts/release.py vX.Y.Z --full-checks   (the release machine)
   ├─ preconditions: main, clean tree, pyproject version == X.Y.Z, tag unused,
   │                 champion reproduces its golden
-  ├─ tests → ruff → format → mypy                      (§14 ship sequence)
+  ├─ fixture tests → slow real-data tests → ruff → format → mypy
   ├─ [--fly-image] flyctl deploy --build-only --push --image-label vX.Y.Z
   └─ git tag -a vX.Y.Z && git push origin vX.Y.Z
                 │
@@ -138,7 +139,21 @@ each configured deployment must finish successfully, including its live
 verification. Failed or cancelled deployments block the GitHub release.
 A leg whose variables are unset is skipped and does not block publication;
 if neither host is configured, passing checks still permits a release.
-`scripts/release.py --dry-run` prints the sequence without doing it.
+For production tags, use `--full-checks` on the release machine. It adds
+`uv run pytest -q -m slow` after the fixture suite and before linting or
+tagging. The slow suite requires both IEEE training CSVs in `data/raw/`,
+the served artifact from `configs/serving.yaml`, its frozen golden and
+manifest, and the source training pipeline named by that manifest. Having
+only `models/champion/` is not sufficient for all four slow tests.
+Failures, skips (including missing data or artifacts), or an empty slow
+suite stop the release before tag creation. No model is trained by these tests.
+
+Without the flag, the preflight retains the fixture-only test run used by CI.
+`--skip-checks` skips the test/lint/type commands, cannot be combined with
+`--full-checks`, and is not a substitute for the production gate.
+`scripts/release.py vX.Y.Z --full-checks --dry-run` prints the sequence
+without running checks or publishing the tag; version/tag preconditions and
+the existing champion verification still apply.
 
 ## Hardening for a public URL
 

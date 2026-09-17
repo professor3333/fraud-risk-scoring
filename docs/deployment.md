@@ -133,7 +133,11 @@ The weights are git-ignored and are not in any image a public runner
 builds. On the Render leg the host builds an image without them and the
 service fetches the champion from its GitHub release at startup;
 on the Fly leg the runner deploys an image built where the champion is.
-A leg whose variables are unset is skipped; the release is still cut.
+The release job waits for checks and both deployment legs. Checks must pass;
+each configured deployment must finish successfully, including its live
+verification. Failed or cancelled deployments block the GitHub release.
+A leg whose variables are unset is skipped and does not block publication;
+if neither host is configured, passing checks still permits a release.
 `scripts/release.py --dry-run` prints the sequence without doing it.
 
 ## Hardening for a public URL

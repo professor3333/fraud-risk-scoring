@@ -1,7 +1,7 @@
 # Render blueprint (docs/deployment.md): the free public demo. One Docker web service
 # built from this repository with deploy/hosted/Dockerfile — no model in the image;
-# the service fetches models/champion/ at startup from a private Hugging Face model
-# repo. Deploys are triggered by the release workflow through a deploy hook, not by
+# the service fetches models/champion/ at startup from the champion-<sha> GitHub
+# release of this repository (scripts/publish_champion.py). Deploys are triggered by the release workflow through a deploy hook, not by
 # every push (autoDeploy: false).
 services:
   - type: web
@@ -15,9 +15,7 @@ services:
     autoDeploy: false
     healthCheckPath: /health
     envVars:
-      - key: FRAUD_CHAMPION_URL       # https://huggingface.co/<user>/<model-repo>/resolve/main
-        sync: false
-      - key: HF_TOKEN                 # read token for that private repo
+      - key: FRAUD_CHAMPION_URL       # https://github.com/<owner>/<repo>/releases/download/champion-<sha12>
         sync: false
       - key: UVICORN_WORKERS
         value: "1"

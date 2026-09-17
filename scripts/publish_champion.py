@@ -1,15 +1,16 @@
-"""Upload models/champion/ to a private Hugging Face model repo for the hosted service.
+"""Publish models/champion/ as the assets of a GitHub release for the hosted service.
 
-A host that builds from the public repository must not get the weights; the service
-fetches them at startup from this private repo with a token (FRAUD_CHAMPION_URL +
-HF_TOKEN; docs/deployment.md). Uses the
-huggingface_hub CLI through uvx, so nothing is added to the project's dependencies.
+A host that builds from the repository gets an image without weights; the service
+fetches them at startup from FRAUD_CHAMPION_URL (docs/deployment.md). The store is a
+release on this repository tagged ``champion-<sha12>`` — one immutable release per
+promoted champion, marked pre-release so it never becomes the repository's "Latest" —
+whose assets are the five champion files. Public, free, no token: the artifact is a
+portfolio model on public data and the startup parity check guards its integrity.
 
-    uv run python scripts/publish_champion.py --repo <user>/fraud-risk-scoring-model
-    uv run python scripts/publish_champion.py --repo … --dry-run
+    uv run python scripts/publish_champion.py
+    uv run python scripts/publish_champion.py --dry-run
 
-Needs `uvx --from huggingface_hub hf auth login` once (or HF_TOKEN in the environment).
-Prints the FRAUD_CHAMPION_URL to set on the host.
+Needs ``gh auth login`` once. Prints the FRAUD_CHAMPION_URL to set on the host.
 """
 
 from __future__ import annotations
@@ -37,7 +38,6 @@ FILES = (
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", required=True, help="<user>/<name> of the private model repo")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -48,21 +48,33 @@ def main() -> None:
     missing = [f for f in FILES if not (CHAMPION_DIR / f).exists()]
     if missing:
         sys.exit(f"champion directory is missing {missing}")
-    print(f"champion {manifest['run_name']} sha {parity.artifact_sha256[:12]}: parity ok")
+    sha = parity.artifact_sha256[:12]
+    print(f"champion {manifest['run_name']} sha {sha}: parity ok")
 
-    hf = ["uvx", "--from", "huggingface_hub", "hf"]
-    commands = [
-        [*hf, "repo", "create", args.repo, "--repo-type", "model", "--private", "--exist-ok"],
-        [*hf, "upload", args.repo, str(CHAMPION_DIR), ".", "--repo-type", "model",
-         "--commit-message", f"{manifest['model_version']} ({parity.artifact_sha256[:12]})"],
-    ]  # fmt: skip
-    for cmd in commands:
+    repo = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        check=True, capture_output=True, text=True, cwd=ROOT,
+    ).stdout.strip()  # fmt: skip
+    tag = f"champion-{sha}"
+    url = f"https://github.com/{repo}/releases/download/{tag}"
+    exists = subprocess.run(
+        ["gh", "release", "view", tag], capture_output=True, cwd=ROOT
+    ).returncode == 0  # fmt: skip
+    if exists:
+        print(f"release {tag} already exists; assets are immutable, nothing to do")
+    else:
+        cmd = [
+            "gh", "release", "create", tag, *[str(CHAMPION_DIR / f) for f in FILES],
+            "--prerelease", "--title", f"champion {manifest['model_version']}",
+            "--notes", f"Served weights: {manifest['run_name']} ({manifest['model_version']}). "
+            "Assets of this release are what the hosted service fetches at startup "
+            "(FRAUD_CHAMPION_URL); the startup parity check verifies them.",
+        ]  # fmt: skip
         print("$", " ".join(cmd), flush=True)
         if not args.dry_run:
             subprocess.run(cmd, check=True, cwd=ROOT)
-    url = f"https://huggingface.co/{args.repo}/resolve/main"
     print(json.dumps({"FRAUD_CHAMPION_URL": url, "files": list(FILES)}, indent=2))
-    print("set FRAUD_CHAMPION_URL and HF_TOKEN (a read token) on the hosted service")
+    print("set FRAUD_CHAMPION_URL on the hosted service (no token needed)")
 
 
 if __name__ == "__main__":

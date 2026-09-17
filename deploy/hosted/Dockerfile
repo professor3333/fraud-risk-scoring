@@ -1,8 +1,8 @@
 # The service for hosts that build from the public repository (Render, Koyeb, …;
 # docs/deployment.md). Identical to the root Dockerfile except that the model is NOT in
-# the image: at startup the service fetches models/champion/ from a private store
-# (FRAUD_CHAMPION_URL, a private Hugging Face model repo, with HF_TOKEN) and runs its
-# usual parity check before serving. Binds to $PORT, which these hosts set.
+# the image: at startup the service fetches models/champion/ from FRAUD_CHAMPION_URL
+# (the champion-<sha> GitHub release of this repository; FRAUD_CHAMPION_TOKEN only for
+# a private store) and runs its usual parity check before serving. Binds to $PORT, which these hosts set.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv

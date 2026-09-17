@@ -4,16 +4,18 @@
 
 A fraud risk scoring system built on the Kaggle IEEE-CIS Fraud Detection
 dataset. Given one online transaction, it returns a calibrated probability
-that the transaction is fraudulent and a decision at an operating threshold
-chosen from a written cost model — served over a FastAPI endpoint, with every
-modelling decision recorded and every improvement measured on a strictly
-later window of time.
+that the transaction is fraudulent and one action (approve / review / block)
+from a review policy sized to an analyst budget — served over a FastAPI
+endpoint, with every modelling decision recorded and every improvement
+measured on a strictly later window of time.
 
-**Live demo:** not yet public. The zero-cost hosting path (a Render free
-web service that fetches the model from a private repository at startup)
-is built, measured under Render's limits locally and wired into CD; it
-goes live the moment the account steps in `docs/deployment.md` →
-*One-time setup* are done, and this line becomes the URL.
+**Live demo:** https://fraud-risk-scoring-m1fp.onrender.com — the analyst
+dashboard; `https://fraud-risk-scoring-m1fp.onrender.com/docs` is the API.
+A Render free web service (512 MB, 0.1 CPU) that fetches the model from
+its GitHub release at startup: it sleeps after 15 minutes idle, so the
+first request after a pause takes about a minute, and the 200-row sample
+scores in ~20 s at a tenth of a CPU. A demo, not a service
+(`docs/deployment.md`).
 
 ## Architecture
 
@@ -32,13 +34,14 @@ goes live the moment the account steps in `docs/deployment.md` →
    │   · one-hot low-cardinality (+<missing>)  │                       │
    │   · frequency tables (train population)   │                       ▼
    │   · numerics with NaN kept                │            /predict → probability,
-   └────────────────────┬────────────────────┘             decision at 0.08,
-                        │                                   model version
+   └────────────────────┬────────────────────┘             one action (approve /
+                        │                                   review / block), version
         CalibratedModel (sigmoid map fit on
         out-of-fold training-window scores)
                         │
    MLflow: params, split, features, metrics, curves, artifact
-   threshold: amount-weighted cost curve on validation → 0.08
+   evaluation threshold 0.08 (cost curve on validation); served policy:
+   block ≥ 0.42 · review top-N/day by analyst budget · approve the rest
 ```
 
 Design rules that shaped it (all enforced by tests):
@@ -274,7 +277,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 106 tests on the synthetic fixture; no data needed
+uv run pytest            # 125 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -480,9 +483,10 @@ docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring   # vo
 
 **Public deployment** (`docs/deployment.md`): a Render free web service
 (512 MB, 0.1 CPU, no card) built from `deploy/hosted/Dockerfile`, which
-holds no model — at startup the service fetches `models/champion/` from a
-*private* Hugging Face model repository with a token, then runs the same
-parity check as everywhere else. Measured under those limits: 238 MiB at
+holds no model — at startup the service fetches `models/champion/` from
+the `champion-<sha>` pre-release of this repository (the published
+weights, pinned by content hash; `scripts/publish_champion.py`), then
+runs the same parity check as everywhere else. Measured under those limits: 238 MiB at
 rest, cold start ~1 min, the 200-row sample in ~19 s. Fly.io remains wired
 as the paid alternative (`fly.toml`). `scripts/deploy_check.py <url>`
 verifies health + parity, model-info and a scored sample on any deployment.
@@ -597,8 +601,10 @@ the hypothesis written before the run.
 
 See `docs/model_card.md`. In short: the label is partly account-level; the
 provider's engineered columns are taken as point-in-time on the host's
-word; one month of drift costs 0.06 PR-AUC; the cost model is assumed and
-the threshold moves with it; serving is stateless by design; production
+word; one month of drift costs 0.08 PR-AUC; the cost model is assumed and
+the threshold moves with it; the features are stateless but the service
+keeps an audit trail and reads it to share the day's review budget across
+requests; production
 labels mature 120 days after the transaction, so a month's eventual
 performance is unknown for four months (`docs/feedback.md`); the global
 PR-AUC blends 0.80 on transactions with an identity record and 0.46 on the

@@ -23,8 +23,11 @@
   apply the rank-based review policy (block ≥ 0.42, review the top-N
   remaining by the analyst budget, default 200, approve the rest); single
   `/predict` uses the fixed bands (approve < 0.062, review < 0.42). The
-  evaluation threshold 0.08 (ADR 0006) is used in this card's metrics and
-  is not served.
+  review budget is per **transaction day**, released in proportion to the
+  day elapsed, and charged with the reviews earlier requests already issued
+  for that day (read from the audit trail; `policy.budget_accounting` says
+  whether that memory was available). The evaluation threshold 0.08 (ADR
+  0006) is used in this card's metrics and is not served.
 - **Version:** `xgb_f5_capacity+sigmoid@<sha256 prefix of the artifact>`,
   returned by `/health` and `/predict`. MLflow: `xgb_f5_capacity` in
   `fraud-xgboost` (model), `fraud-calibration` (map), `fraud-final` (test
@@ -181,12 +184,21 @@ on E022 with the same profile.
   not an over-flagging one. Autonomous decline decisions would still need an
   argument about who bears the false blocks that these groupings cannot
   make.
-- **Serving keeps no feature state**: every input is in the request; any
+- **The features are stateless; the service is not.** Every model input
+  is in the request, so the *score* of a transaction depends on nothing but
+  its own row (the startup parity check covers exactly this), and any
   future history-based feature (ADR 0004) requires a feature store and a
-  parity test before it enters the served model. The only state is the
-  append-only prediction audit trail (what was scored, when, by which model
-  version, under which policy, with what result), which is what an
-  investigation or a drift check reads.
+  parity test before it enters the served model. The *action* under the
+  rank policy is another matter: the service keeps an append-only audit
+  trail (SQLite: every scored transaction with its inputs, model version,
+  policy and result; the request log; delayed labels posted to
+  `/outcomes`) and reads it at decision time to charge a day's review
+  budget with reviews already issued by earlier requests. Two servers with
+  different audit histories can therefore assign different actions to the
+  same batch, and replaying a day reproduces its actions only in the
+  original order; with auditing disabled the budget is per request and the
+  memory is gone. The audit trail is also what an investigation, the drift
+  monitor and the feedback loop read.
 
 ## Reproduce
 

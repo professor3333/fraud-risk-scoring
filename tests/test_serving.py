@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,8 @@ from fraud.data.load import load_train
 from fraud.data.split import load_split_config, split
 from fraud.serve.app import create_app, request_to_frame
 from fraud.serve.schemas import IDENTITY_FIELDS
+
+from .conftest import ADMIN_KEY
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -290,8 +294,15 @@ def test_dashboard_and_sample_are_served(client: TestClient) -> None:
     assert scored.status_code == 200 and scored.json()["summary"]["analysed"] == 200
 
 
-def _fresh_client(served: dict[str, Any], tmp_path: Path, audit: bool = True) -> TestClient:
-    """A service on its own audit database, so budget accounting starts from zero."""
+@contextmanager
+def _fresh_client(
+    served: dict[str, Any], tmp_path: Path, audit: bool = True, admin_key: str | None = ADMIN_KEY
+) -> Iterator[TestClient]:
+    """A service on its own audit database, so budget accounting starts from zero.
+
+    With an admin key the client sends it by default; with None the admin endpoints are
+    closed, as on the anonymous public demo.
+    """
     cfg = tmp_path / "serving.yaml"
     text = (
         Path(served["config"])
@@ -303,7 +314,14 @@ def _fresh_client(served: dict[str, Any], tmp_path: Path, audit: bool = True) ->
     )
     db = f"audit_db: {tmp_path / 'audit.sqlite'}" if audit else "audit_db: null"
     cfg.write_text(text + db + "\n")
-    return TestClient(create_app(cfg))
+    with pytest.MonkeyPatch.context() as mp:  # the key is read at startup, inside the client
+        if admin_key is None:
+            mp.delenv("FRAUD_ADMIN_API_KEY", raising=False)
+        else:
+            mp.setenv("FRAUD_ADMIN_API_KEY", admin_key)
+        headers = {"X-API-Key": admin_key} if admin_key else None
+        with TestClient(create_app(cfg), headers=headers) as c:
+            yield c
 
 
 def _day(payload: dict[str, Any]) -> int:
@@ -564,7 +582,7 @@ def test_outcomes_attach_to_scored_transactions(client: TestClient, served: dict
 
 
 def test_audit_can_be_disabled(
-    fixture_raw_dir: Path, served: dict[str, Any], tmp_path: Path
+    fixture_raw_dir: Path, served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = tmp_path / "serving.yaml"
     text = (
@@ -576,7 +594,8 @@ def test_audit_can_be_disabled(
         )
     )
     cfg.write_text(text + "audit_db: null\n")
-    with TestClient(create_app(cfg)) as c:
+    monkeypatch.setenv("FRAUD_ADMIN_API_KEY", ADMIN_KEY)
+    with TestClient(create_app(cfg), headers={"X-API-Key": ADMIN_KEY}) as c:
         assert c.get("/health").json()["audit_events"] is None
         assert c.get("/audit/recent").status_code == 404
         assert c.post("/predict", json=_payload(served["rows"].iloc[0])).status_code == 200
@@ -629,15 +648,16 @@ def test_api_key_guards_scoring_and_labels_when_configured(
             ("/predict", {"json": payload}),
             ("/predict/batch", {"json": {"transactions": [payload]}}),
             ("/explain", {"json": payload}),
-            ("/outcomes", {"json": {"outcomes": [{"transaction_id": 1, "is_fraud": True,
-                                                  "event_dt": 1, "observed_dt": 2}]}}),
-        ):  # fmt: skip
+        ):
             r = c.post(path, **kwargs)
             assert r.status_code == 401 and "X-API-Key" in r.json()["detail"], path
             assert c.post(path, headers={"X-API-Key": "wrong"}, **kwargs).status_code == 401
             assert c.post(path, headers={"X-API-Key": "s3cret"}, **kwargs).status_code == 200
-        assert c.get("/audit/recent").status_code == 401
-        assert c.get("/audit/recent", headers={"X-API-Key": "s3cret"}).status_code == 200
+        # the scoring key never unlocks the admin routes, nor the admin key the scoring ones
+        assert c.get("/audit/recent", headers={"X-API-Key": "s3cret"}).status_code == 401
+        assert c.get("/audit/recent", headers={"X-API-Key": ADMIN_KEY}).status_code == 200
+        assert c.post("/predict", json=payload, headers={"X-API-Key": ADMIN_KEY}).status_code == 401
+        assert c.post("/predict", json=payload, headers={"X-API-Key": "s3cret"}).status_code == 200
         # rejected calls are still recorded and carry a request id
         r = c.post("/predict", json=payload, headers={"X-Request-ID": "denied-1"})
         assert r.status_code == 401 and r.headers["X-Request-ID"] == "denied-1"
@@ -648,6 +668,36 @@ def test_api_key_guards_scoring_and_labels_when_configured(
             "SELECT status_code, n_rows FROM requests WHERE request_id = 'denied-1'"
         ).fetchone()
         assert row == (401, 0)
+
+
+def test_admin_endpoints_are_closed_until_an_admin_key_is_set(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """The public demo runs with no keys at all: scoring is open, labels and audit are not."""
+    payload = _payload(served["rows"].iloc[0])
+    label = {"transaction_id": 1, "is_fraud": True, "event_dt": 1, "observed_dt": 2}
+    outcome = {"outcomes": [label]}
+    with _fresh_client(served, tmp_path, admin_key=None) as c:
+        h = c.get("/health").json()
+        assert h["auth"] == "open" and h["admin"] == "disabled"
+        assert c.post("/predict", json=payload).status_code == 200
+        for method, path, kwargs in (
+            ("post", "/outcomes", {"json": outcome}),
+            ("get", "/audit/recent", {}),
+            ("get", "/audit/recent", {"headers": {"X-API-Key": "anything"}}),
+        ):
+            r = getattr(c, method)(path, **kwargs)
+            assert r.status_code == 403 and "FRAUD_ADMIN_API_KEY" in r.json()["detail"], path
+            assert r.headers["X-Request-ID"]  # refused calls are still recorded
+        assert c.get("/audit/recent?transaction_id=1").status_code == 403
+    (tmp_path / "admin").mkdir()
+    with _fresh_client(served, tmp_path / "admin", admin_key="adm1n") as c:
+        assert c.get("/health").json()["admin"] == "api_key"
+        assert c.post("/outcomes", json=outcome, headers={"X-API-Key": ""}).status_code == 401
+        assert c.post("/outcomes", json=outcome, headers={"X-API-Key": "wrong"}).status_code == 401
+        assert c.post("/outcomes", json=outcome).status_code == 200  # default header = adm1n
+        assert c.get("/audit/recent").status_code == 200
+        assert c.post("/predict", json=payload, headers={"X-API-Key": ""}).status_code == 200
 
 
 def test_request_time_budget_returns_504(served: dict[str, Any], tmp_path: Path) -> None:

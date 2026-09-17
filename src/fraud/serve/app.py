@@ -60,9 +60,13 @@ from fraud.serve.schemas import (
 
 MAX_CSV_ROWS = 5_000
 SECONDS_PER_DAY = 86_400
-# Endpoints that score, explain or write labels: protected by X-API-Key when FRAUD_API_KEY
-# is set, recorded in the requests table, logged as one JSON line, and bounded in time.
+# Endpoints that score, explain, write labels or read the audit trail: recorded in the
+# requests table, logged as one JSON line, and bounded in time. Scoring and explanation
+# need X-API-Key when FRAUD_API_KEY is set; the admin endpoints (labels in, audit rows out)
+# need FRAUD_ADMIN_API_KEY and are refused outright while it is unset, so an anonymous
+# public demo never exposes them.
 GUARDED_PREFIXES = ("/predict", "/explain", "/outcomes", "/audit")
+ADMIN_PREFIXES = ("/outcomes", "/audit")
 request_log = logging.getLogger("fraud.serve.requests")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # serving.yaml max_upload_bytes overrides
 
@@ -81,7 +85,8 @@ class ServingState:
     default_review_budget: int
     audit: AuditLog | None
     max_upload_bytes: int = MAX_UPLOAD_BYTES
-    api_key: str | None = None  # FRAUD_API_KEY; None leaves the guarded endpoints open
+    api_key: str | None = None  # FRAUD_API_KEY; None leaves the scoring endpoints open
+    admin_api_key: str | None = None  # FRAUD_ADMIN_API_KEY; None disables the admin endpoints
     request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
 
 
@@ -177,6 +182,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         audit=audit,
         max_upload_bytes=int(raw.get("max_upload_bytes", MAX_UPLOAD_BYTES)),
         api_key=os.environ.get("FRAUD_API_KEY") or None,
+        admin_api_key=os.environ.get("FRAUD_ADMIN_API_KEY") or None,
         request_timeout_s=float(raw.get("request_timeout_s", 60.0)),
     )
 
@@ -437,6 +443,33 @@ async def read_upload(request: Request, file: UploadFile, max_bytes: int) -> byt
     return b"".join(chunks)
 
 
+def _authorize(request: Request, state: ServingState) -> Response | None:
+    """The response that refuses this call, or None when it may proceed.
+
+    Admin routes (/outcomes, /audit/*) answer only to FRAUD_ADMIN_API_KEY and are
+    closed while it is unset; scoring routes answer to FRAUD_API_KEY and are open
+    while it is unset. The two keys never substitute for each other.
+    """
+    admin = request.url.path.startswith(ADMIN_PREFIXES)
+    if admin and state.admin_api_key is None:
+        return Response(
+            json.dumps({"detail": "admin endpoints are disabled: set FRAUD_ADMIN_API_KEY"}),
+            status_code=403,
+            media_type="application/json",
+        )
+    expected = state.admin_api_key if admin else state.api_key
+    if expected is None:
+        return None
+    given = request.headers.get("x-api-key", "")
+    if hmac.compare_digest(given.encode(), expected.encode()):
+        return None
+    return Response(
+        json.dumps({"detail": "missing or invalid X-API-Key"}),
+        status_code=401,
+        media_type="application/json",
+    )
+
+
 def _finish(
     request: Request,
     response: Response,
@@ -532,15 +565,10 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         t0 = time.perf_counter()
         rid = request_id_of(request)
         state: ServingState | None = getattr(request.app.state, "serving", None)
-        if state is not None and state.api_key is not None:
-            given = request.headers.get("x-api-key", "")
-            if not hmac.compare_digest(given.encode(), state.api_key.encode()):
-                response = Response(
-                    json.dumps({"detail": "missing or invalid X-API-Key"}),
-                    status_code=401,
-                    media_type="application/json",
-                )
-                return _finish(request, response, rid, started, t0, state)
+        if state is not None:
+            denied = _authorize(request, state)
+            if denied is not None:
+                return _finish(request, denied, rid, started, t0, state)
         timeout = state.request_timeout_s if state is not None else 60.0
         try:
             response = await asyncio.wait_for(call_next(request), timeout=timeout)
@@ -573,6 +601,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             parity_rows=s.parity_rows,
             audit_events=s.audit.count() if s.audit is not None else None,
             auth="api_key" if s.api_key else "open",
+            admin="api_key" if s.admin_api_key else "disabled",
         )
 
     @app.get("/model-info", response_model=ModelInfoResponse)

@@ -24,20 +24,26 @@ a service; the README says so next to the link.
 
 ```
 public repo ──(Render builds deploy/hosted/Dockerfile)──► image WITHOUT weights
-private HF model repo (models/champion/) ──(HF_TOKEN)──► fetch_champion() at startup ──► parity check ──► serve
+champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champion() at startup ──► parity check ──► serve
 ```
 
 - `deploy/hosted/Dockerfile` is the root Dockerfile minus the `COPY
   models/champion/` step, binding to `$PORT`. `render.yaml` is the
   blueprint: one free Docker web service, health check on `/health`,
   `autoDeploy: false` so only the release workflow deploys.
-- The weights never enter the public repo or the image. At startup
+- The weights never enter git or the image. At startup
   `fraud.serve.app.fetch_champion` downloads `model.joblib`, the frozen
   golden, the manifest and the monitoring reference from
-  `FRAUD_CHAMPION_URL` (a *private* Hugging Face model repo —
-  free — `https://huggingface.co/<user>/<repo>/resolve/main`) with
-  `HF_TOKEN`, and the usual startup parity check runs: a wrong token or a
-  tampered file and the service never becomes healthy.
+  `FRAUD_CHAMPION_URL` — the assets of a `champion-<sha12>` pre-release on
+  this repository (`scripts/publish_champion.py`; one immutable release per
+  promoted champion, public, no token, free) — and the usual startup parity
+  check runs: a tampered or mismatched file and the service never becomes
+  healthy. The URL pins the served weights by content hash, so what a
+  running service serves is readable from its environment. A store that
+  needs a bearer token takes it from `FRAUD_CHAMPION_TOKEN`. Publishing the
+  weights is a choice: this is a portfolio model on public Kaggle data and
+  every metric is already in the README, so a private store bought nothing
+  but an extra account.
 - `FRAUD_API_KEY` is **not** set on the demo: a dashboard that needs a key
   is not a demo. The upload cap, the 60 s time budget and the instance's
   own sleep are the protections; the audit trail is ephemeral on the free
@@ -47,16 +53,16 @@ private HF model repo (models/champion/) ──(HF_TOKEN)──► fetch_champio
 ## One-time setup (needs the account owner, once; free)
 
 ```bash
-uvx --from huggingface_hub hf auth login                          # free HF account: the private store
-uv run python scripts/publish_champion.py --repo <user>/fraud-risk-scoring-model
-#   → creates the PRIVATE model repo, uploads models/champion/, prints FRAUD_CHAMPION_URL
-#   → a read token: https://huggingface.co/settings/tokens
+uv run python scripts/publish_champion.py
+#   → creates the champion-<sha12> pre-release with models/champion/ as assets,
+#     prints FRAUD_CHAMPION_URL (already done for the current champion:
+#     https://github.com/professor3333/fraud-risk-scoring/releases/download/champion-7af85ec92813)
 ```
 
 Then on https://dashboard.render.com (sign up with GitHub, no card):
 *New → Blueprint*, pick this repository — `render.yaml` creates the
-service — and set its two environment variables `FRAUD_CHAMPION_URL` and
-`HF_TOKEN`. The first build starts on its own; wait for `/health`, then:
+service — and set its one environment variable `FRAUD_CHAMPION_URL`. The
+first build starts on its own; wait for `/health`, then:
 
 ```bash
 uv run --no-project python scripts/deploy_check.py https://fraud-risk-scoring.onrender.com
@@ -123,9 +129,9 @@ scripts/release.py vX.Y.Z   (the machine that holds models/champion)
   release  gh release create vX.Y.Z --generate-notes
 ```
 
-The weights are git-ignored and must not reach a public runner or a
-public image. On the Render leg the host builds an image without them
-and the service fetches the champion from the private repo at startup;
+The weights are git-ignored and are not in any image a public runner
+builds. On the Render leg the host builds an image without them and the
+service fetches the champion from its GitHub release at startup;
 on the Fly leg the runner deploys an image built where the champion is.
 A leg whose variables are unset is skipped; the release is still cut.
 `scripts/release.py --dry-run` prints the sequence without doing it.

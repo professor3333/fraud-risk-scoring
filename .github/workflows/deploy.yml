@@ -4,7 +4,7 @@
 #     checks   ci.yml (lint, types, tests, fixture image, container health)
 #     render   POST the Render deploy hook (Render builds main == this tag from
 #              deploy/hosted/Dockerfile, no weights; the service fetches the champion from
-#              the private HF model repo at startup), wait until the served version is the
+#              its champion-<sha> GitHub release at startup), wait until the served version is the
 #              tag's, then scripts/deploy_check.py against the live URL
 #              needs: vars.RENDER_URL, secrets.RENDER_DEPLOY_HOOK  — the free, public demo
 #     fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z (image pushed by release.py

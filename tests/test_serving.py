@@ -768,7 +768,7 @@ def test_champion_is_fetched_from_a_private_store_at_startup(
             "model_version: unused\nbands: {review: 0.062, block: 0.42}\n"
         )
         monkeypatch.setenv("FRAUD_CHAMPION_URL", base)
-        monkeypatch.setenv("HF_TOKEN", "tok")
+        monkeypatch.setenv("FRAUD_CHAMPION_TOKEN", "tok")
         with TestClient(create_app(cfg)) as c:
             h = c.get("/health").json()
             assert h["parity_rows"] == 10 and h["model_version"].startswith("fixture+sigmoid@")

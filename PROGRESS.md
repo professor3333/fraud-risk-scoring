@@ -30,13 +30,13 @@ Stage checklist. Each stage is a working system before the next begins.
 
 ## Stage 5 — Ablation, importance, model card
 - [x] Ablation per feature group; importance from two methods (`docs/ablation.md`)
-- [x] `docs/model_card.md`; single test-window evaluation (E022: test PR-AUC 0.561)
+- [x] `docs/model_card.md`; test-window evaluation (E022: test PR-AUC 0.561; reporting window, not a blind holdout — consultation log in ADR 0002)
 
 ## Stage 6 — Serving
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
-- [x] Small UI (demo page at `/`); public URL pending the owner's free HF account steps (`docs/deployment.md`)
-- [x] README complete and verified from a clean clone (v0.1.0 tagged)
+- [x] Small UI (analyst dashboard at `/`); public URL pending the owner's free Render account steps (`docs/deployment.md`)
+- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.6.0 current)
 
 ## Current stage: **all six complete — operating and hardening**
 Every stage box above is ticked. Work since v0.5.0 is post-stage
@@ -67,9 +67,9 @@ demo* line becomes the URL.
 | Reasoning | `docs/EXPERIMENT_LOG.md`, `docs/experiments.md` |
 | Operations | threshold 0.08 (ADR 0006), review policy (`docs/review_policy.md`); delayed-label loop — outcomes → predictions → cohort-aged monitoring → retraining on matured labels (ADR 0009, `docs/feedback.md`, `reports/feedback/`) |
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
-| API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/model-info` |
+| API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 118 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
-| Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from a private HF model repo at startup (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **public URL pending the owner's account steps (free, no card)** |
-| Documentation | README, ADRs 0001–0010, model card, error analysis, progression |
+| Quality | 125 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **public URL pending the owner's account steps (free, no card)** |
+| Documentation | README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

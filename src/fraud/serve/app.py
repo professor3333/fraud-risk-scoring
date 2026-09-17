@@ -95,14 +95,16 @@ CHAMPION_FILES = (
 
 
 def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[str]:
-    """Populate the champion directory from a private artifact store at startup.
+    """Populate the champion directory from an artifact store at startup.
 
-    For hosts that build from the public repository (Render, Koyeb — the image
-    must not contain the weights): FRAUD_CHAMPION_URL names a base URL — a
-    private HF model repo's ``…/resolve/main`` — and HF_TOKEN authorises it. The
-    files land next to ``model_path`` and the startup parity check then treats
-    them exactly like a local champion. Optional files (the monitoring
-    reference) are skipped when the store lacks them; everything else must exist.
+    For hosts that build from the repository (Render, Koyeb — the image carries
+    no weights): FRAUD_CHAMPION_URL names a base URL under which the champion
+    files are served — a GitHub release's ``…/releases/download/<tag>`` (public,
+    no token; scripts/publish_champion.py) or any store that takes a bearer
+    token in FRAUD_CHAMPION_TOKEN. The files land next to ``model_path`` and the
+    startup parity check then treats them exactly like a local champion.
+    Optional files (the monitoring reference) are skipped when the store lacks
+    them; everything else must exist.
     """
     import urllib.error
     import urllib.request
@@ -132,7 +134,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model_path = root / raw["model_path"]
     champion_url = os.environ.get("FRAUD_CHAMPION_URL")
     if not model_path.exists() and champion_url:
-        fetched = fetch_champion(model_path, champion_url, os.environ.get("HF_TOKEN"))
+        fetched = fetch_champion(model_path, champion_url, os.environ.get("FRAUD_CHAMPION_TOKEN"))
         request_log.info(json.dumps({"event": "champion_fetched", "files": fetched}))
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]

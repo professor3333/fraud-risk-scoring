@@ -10,10 +10,10 @@
 #     fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z (image pushed by release.py
 #              --fly-image), then deploy_check.py — the paid alternative
 #              needs: vars.FLY_APP, secrets.FLY_API_TOKEN
-#     release  GitHub release from the tag
+#     release  GitHub release from the tag, after checks and configured deployments pass
 #
 # The model weights never enter the repository, a public runner or a public image.
-# A leg whose variables are unset is skipped; the release is still cut.
+# Unconfigured deployment legs may be skipped; failed or cancelled legs block release.
 name: deploy
 
 on:
@@ -74,7 +74,13 @@ jobs:
           FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
 
   release:
-    needs: checks
+    needs: [checks, render, fly]
+    # Override the default success() so an unconfigured host may be skipped.
+    if: >-
+      ${{ !cancelled() &&
+          needs.checks.result == 'success' &&
+          (needs.render.result == 'success' || needs.render.result == 'skipped') &&
+          (needs.fly.result == 'success' || needs.fly.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

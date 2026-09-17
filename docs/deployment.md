@@ -50,7 +50,7 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   plan, so `/outcomes` writes nothing that outlives a restart. On 0.1 CPU
   uploads much beyond the 200-row sample run into the time budget.
 
-## One-time setup (needs the account owner, once; free)
+## One-time setup (needs the account owner, once; free — done 2026-09-17: https://fraud-risk-scoring-m1fp.onrender.com)
 
 ```bash
 uv run python scripts/publish_champion.py
@@ -65,9 +65,9 @@ service — and set its one environment variable `FRAUD_CHAMPION_URL`. The
 first build starts on its own; wait for `/health`, then:
 
 ```bash
-uv run --no-project python scripts/deploy_check.py https://fraud-risk-scoring.onrender.com
+uv run --no-project python scripts/deploy_check.py https://fraud-risk-scoring-m1fp.onrender.com
 # continuous deployment on every tag: the service's Settings → Deploy Hook
-gh variable set RENDER_URL --body https://fraud-risk-scoring.onrender.com
+gh variable set RENDER_URL --body https://fraud-risk-scoring-m1fp.onrender.com
 gh secret set RENDER_DEPLOY_HOOK --body '<the hook URL>'
 ```
 

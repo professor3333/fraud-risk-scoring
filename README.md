@@ -9,11 +9,13 @@ from a review policy sized to an analyst budget — served over a FastAPI
 endpoint, with every modelling decision recorded and every improvement
 measured on a strictly later window of time.
 
-**Live demo:** not yet public. The zero-cost hosting path (a Render free
-web service that fetches the model from its GitHub release at startup)
-is built, measured under Render's limits locally and wired into CD; it
-goes live the moment the account steps in `docs/deployment.md` →
-*One-time setup* are done, and this line becomes the URL.
+**Live demo:** https://fraud-risk-scoring-m1fp.onrender.com — the analyst
+dashboard; `https://fraud-risk-scoring-m1fp.onrender.com/docs` is the API.
+A Render free web service (512 MB, 0.1 CPU) that fetches the model from
+its GitHub release at startup: it sleeps after 15 minutes idle, so the
+first request after a pause takes about a minute, and the 200-row sample
+scores in ~20 s at a tenth of a CPU. A demo, not a service
+(`docs/deployment.md`).
 
 ## Architecture
 

@@ -36,21 +36,21 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
 - [x] Small UI (analyst dashboard at `/`); public at https://fraud-risk-scoring-m1fp.onrender.com
-- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.7.1 current)
+- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.7.2 current)
 
 ## Current stage: **all six complete — operating and hardening**
 Every stage box above is ticked. Work since v0.5.0 is post-stage
 operations: label feedback (ADR 0009), promotion gates (ADR 0010),
 subgroup robustness, upload limits, the API benchmark, the per-day review
 budget. Per-prediction explanation added (`docs/explanation.md`). API key, time budget and structured request logs added
-(`docs/deployment.md` → Hardening). CD on tag exists (`deploy.yml` + `scripts/release.py`). The hosting
+(`docs/deployment.md` → Hardening). Per-client application rate limits added for single
+predictions, CSV/batch uploads and explanations. CD on tag exists (`deploy.yml` + `scripts/release.py`). The hosting
 target moved from Fly.io (paid) via Hugging Face Spaces (Docker now needs
 PRO) to a Render free web service (512 MB / 0.1 CPU, no card; the service
 fits at 238 MiB). **Live since 2026-09-17: https://fraud-risk-scoring-m1fp.onrender.com**
 (`deploy_check.py` passes against it; the champion is served from its
-GitHub release). Continuous deployment on tag needs the service's deploy
-hook in `RENDER_DEPLOY_HOOK`; until it is set the tag workflow's Render
-leg is skipped and the service is redeployed by hand.
+GitHub release). Continuous deployment on tag is configured through `RENDER_DEPLOY_HOOK`
+and `RENDER_URL`; the workflow waits for the new version and verifies the live service.
 
 ## Completion evidence
 
@@ -71,7 +71,7 @@ leg is skipped and the service is redeployed by hand.
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 136 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Quality | 153 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
 | Documentation | README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

@@ -69,6 +69,7 @@ def served(fixture_raw_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> d
     cfg.write_text(
         "model_path: models/m.joblib\n"
         "audit_db: models/audit.sqlite\n"
+        "rate_limits: {enabled: false}\n"  # quota behaviour has isolated tests
         "model_version: fixture-model\nbands: {review: 0.062, block: 0.42}\n"
         "model_info: {model: xgboost, experiment: fixture, feature_set: v2_freq, "
         "primary_metric: pr_auc, validation_pr_auc: 0.5, test_pr_auc: 0.4, calibration: sigmoid, "

@@ -66,11 +66,11 @@ def main() -> None:
     if exists:
         print(
             f"release {tag} already exists; not re-uploading.\n"
-            "NOTE: GitHub release assets are NOT immutable by default — anyone with write\n"
-            "access to this repository can replace them unless Immutable Releases is enabled\n"
-            "(Settings → General → Releases). The startup digest pin means a swapped asset\n"
-            "fails the service's startup check rather than being loaded, so this is an\n"
-            "availability risk, not code execution. See docs/security.md."
+            "NOTE: release immutability is enabled on this repository, but it is not\n"
+            "retroactive: a release published before 2026-09-18 still has replaceable\n"
+            "assets. The startup digest pin means a swapped asset fails the service's\n"
+            "startup check rather than being loaded, so this is an availability risk,\n"
+            "not code execution. See docs/security.md."
         )
     else:
         cmd = [

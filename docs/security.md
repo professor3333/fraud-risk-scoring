@@ -66,15 +66,17 @@ which mode it is in through `/health` (`auth`, `admin`).
 
 Stated rather than implied:
 
-- **Champion release assets are mutable.** GitHub release assets are not immutable
-  by default: anyone with write access to this repository can replace a published
-  `champion-<sha12>` asset. Enabling **Immutable Releases** (Settings → General →
-  Releases) locks assets and tags for *new* releases and generates a release
-  attestation; it does not retroactively protect `champion-7af85ec92813`. The
-  REST API ignores an `immutable_releases` field, so this is a UI toggle, not
-  something the tooling can set. The startup digest pin already means a swapped
-  asset fails startup instead of being loaded, so the residual risk is
-  availability, not code execution.
+- **The current champion's release assets are still mutable.** Release
+  immutability is **enabled** on this repository (2026-09-18), so releases created
+  from now on have locked assets, protected tags and a release attestation. It is
+  not retroactive: every release published before that date — including
+  `champion-7af85ec92813`, the one the live service actually fetches — remains
+  replaceable by anyone with write access. The next promoted champion will be
+  covered; this one is only covered if its release is deleted and re-created.
+  The REST API exposes neither the repository flag nor an `immutable` field on
+  existing releases, so the setting is verifiable only by publishing. Either way
+  the startup digest pin means a swapped asset fails startup rather than being
+  loaded, so the residual risk is availability, not code execution.
 - **The champion's sidecar files are not digest-pinned.** Only `model.joblib` is
   verified against the URL's `champion-<sha12>`. The manifest and the frozen
   golden are checked *for consistency with it*: a wrong `artifact_sha256`, wrong

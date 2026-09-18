@@ -15,7 +15,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     FRAUD_AUDIT_DB=/app/audit/prediction_events.sqlite
 
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-group train --no-install-project
 COPY src ./src

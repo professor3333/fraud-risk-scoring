@@ -254,10 +254,10 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   review_policy, freeze_artifact, monitor_reference, monitor,
                   feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report, benchmark_api,
-                  release, publish_champion
-deploy/hosted/    Dockerfile without the weights (Render / Koyeb build it; the service
-                  fetches the champion at startup); render.yaml is the blueprint
-                  split_comparison, deploy_check, make_fixture_artifact
+                  release, publish_champion, split_comparison, deploy_check,
+                  make_fixture_artifact
+deploy/hosted/    Dockerfile without the weights (Render builds it; the service
+                  fetches the champion from its release at startup)
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
@@ -269,7 +269,8 @@ src/fraud/
   monitor/        drift (PSI, bins), reference (frozen 'normal'), report
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 Dockerfile        runtime-only image, non-root
-fly.toml          Fly.io app definition (public deployment)
+render.yaml       Render blueprint — the free public demo (the live deployment)
+fly.toml          Fly.io app definition — the optional paid alternative
 ```
 
 ## Requirements

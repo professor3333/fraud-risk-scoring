@@ -127,8 +127,21 @@ Two checks keep the mismatch from reaching a release unnoticed:
 - `scripts/release.py` refuses to tag when the promoted champion has no
   `champion-<sha12>` release, and records the champion's sha in the tag
   annotation.
-- `deploy.yml` reads that sha back and fails the release unless the live
-  `/health` reports the service is serving that same champion.
+- `deploy.yml` reads that sha back and passes it to
+  `scripts/deploy_check.py --expected-artifact-sha`, which fails the release
+  unless the live service reports having loaded that exact artifact
+  (`/model-info` → `artifact_sha256`). Both the Render and Fly legs assert it.
+
+The contract lives in `deploy_check.py` rather than in the workflow, so the same
+assertion is available for a manual deploy:
+
+```bash
+uv run python scripts/deploy_check.py <url> --expected-artifact-sha <sha12>
+```
+
+Its other checks are consistency checks — `/health`, `/model-info` and a scored
+batch agreeing with each other — and a stale champion passes all of them, because
+it is consistently the *old* model. Only the digest distinguishes them.
 
 Neither can update the host for you. They convert a silent staleness into a
 failed release that names the URL to set.

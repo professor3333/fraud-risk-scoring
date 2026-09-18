@@ -72,19 +72,14 @@ jobs:
           # promotion or publication updates, so a new champion that nobody pointed the
           # host at leaves the old one serving — and, being correctly digest-pinned, it
           # passes every other check. scripts/release.py records the champion it cut this
-          # release for in the tag annotation; require the live service to report it.
+          # release for in the tag annotation; deploy_check.py asserts the live service
+          # has loaded that exact artifact.
           want=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha \
                  | xargs -I{} gh api "repos/$GITHUB_REPOSITORY/git/tags/{}" --jq .message \
                  | sed -n 's/.*(\([0-9a-f]\{12\}\)).*/\1/p')
           if [ -z "$want" ]; then echo "tag annotation names no champion sha" >&2; exit 1; fi
-          got=$(curl -sf "$RENDER_URL/health" | python3 -c "import json,sys;print(json.load(sys.stdin)['model_version'].rpartition('@')[2])")
-          if [ "$got" != "$want" ]; then
-            echo "live service serves champion '$got', this release was cut for '$want'." >&2
-            echo "Point FRAUD_CHAMPION_URL at .../releases/download/champion-$want" >&2
-            exit 1
-          fi
-          echo "live champion $got matches the release"
-          uv run --no-project python scripts/deploy_check.py "$RENDER_URL"
+          uv run --no-project python scripts/deploy_check.py "$RENDER_URL" \
+            --expected-artifact-sha "$want"
         env:
           FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -108,9 +103,16 @@ jobs:
             --strategy immediate
       - uses: astral-sh/setup-uv@v6
       - name: Verify the live service (health + parity, model-info, scored sample)
-        run: uv run --no-project python scripts/deploy_check.py "https://$FLY_APP.fly.dev"
+        run: |
+          set -euo pipefail
+          want=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha \
+                 | xargs -I{} gh api "repos/$GITHUB_REPOSITORY/git/tags/{}" --jq .message \
+                 | sed -n 's/.*(\([0-9a-f]\{12\}\)).*/\1/p')
+          uv run --no-project python scripts/deploy_check.py "https://$FLY_APP.fly.dev" \
+            --expected-artifact-sha "$want"
         env:
           FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
 
   release:
     needs: [checks, render, fly]

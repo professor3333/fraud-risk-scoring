@@ -50,7 +50,11 @@ PRO) to a Render free web service (512 MB / 0.1 CPU, no card; the service
 fits at 238 MiB). **Live since 2026-09-17: https://fraud-risk-scoring-m1fp.onrender.com**
 (`deploy_check.py` passes against it; the champion is served from its
 GitHub release). Continuous deployment on tag is configured through `RENDER_DEPLOY_HOOK`
-and `RENDER_URL`; the workflow waits for the new version and verifies the live service.
+and `RENDER_URL`; the workflow waits for the new version and verifies the live service. A documentation scope pass (2026-09-18) states plainly what is
+operated versus simulated: monitoring and retraining run manually, the free
+demo's SQLite state is ephemeral, and autonomous blocking is a demonstration
+policy whose block-precision target does not hold in every subgroup. MIT
+`LICENSE` added and recorded in `pyproject.toml`.
 
 ## Completion evidence
 
@@ -73,5 +77,5 @@ and `RENDER_URL`; the workflow waits for the new version and verifies the live s
 | UI | analyst dashboard at `/` |
 | Quality | 153 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
-| Documentation | README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
+| Documentation | MIT `LICENSE`, README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

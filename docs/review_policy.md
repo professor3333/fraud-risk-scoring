@@ -166,6 +166,15 @@ apply_daily_rank_policy`):
   `policy.budget_accounting`: `audit_trail`, or `per_request` when auditing
   is disabled and the service has no memory.
 
+**Persistence and replica limits.** Cross-request budget history lives in the
+local SQLite audit database. On the free Render deployment, a restart or
+redeploy loses that history, so earlier reviews no longer count against the
+day's remaining capacity. Separate replicas with separate SQLite databases
+would each account for their own reviews, not enforce one shared daily budget.
+This is an accepted limitation of the current single-instance free demo.
+Production scaling requires shared durable policy state and atomic budget
+updates across requests and replicas; that work is outside the current scope.
+
 Live check, validation day 130 as ten consecutive batches of ~280 rows,
 budget 200: capacities 14 / 25 / 70 / 17 / 11 / 13 / 12 / 13 / 12 / 13,
 every one used in full — block 47 / review **200** / approve 2,560, the

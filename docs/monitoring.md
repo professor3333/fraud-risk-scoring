@@ -1,5 +1,11 @@
 # Monitoring
 
+**Deployment status:** monitoring runs manually through `scripts/monitor.py`.
+There is no deployed recurring monitoring job or alert delivery. Threshold
+breaches appear in the generated report; they do not send notifications.
+The Stage 1 monitoring scope is complete. A scheduler and automated alerts
+remain future MLOps work.
+
 The offline analysis showed drift (validation PR-AUC 0.637 → reporting
 window 0.561; calibration and block precision degrade with time). The
 service now carries what is needed to see it happen: an audit trail with
@@ -33,7 +39,7 @@ scripts/monitor.py  ──  reference (frozen from train + validation)  ──�
 PSI thresholds: ≥ 0.10 warn, ≥ 0.20 alert. Eventual PR-AUC more than 0.03
 below reference, block precision more than 0.05 below, error rate > 5 %,
 or any transaction past the reporting window without an outcome (a label
-feed gap) raise an alert. Categoricals are compared on the reference's own level set;
+feed gap) produce an alert flag in the report. Categoricals are compared on the reference's own level set;
 count-like features use equal-width bins (quantile bins collapse on
 discrete values).
 
@@ -103,6 +109,7 @@ Without `--labels` the report reads the `outcomes` table as of the label
 feed's clock and treats every label as delayed (`docs/feedback.md`); the
 two demonstration days above were produced with a complete label file,
 which is the `--labels` path. Reports land in `reports/monitoring/<stamp>.md`
-and `.json`. A scheduler that runs the report daily (the eventual section
-fills in by itself as cohorts close) is the natural next step; the
-retraining lifecycle (`scripts/retrain.py`) is what an alert should trigger.
+and `.json`. A future MLOps stage can schedule daily reports and deliver
+notifications for threshold breaches. Eventual metrics update when the report
+is rerun with newly matured labels; no background job currently does this.
+Monitoring does not automatically trigger `scripts/retrain.py`.

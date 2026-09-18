@@ -22,6 +22,13 @@ a service; the README says so next to the link.
 
 ## The hosted image
 
+**Public demo persistence is ephemeral; durable auditing/feedback requires persistent storage.**
+The free Render deployment loses its local SQLite state on restart or redeploy:
+prediction audit records, any stored delayed labels, cross-request review-budget
+accounting, and locally stored monitoring history. Local Docker and Fly deployments
+can retain this state using their configured persistent SQLite volumes. Durable
+storage is intentionally outside the scope of the free portfolio demo.
+
 ```
 public repo ──(Render builds deploy/hosted/Dockerfile)──► image WITHOUT weights
 champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champion() at startup ──► parity check ──► serve

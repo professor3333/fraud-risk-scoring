@@ -55,6 +55,14 @@ def fly_app() -> str:
     return m.group(1)
 
 
+def champion_published(tag: str) -> bool:
+    """Whether the champion's own release exists, which is what the host fetches."""
+    return (
+        subprocess.run(["gh", "release", "view", tag], capture_output=True, cwd=ROOT).returncode
+        == 0
+    )
+
+
 def check_slow_tests(*, dry_run: bool) -> None:
     """Require the real-data suite to pass without silently skipping missing inputs."""
     cmd = ("uv", "run", "pytest", "-q", "-m", "slow")
@@ -118,7 +126,20 @@ def main() -> None:
     if manifest is None:
         sys.exit("models/champion has no manifest; run scripts/promote.py")
     parity = verify(joblib.load(CHAMPION), CHAMPION)
-    print(f"champion {manifest['run_name']} sha {parity.artifact_sha256[:12]}: parity ok")
+    champion_sha = parity.artifact_sha256[:12]
+    print(f"champion {manifest['run_name']} sha {champion_sha}: parity ok")
+
+    # The service fetches the champion from its own release, so a champion that was
+    # promoted but never published would leave the host fetching the previous one.
+    # The docstring has always required this; check it instead of assuming it.
+    champion_tag = f"champion-{champion_sha}"
+    if not champion_published(champion_tag):
+        sys.exit(
+            f"{champion_tag} is not published; run scripts/publish_champion.py first, then "
+            "point the host's FRAUD_CHAMPION_URL at it (docs/promotion.md → Shipping a "
+            "promoted champion). Without both, the service keeps serving the old champion."
+        )
+    print(f"{champion_tag}: published")
 
     # the ship sequence (§14): tests → lint → format → types
     if not args.skip_checks:

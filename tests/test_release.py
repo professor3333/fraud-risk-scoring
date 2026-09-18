@@ -26,6 +26,8 @@ def release_env(
     )
     monkeypatch.setattr(script.joblib, "load", lambda _: object())
     monkeypatch.setattr(script, "verify", lambda *_: SimpleNamespace(artifact_sha256="a" * 64))
+    # the champion's release is a `gh` call; tests stay offline and assume it published
+    monkeypatch.setattr(script, "champion_published", lambda _: True)
     calls: list[tuple[str, ...]] = []
 
     def sh(*cmd: str) -> str:
@@ -105,3 +107,19 @@ def test_full_checks_dry_run_only_prints_checks_and_tag(
     assert "$ uv run pytest -q -m slow" in capsys.readouterr().out
     assert not any(cmd[0] == "uv" for cmd in calls)
     assert not any(cmd[:3] == ("git", "tag", "-a") or cmd[:2] == ("git", "push") for cmd in calls)
+
+
+def test_an_unpublished_champion_cannot_be_tagged(
+    release_env: tuple[ModuleType, list[tuple[str, ...]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Promotion writes models/champion/; the host fetches the champion from its own
+    release. Tagging a champion that was never published would ship a release whose
+    service keeps serving the previous one, silently (docs/promotion.md)."""
+    script, calls = release_env
+    monkeypatch.setattr(script, "champion_published", lambda _: False)
+    monkeypatch.setattr(sys, "argv", ["release.py", "v1.2.3", "--skip-checks"])
+    with pytest.raises(SystemExit) as exc:
+        script.main()
+    assert "champion-aaaaaaaaaaaa is not published" in str(exc.value)
+    assert not [c for c in calls if c[:3] == ("git", "tag", "-a")], "created the tag anyway"
+    assert not [c for c in calls if c[:2] == ("git", "push")], "pushed anyway"

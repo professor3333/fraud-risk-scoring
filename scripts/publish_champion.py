@@ -77,7 +77,16 @@ def main() -> None:
         if not args.dry_run:
             subprocess.run(cmd, check=True, cwd=ROOT)
     print(json.dumps({"FRAUD_CHAMPION_URL": url, "files": list(FILES)}, indent=2))
-    print("set FRAUD_CHAMPION_URL on the hosted service (no token needed)")
+    print(
+        "\nPublishing does NOT change what the service serves. The host fetches the\n"
+        "champion from the FRAUD_CHAMPION_URL set on it, and nothing here updates that:\n"
+        f"  set FRAUD_CHAMPION_URL = {url}\n"
+        "  on the host (Render → the service → Environment), then redeploy.\n"
+        "Until then the previous champion keeps serving, and — being correctly pinned to\n"
+        "its own digest — it passes every startup check while doing so. The next\n"
+        "scripts/release.py refuses to tag an unpublished champion, and deploy.yml fails\n"
+        "the release if the live service is not serving this one."
+    )
 
 
 if __name__ == "__main__":

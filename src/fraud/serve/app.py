@@ -195,6 +195,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     root = config_path.resolve().parents[1]
     model_path = root / raw["model_path"]
     champion_url = os.environ.get("FRAUD_CHAMPION_URL")
+    from_network = False
     if not model_path.exists() and champion_url:
         expected_digest = expected_champion_digest(
             champion_url, os.environ.get("FRAUD_CHAMPION_SHA256")
@@ -202,6 +203,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         fetched = fetch_champion(
             model_path, champion_url, os.environ.get("FRAUD_CHAMPION_TOKEN"), expected_digest
         )
+        from_network = True
         request_log.info(
             json.dumps(
                 {"event": "champion_fetched", "files": fetched, "pinned": expected_digest[:12]}
@@ -220,7 +222,22 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
             )
         raw["model_version"] = manifest["model_version"]
         raw["model_info"] = {**raw.get("model_info", {}), **manifest["model_info"]}
-        raw["bands"] = manifest["bands"]
+        if from_network:
+            # Bands decide block and review, so they are policy (ADR 0006), and a manifest
+            # fetched from the store is not digest-pinned the way model.joblib is: one that
+            # kept artifact_sha256 correct could set thresholds and pass every other check.
+            # Take them from this config, which ships in the image from a reviewed commit,
+            # and refuse to start if it disagrees with the champion rather than quietly
+            # serving a different policy than the one that was promoted.
+            if manifest["bands"] != raw["bands"]:
+                raise RuntimeError(
+                    f"champion manifest bands {manifest['bands']} do not match "
+                    f"{config_path.name} bands {raw['bands']}. Bands are not taken from a "
+                    "fetched manifest (docs/security.md); update the config to the promoted "
+                    "champion's bands and redeploy."
+                )
+        else:
+            raw["bands"] = manifest["bands"]
     bands = Bands(**raw["bands"])
     if not 0.0 <= bands.review <= bands.block <= 1.0:
         raise ValueError(f"bands must satisfy 0 <= review <= block <= 1, got {bands}")

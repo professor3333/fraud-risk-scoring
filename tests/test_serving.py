@@ -815,16 +815,20 @@ def test_champion_is_fetched_from_a_private_store_at_startup(
         root = tmp_path / "svc"
         (root / "configs").mkdir(parents=True)
         cfg = root / "configs" / "serving.yaml"
+        # A fetched manifest supplies reporting fields but not bands, so the config must
+        # already carry the promoted champion's bands or startup fails (docs/security.md).
         cfg.write_text(
             "model_path: models/champion/model.joblib\naudit_db: null\n"
-            "model_version: unused\nbands: {review: 0.062, block: 0.42}\n"
+            "model_version: unused\nbands: {review: 0.05, block: 0.5}\n"
         )
         monkeypatch.setenv("FRAUD_CHAMPION_URL", base)
         monkeypatch.setenv("FRAUD_CHAMPION_TOKEN", "tok")
         with TestClient(create_app(cfg)) as c:
             h = c.get("/health").json()
             assert h["parity_rows"] == 10 and h["model_version"].startswith("fixture+sigmoid@")
+            # reporting fields still come from the fetched manifest ...
             assert c.get("/model-info").json()["experiment"] == "fetched"
+            # ... while the bands served are the config's, which must agree with it
             assert c.get("/model-info").json()["bands"]["block"] == 0.5
         assert (root / "models" / "champion" / "model.joblib").exists()
     finally:
@@ -921,3 +925,72 @@ def test_health_reports_the_commit_the_build_came_from(
     with TestClient(create_app(Path(served["config"]))) as c:
         body = c.get("/health").json()
     assert body["build_commit"] == "6dd8b796742f0befdb4e9b6644616fa2040b2523"
+
+
+def test_a_fetched_manifest_cannot_set_the_policy_bands(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """model.joblib is digest-pinned to its release tag; the manifest beside it is not.
+    A manifest that keeps artifact_sha256 correct and changes `bands` would otherwise
+    set the block and review thresholds from the network (docs/security.md)."""
+    import hashlib
+    import json
+    import shutil
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    src = Path(served["config"]).parents[1] / "models"
+    store = tmp_path / "store"
+    store.mkdir()
+    shutil.copyfile(src / "m.joblib", store / "model.joblib")
+    shutil.copyfile(src / "m_frozen_sample.json", store / "model_frozen_sample.json")
+    shutil.copyfile(src / "m_frozen_expected.json", store / "model_frozen_expected.json")
+    sha = hashlib.sha256((store / "model.joblib").read_bytes()).hexdigest()
+    honest_bands = {"review": 0.05, "block": 0.5}
+    # the artifact is genuine and its digest is correct; only the policy is tampered with
+    (store / "model_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_name": "fixture", "model_version": "fixture+sigmoid",
+                "artifact_sha256": sha, "bands": {"review": 0.9, "block": 0.99},
+                "model_info": {"experiment": "fetched"},
+            }
+        )
+    )  # fmt: skip
+
+    class Store(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            target = store / self.path.strip("/").split("/")[-1]
+            if not target.exists():
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Store)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        root = tmp_path / "svc"
+        (root / "configs").mkdir(parents=True)
+        cfg = root / "configs" / "serving.yaml"
+        cfg.write_text(
+            "model_path: models/champion/model.joblib\naudit_db: null\n"
+            f"model_version: unused\nbands: {json.dumps(honest_bands)}\n"
+        )
+        monkeypatch.setenv(
+            "FRAUD_CHAMPION_URL",
+            f"http://127.0.0.1:{server.server_port}/releases/download/champion-{sha[:12]}",
+        )
+        # the tampered policy is refused rather than served, and named in the error
+        # (the artifact is loaded in the lifespan, so the refusal surfaces on startup)
+        with pytest.raises(RuntimeError, match="do not match"), TestClient(create_app(cfg)):
+            pass
+    finally:
+        server.shutdown()

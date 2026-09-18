@@ -114,6 +114,14 @@ one thing it must not do. Automating it properly means the release pipeline
 setting the URL through the host's API — the authority moves to CD, the pin stays
 out-of-band. That is not wired up; the two guards below are what stand in for it.
 
+**A promotion that changes the bands needs a config commit.** The hosted service
+refuses to take `bands` from a fetched manifest — they decide block and review, and
+the manifest is not digest-pinned the way `model.joblib` is (`docs/security.md`) —
+so it reads them from `configs/serving.yaml` and **fails startup if the champion's
+manifest disagrees**. Promoting a champion with new thresholds therefore means
+updating that config in the same release. The failure is loud and names both values;
+it cannot be forgotten into serving the wrong policy.
+
 Two checks keep the mismatch from reaching a release unnoticed:
 
 - `scripts/release.py` refuses to tag when the promoted champion has no

@@ -51,7 +51,13 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   from the manifest or the frozen golden, because those are fetched from the
   same store as the artifact and would be substituted along with it. A store
   whose URL carries no tag must set `FRAUD_CHAMPION_SHA256`; an unpinned
-  remote fetch is refused. The startup parity check still runs afterwards,
+  remote fetch is refused. The corollary: **promoting and publishing a new
+  champion does not change what this service serves** until `FRAUD_CHAMPION_URL`
+  is repointed by hand. The old champion stays correctly pinned to its own
+  release and keeps passing every check, so the staleness is silent
+  (`docs/promotion.md` → Shipping a promoted champion). `release.py` and
+  `deploy.yml` fail a release that would ship with the wrong champion live,
+  but neither updates the host. The startup parity check still runs afterwards,
   but it guards *correctness* — that the artifact reproduces its frozen
   probabilities — not provenance. The URL pins the served weights by content
   hash, so what a running service serves is readable from its environment. A store that

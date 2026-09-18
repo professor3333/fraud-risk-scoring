@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>Fraud Risk Scoring — demo</h1>
-  <p class="sub">POSTs one transaction to <code>/predict</code> and shows the calibrated probability and the action (approve / review / block). A single transaction has no batch to rank within, so the fixed bands apply; the <a href="/">review queue</a> applies the rank-based policy. Field names follow the IEEE-CIS schema; omit identity fields to score a transaction without an identity record.</p>
+  <p class="sub">POSTs one transaction to <code>/predict</code> and shows the calibrated probability and its risk band. <code>/predict</code> scores; it does not choose approve or review. Blocking is a fixed threshold, but selecting the day's highest remaining scores for an analyst needs the rest of the day's scores, so the <a href="/">review queue</a> makes that call under the rank-based policy. Field names follow the IEEE-CIS schema; omit identity fields to score a transaction without an identity record.</p>
   <div class="row">
     <div class="col">
       <textarea id="req" spellcheck="false"></textarea>
@@ -94,10 +94,15 @@ document.getElementById("send").onclick = async () => {
     document.getElementById("meta").textContent = "ranked by fraud probability · model " + j.ranked[0].model_version;
     return;
   }
-  dec.textContent = j.action.toUpperCase() + "  ·  " + j.risk_level + " risk  ·  p = " + j.fraud_probability.toFixed(4);
-  dec.className = "decision " + colour(j.action);
+  // /predict is scoring-only: blocking is a threshold, but review vs approve depends on
+  // the day's other scores, so the queue decides it (docs/review_policy.md).
+  const blocked = j.risk_level === "high";
+  dec.textContent = (blocked ? "BLOCK" : "NOT BLOCKED") + "  ·  " + j.risk_level + " risk  ·  p = " + j.fraud_probability.toFixed(4);
+  dec.className = "decision " + (blocked ? colour("block") : colour("approve"));
   document.getElementById("bar").style.width = Math.min(100, j.fraud_probability * 100) + "%";
-  document.getElementById("meta").textContent = "fixed bands (single transaction) · model " + j.model_version;
+  document.getElementById("meta").textContent = (blocked
+    ? "at or above the block threshold · model "
+    : "below the block threshold; the review queue decides whether an analyst sees it · model ") + j.model_version;
 };
 </script>
 </body>

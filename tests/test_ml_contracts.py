@@ -150,13 +150,19 @@ def test_api_contract_via_openapi(fixture_raw_dir: Path, tmp_path: Path) -> None
         assert "get" in paths["/health"] and "post" in paths["/predict"]
         schemas = spec_doc["components"]["schemas"]
         pred = schemas["PredictionResponse"]
+        # /predict is scoring-only: the rank-budget policy cannot choose review vs
+        # approve for a transaction on its own (docs/review_policy.md)
         assert set(pred["required"]) == {
-            "transaction_id", "fraud_probability", "risk_level", "action", "model_version",
+            "transaction_id", "fraud_probability", "risk_level", "model_version",
         }  # fmt: skip
+        assert "action" not in pred["properties"]
         assert "decision" not in pred["properties"] and "threshold" not in pred["properties"]
         assert pred["properties"]["fraud_probability"]["minimum"] == 0.0
         assert pred["properties"]["fraud_probability"]["maximum"] == 1.0
-        assert set(pred["properties"]["action"]["enum"]) == {"approve", "review", "block"}
+        # the batch endpoints do choose one, because they have the ranking to do it with
+        ranked = schemas["RankedPrediction"]
+        assert "action" in ranked["required"]
+        assert set(ranked["properties"]["action"]["enum"]) == {"approve", "review", "block"}
         assert schemas["TransactionRequest"]["additionalProperties"] is False
         assert set(schemas["TransactionRequest"]["required"]) == {
             "TransactionID", "TransactionDT", "TransactionAmt", "ProductCD", "card1",

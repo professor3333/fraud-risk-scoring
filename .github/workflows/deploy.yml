@@ -98,7 +98,9 @@ jobs:
       FLY_APP: ${{ vars.FLY_APP }}
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Pinned to a release, not @master: this step runs third-party code in the job
+      # that holds FLY_API_TOKEN, and a floating branch is whatever it is that day.
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
       - name: Deploy the image built for this tag
         run: |
           flyctl deploy --app "$FLY_APP" \

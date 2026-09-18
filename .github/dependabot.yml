@@ -1,0 +1,51 @@
+# Dependency updates (docs/security.md). Nothing here merges on its own: Dependabot
+# opens a PR, ci.yml runs on it like any other, and the owner reviews the diff.
+#
+# The lock file is the single source of truth for what ships (CLAUDE.md §6), so the
+# `uv` ecosystem updates uv.lock and pyproject.toml together. Actions and base images
+# are dependencies too — a workflow runs third-party code with the repository's
+# secrets, and the runtime image is what serves the public demo.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the routine bumps; anything major arrives on its own so the
+      # break it might cause is reviewed by itself.
+      python-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  # Both Dockerfiles: the one that carries the champion and the hosted one that does not.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/deploy/hosted"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "docker"

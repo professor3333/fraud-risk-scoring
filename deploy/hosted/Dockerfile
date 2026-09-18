@@ -3,7 +3,7 @@
 # the image: at startup the service fetches models/champion/ from FRAUD_CHAMPION_URL
 # (the champion-<sha> GitHub release of this repository; FRAUD_CHAMPION_TOKEN only for
 # a private store) and runs its usual parity check before serving. Binds to $PORT, which these hosts set.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
 

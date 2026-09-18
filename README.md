@@ -397,8 +397,15 @@ curl -X POST http://127.0.0.1:8000/predict/batch -H 'content-type: application/j
 
 `review_budget` defaults to the server's `default_review_budget` (200);
 `"policy": "threshold"` selects the fixed-band policy instead. The same
-options apply to `POST /predict/csv?review_budget=200`. Single `/predict`
-has no batch to rank within, so it reports the fixed bands.
+options apply to `POST /predict/csv?review_budget=200`.
+
+Single `/predict` is **scoring-only**: it returns the probability and the risk
+band, not an action. Blocking is a threshold and could be decided for one
+transaction, but whether a score is among the day's highest remaining depends on
+the day's other scores, which one request does not have — so returning
+approve/review there would apply fixed bands, a different policy from the one the
+experiments chose. `risk_level: "high"` means at or above the block threshold;
+review selection belongs to the queue (`docs/review_policy.md`).
 
 **Analyst dashboard** (`/`): set the analyst review capacity, upload a CSV
 of transactions with the IEEE-CIS column names (up to 5,000 rows and 25 MB

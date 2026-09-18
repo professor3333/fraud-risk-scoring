@@ -49,16 +49,25 @@ TransactionRequest = create_model("TransactionRequest", __base__=_Base, **_field
 
 
 class PredictionResponse(BaseModel):
-    """The authoritative output: one probability, one action, one risk level.
+    """One transaction's score. Deliberately not an action.
 
-    The evaluation threshold (0.08, ADR 0006) is reporting material only; the
-    three-action review policy is the production policy.
+    The production policy blocks above a threshold and then reviews the highest
+    remaining scores up to the day's analyst budget (docs/review_policy.md). The
+    second half of that cannot be decided for a transaction on its own: whether a
+    score belongs in the day's top N depends on the rest of the day's scores, which
+    a single request does not have. Returning approve/review here would be a
+    different policy — fixed bands — than the one the experiments chose.
+
+    So this endpoint scores and stops. ``risk_level`` says which band the
+    probability falls in (``high`` is at or above the block threshold,
+    ``/model-info`` → ``bands``); selecting for review is the review queue's
+    decision, which ``/predict/batch`` and ``/predict/csv`` make under the rank
+    policy.
     """
 
     transaction_id: int
     fraud_probability: float = Field(ge=0.0, le=1.0)
     risk_level: RiskLevel  # low / medium / high
-    action: Action  # approve / review / block — the one command for the payment system
     model_version: str
 
 
@@ -77,7 +86,10 @@ class BatchPredictionRequest(BaseModel):
 
 
 class RankedPrediction(PredictionResponse):
+    """A scored row inside a batch, where the rank policy *can* choose an action."""
+
     rank: int = Field(ge=1)
+    action: Action  # approve / review / block — the command for the payment system
 
 
 class PolicyApplied(BaseModel):

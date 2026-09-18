@@ -298,18 +298,25 @@ def classify(p: float, bands: Bands) -> tuple[RiskLevel, Action]:
 LEVEL_FOR_ACTION: dict[Action, RiskLevel] = {"block": "high", "review": "medium", "approve": "low"}
 
 
+def payment_path_action(p: float, bands: Bands) -> Action:
+    """What the payment path does with a lone transaction: block, or let it proceed.
+
+    Not the same question as the response's. Blocking is a pure threshold, so it can be
+    decided for one transaction. Being selected for review cannot — that depends on the
+    day's other scores — so a single score never records a review and never charges the
+    day's budget (audit.reviewed_transactions). The review queue makes that call.
+    """
+    return "block" if p >= bands.block else "approve"
+
+
 def _response(
     state: ServingState, transaction_id: int, p: float, action: Action | None = None
 ) -> PredictionResponse:
-    if action is None:
-        level, action = classify(p, state.bands)
-    else:
-        level = LEVEL_FOR_ACTION[action]
+    level = LEVEL_FOR_ACTION[action] if action is not None else classify(p, state.bands)[0]
     return PredictionResponse(
         transaction_id=transaction_id,
         fraud_probability=p,
         risk_level=level,
-        action=action,
         model_version=state.model_version,
     )
 
@@ -406,7 +413,7 @@ def score_batch(
         single = _response(
             state, int(payloads[i][schema.ID_COL]), float(probabilities[i]), actions[i]
         )
-        ranked.append(RankedPrediction(rank=rank, **single.model_dump()))
+        ranked.append(RankedPrediction(rank=rank, action=actions[i], **single.model_dump()))
     counts: dict[Action, int] = {"approve": 0, "review": 0, "block": 0}
     for r in ranked:
         counts[r.action] += 1
@@ -518,6 +525,17 @@ def threshold_policy_applied(state: ServingState) -> PolicyApplied:
         block_threshold=state.bands.block,
         review_budget=None,
         review_threshold=state.bands.review,
+        review_cutoff=None,
+    )
+
+
+def block_only_policy_applied(state: ServingState) -> PolicyApplied:
+    """What a single /predict applied: the block threshold, and no review selection."""
+    return PolicyApplied(
+        policy="threshold",
+        block_threshold=state.bands.block,
+        review_budget=None,
+        review_threshold=None,
         review_cutoff=None,
     )
 
@@ -735,13 +753,15 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         t0 = time.perf_counter()
         payload = body.model_dump()  # type: ignore[attr-defined]
         frame = request_to_frame(payload)
-        result = _response(
-            state, int(payload[schema.ID_COL]), float(state.model.predict_proba(frame)[0, 1])
-        )
+        p = float(state.model.predict_proba(frame)[0, 1])
+        result = _response(state, int(payload[schema.ID_COL]), p)
         latency = (time.perf_counter() - t0) * 1000
         record_events(
-            state, "/predict", rid, threshold_policy_applied(state),
-            [(result.transaction_id, result.fraud_probability, result.risk_level, result.action)],
+            state, "/predict", rid, block_only_policy_applied(state),
+            [(
+                result.transaction_id, result.fraud_probability, result.risk_level,
+                payment_path_action(p, state.bands),
+            )],
             latency, frame,
         )  # fmt: skip
         response.headers["X-Request-ID"] = rid

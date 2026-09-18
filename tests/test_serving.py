@@ -67,9 +67,11 @@ def test_predict_matches_offline_pipeline(client: TestClient, served: dict[str, 
         body = r.json()
         assert body["transaction_id"] == int(row[schema.ID_COL])
         assert body["fraud_probability"] == pytest.approx(expected, abs=1e-9)
-        assert body["action"] == (
-            "block" if expected >= 0.42 else "review" if expected >= 0.062 else "approve"
+        assert body["risk_level"] == (
+            "high" if expected >= 0.42 else "medium" if expected >= 0.062 else "low"
         )
+        # scoring-only: choosing review vs approve needs the day's other scores
+        assert "action" not in body
         assert "decision" not in body and "threshold" not in body
 
 
@@ -128,13 +130,18 @@ def test_real_model_parity_on_real_rows(full_raw_dir: Path) -> None:
             assert body["fraud_probability"] == pytest.approx(expected, abs=1e-9)
 
 
-def test_predict_returns_risk_level_and_action(client: TestClient, served: dict[str, Any]) -> None:
+def test_predict_scores_but_does_not_choose_an_action(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    """The production policy blocks by threshold then reviews the day's highest
+    remaining scores. The second half cannot be decided for one transaction, so
+    /predict reports the band and leaves selection to the review queue."""
     r = client.post("/predict", json=_payload(served["rows"].iloc[0])).json()
     assert r["risk_level"] in ("low", "medium", "high")
-    assert r["action"] in ("approve", "review", "block")
+    assert "action" not in r, "a single score cannot know the day's ranking"
     p = r["fraud_probability"]
-    expected = "block" if p >= 0.42 else "review" if p >= 0.062 else "approve"
-    assert r["action"] == expected
+    assert r["risk_level"] == ("high" if p >= 0.42 else "medium" if p >= 0.062 else "low")
+    assert set(r) == {"transaction_id", "fraud_probability", "risk_level", "model_version"}
 
 
 def test_batch_is_ranked_and_matches_single_predictions(
@@ -153,10 +160,10 @@ def test_batch_is_ranked_and_matches_single_predictions(
     for x in body["ranked"]:
         s = singles[x["transaction_id"]]
         assert x["fraud_probability"] == pytest.approx(s["fraud_probability"], abs=1e-9)
-    # single /predict uses the fixed bands; the batch matches it only under policy=threshold
+    # /predict returns no action, but the band it reports must agree with the batch's
     r = client.post("/predict/batch", json={"transactions": payloads, "policy": "threshold"})
     for x in r.json()["ranked"]:
-        assert x["action"] == singles[x["transaction_id"]]["action"]
+        assert x["risk_level"] == singles[x["transaction_id"]]["risk_level"]
     assert r.json()["policy"]["policy"] == "threshold"
 
 
@@ -513,8 +520,12 @@ def test_predictions_are_audited(client: TestClient, served: dict[str, Any]) -> 
     assert e["endpoint"] == "/predict" and e["policy"] == "threshold"
     assert e["transaction_id"] == single["transaction_id"]
     assert e["fraud_probability"] == pytest.approx(single["fraud_probability"])
-    assert e["action"] == single["action"] and e["model_version"] == single["model_version"]
-    assert e["block_threshold"] == 0.42 and e["review_threshold"] == 0.062
+    assert e["model_version"] == single["model_version"]
+    # the audit records the payment-path outcome, which for a lone transaction is block
+    # or let-it-proceed; it never claims a review, so it never charges the day's budget
+    assert e["action"] == ("block" if single["fraud_probability"] >= 0.42 else "approve")
+    assert e["action"] != "review"
+    assert e["block_threshold"] == 0.42 and e["review_threshold"] is None
     assert e["latency_ms"] > 0 and e["scored_at"].endswith("+00:00")
     # per-transaction lookup: what did we ever say about this transaction?
     by_txn = client.get(f"/audit/recent?transaction_id={single['transaction_id']}").json()
@@ -1014,3 +1025,34 @@ def test_model_info_reports_the_served_artifact_digest(served: dict[str, Any]) -
     # model_version carries the first 12 of the same digest, so the two cannot disagree
     assert health["model_version"].rpartition("@")[2] == expected[:12]
     assert info["version"] == health["model_version"]
+
+
+def test_single_predictions_do_not_spend_the_review_budget(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    """A /predict in the review band used to be audited as action='review', and
+    reviewed_transactions() charges the day's rank budget with every such row, whatever
+    endpoint wrote it. One policy's output quietly consumed the other's capacity. A
+    single score decides nothing about review, so it must not record one."""
+    rows = served["rows"]
+    medium = next(
+        (
+            payload
+            for i in range(len(rows))
+            if (payload := _payload(rows.iloc[i]))
+            and client.post("/predict", json=payload).json()["risk_level"] == "medium"
+        ),
+        None,
+    )
+    assert medium is not None, "fixture exercises no review band; the test would be vacuous"
+
+    predict_rows = [
+        e for e in client.get("/audit/recent?limit=200").json() if e["endpoint"] == "/predict"
+    ]
+    assert predict_rows, "single predictions were not audited at all"
+    # the transaction sits in the review band and is still not recorded as a review
+    charged = [e for e in predict_rows if e["action"] == "review"]
+    assert not charged, f"{len(charged)} single scores charged the day's review budget"
+    banded = [e for e in predict_rows if e["transaction_id"] == medium["TransactionID"]]
+    assert banded and {e["action"] for e in banded} == {"approve"}
+    assert {e["risk_level"] for e in banded} == {"medium"}  # the band is still reported

@@ -2,8 +2,8 @@
 
 A host that builds from the repository gets an image without weights; the service
 fetches them at startup from FRAUD_CHAMPION_URL (docs/deployment.md). The store is a
-release on this repository tagged ``champion-<sha12>`` — one immutable release per
-promoted champion, marked pre-release so it never becomes the repository's "Latest" —
+release on this repository tagged ``champion-<sha12>`` — one release per promoted
+champion, marked pre-release so it never becomes the repository's "Latest" —
 whose assets are the five champion files. Public, free, no token: the artifact is a
 portfolio model on public data, and the ``<sha12>`` in the tag is what the service
 pins the download against before it deserializes it (``fraud.serve.app``). The parity
@@ -64,7 +64,14 @@ def main() -> None:
         ["gh", "release", "view", tag], capture_output=True, cwd=ROOT
     ).returncode == 0  # fmt: skip
     if exists:
-        print(f"release {tag} already exists; assets are immutable, nothing to do")
+        print(
+            f"release {tag} already exists; not re-uploading.\n"
+            "NOTE: GitHub release assets are NOT immutable by default — anyone with write\n"
+            "access to this repository can replace them unless Immutable Releases is enabled\n"
+            "(Settings → General → Releases). The startup digest pin means a swapped asset\n"
+            "fails the service's startup check rather than being loaded, so this is an\n"
+            "availability risk, not code execution. See docs/security.md."
+        )
     else:
         cmd = [
             "gh", "release", "create", tag, *[str(CHAMPION_DIR / f) for f in FILES],

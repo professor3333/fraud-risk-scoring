@@ -1,6 +1,6 @@
 [project]
 name = "fraud"
-version = "0.7.1"
+version = "0.7.2"
 description = "Fraud risk scoring on the IEEE-CIS Fraud Detection dataset: temporal validation, XGBoost, calibrated thresholds, FastAPI serving."
 authors = [
     { name = "Niroj33", email = "86530493+professor3333@users.noreply.github.com" }

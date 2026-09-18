@@ -36,6 +36,7 @@ from fraud.serve.frames import (
     table_to_frame,
 )
 from fraud.serve.parity import frozen_paths, read_manifest, verify
+from fraud.serve.rate_limit import RateLimitConfig, RateLimiter, client_key
 from fraud.serve.schemas import (
     Action,
     AuditEvent,
@@ -88,6 +89,8 @@ class ServingState:
     api_key: str | None = None  # FRAUD_API_KEY; None leaves the scoring endpoints open
     admin_api_key: str | None = None  # FRAUD_ADMIN_API_KEY; None disables the admin endpoints
     request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
+    rate_limiter: RateLimiter | None = None
+    render_client_ip: bool = False
 
 
 CHAMPION_FILES = (
@@ -184,6 +187,8 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         api_key=os.environ.get("FRAUD_API_KEY") or None,
         admin_api_key=os.environ.get("FRAUD_ADMIN_API_KEY") or None,
         request_timeout_s=float(raw.get("request_timeout_s", 60.0)),
+        rate_limiter=RateLimiter(RateLimitConfig.model_validate(raw.get("rate_limits", {}))),
+        render_client_ip=os.environ.get("RENDER") == "true",
     )
 
 
@@ -497,7 +502,7 @@ def _finish(
                 "status": response.status_code,
                 "latency_ms": round(latency, 1),
                 "rows": rows,
-                "client": request.client.host if request.client else None,
+                "client": client_key(request, render=state.render_client_ip if state else False),
             }
         )
     )
@@ -569,6 +574,20 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             denied = _authorize(request, state)
             if denied is not None:
                 return _finish(request, denied, rid, started, t0, state)
+            if state.rate_limiter is not None:
+                retry = state.rate_limiter.retry_after(
+                    client_key(request, render=state.render_client_ip),
+                    request.url.path,
+                    request.method,
+                )
+                if retry:
+                    response = Response(
+                        json.dumps({"detail": f"rate limit exceeded; retry in {retry} seconds"}),
+                        status_code=429,
+                        headers={"Retry-After": str(retry)},
+                        media_type="application/json",
+                    )
+                    return _finish(request, response, rid, started, t0, state)
         timeout = state.request_timeout_s if state is not None else 60.0
         try:
             response = await asyncio.wait_for(call_next(request), timeout=timeout)

@@ -1,6 +1,6 @@
 # Testing
 
-`uv run pytest` — 136 tests using synthetic fixtures (`tests/fixtures/`),
+`uv run pytest` — 153 tests using synthetic fixtures (`tests/fixtures/`),
 no data download, no network, ~20 s. `uv run pytest -m slow` — 4 tests
 against the real files and the production artifact when present. CI runs
 the default set plus a smoke training through the CLI, a Docker build and a
@@ -40,6 +40,7 @@ and dry-run behavior with Git, model loading and shell commands stubbed out.
 | upload limits enforced before the body is held (byte cap on declared and streamed length → 413; row limit checked while parsing, never past it) | `test_serving::test_csv_upload_limits_are_enforced_before_the_body_is_held` |
 | API contract (routes, required fields, enums, bounds, status codes) | `test_ml_contracts::test_api_contract_via_openapi`, `test_serving::test_bad_input_is_rejected_with_a_useful_body`, `test_model_info`, `test_batch_rejects_empty_and_bad_rows` |
 | batch frame == single-request frame, row for row and dtype for dtype (the vectorised builder the golden and the batch endpoint use) | `test_serving::test_payloads_to_frame_equals_row_by_row_construction` |
+| application rate limits: rolling expiry and retry rounding; shared CSV/batch quota; atomic concurrent admission; bounded bucket storage and recovery; config validation; client/proxy trust; 429 before body parsing, with request log/audit; auth precedes limits; health and dashboard stay open | `test_rate_limit` |
 | per-prediction explanation: contributions reproduce the raw score; every model input maps to one source and family; one-hot levels are summed per source; pieces account for the margin; served probability is the calibrated one; endpoint == module == `/predict`; not audited | `test_explain` |
 | review budget is per transaction day: ranked within each day; shared across requests through the audit trail; re-sent rows re-decided, not double-counted; other days untouched; no audit → per request | `test_serving::test_batch_rank_policy_reviews_the_budget_per_transaction_day`, `test_review_budget_is_shared_across_requests_of_the_same_day` |
 | API == offline, batch == single, CSV == single | `test_serving::test_predict_matches_offline_pipeline`, `test_batch_is_ranked_and_matches_single_predictions`, `test_csv_upload_scores_ranks_and_summarises` |

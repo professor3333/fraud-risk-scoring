@@ -45,8 +45,8 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   every metric is already in the README, so a private store bought nothing
   but an extra account.
 - `FRAUD_API_KEY` is **not** set on the demo: a dashboard that needs a key
-  is not a demo. The upload cap, the 60 s time budget and the instance's
-  own sleep are the protections for scoring. `FRAUD_ADMIN_API_KEY` is not
+  is not a demo. The upload cap, per-client rate limits and the 60 s time budget
+  protect scoring. `FRAUD_ADMIN_API_KEY` is not
   set either, which *closes* `POST /outcomes` and `GET /audit/recent`
   (403): anonymous visitors can score but cannot write to the delayed-label
   store or read other visitors' scored rows. Setting the admin key on the
@@ -167,8 +167,46 @@ the existing champion verification still apply.
 | upload cap | `serving.yaml` `max_upload_bytes` (25 MB) | declared length checked, then the stream abandoned the moment it exceeds the cap → 413; the row limit stops the parser one row past 5,000 → 422 |
 | time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
 | request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |
-| structured logs | logger `fraud.serve.requests` | one JSON line per guarded call — `ts, request_id, method, path, status, latency_ms, rows, client` — success, 401, 422 and 504 alike; Fly ships stdout to `flyctl logs` |
-| rate limiting | `fly.toml` `[http_service.concurrency]` soft 20 / hard 50 | Fly's proxy queues then refuses beyond the hard limit per machine; the benchmark (README → Performance) is why 20 is the soft limit |
+| structured logs | logger `fraud.serve.requests` | one JSON line per guarded call — `ts, request_id, method, path, status, latency_ms, rows, client` — success, 401, 422, 429 and 504 alike; Fly ships stdout to `flyctl logs` |
+| proxy concurrency (Fly only) | `fly.toml` `[http_service.concurrency]` soft 20 / hard 50 | Fly's proxy queues then refuses beyond the hard limit per machine; the benchmark (README → Performance) is why 20 is the soft limit |
+
+Application rate limits apply on Render, Fly and local runs, through
+`configs/serving.yaml` → `rate_limits`:
+
+| POST endpoint | requests per client in any 60 seconds |
+|---|---:|
+| `/predict` | 60 |
+| `/predict/csv` + `/predict/batch` (shared allowance) | 5 |
+| `/explain` | 10 |
+
+Authentication runs first. Every admitted attempt consumes a slot, including
+invalid bodies and calls that later time out. At the limit the service returns
+JSON `429` with `Retry-After` (whole seconds) and `X-Request-ID`, before reading
+the body or running inference. Rejections appear in the request audit and JSON
+logs with zero scored rows. Keys do not bypass quotas. Health checks, static
+pages, model info and admin routes retain their existing access rules.
+
+The limiter uses a monotonic clock and rolling windows in memory, with no new
+dependency. It holds at most 10,000 client/route-class buckets, removes expired
+entries, and refuses new buckets while full rather than evicting active quotas.
+Limits reset on restart and are **per process**: keep one worker and one instance
+on this demo. Clients sharing an IP share a quota; this is modest abuse protection,
+not a distributed denial-of-service defense or a concurrency cap.
+
+On Render (`RENDER=true`, supplied by the platform), the client key comes from
+`CF-Connecting-IP`, which Render documents as overwritten by its Cloudflare edge.
+See [Render's client-IP guidance](https://render.com/articles/host-pocketbase-on-render#making-pocketbase-see-the-real-client-ip).
+Missing or malformed values share a fallback bucket. The application does not
+parse `X-Forwarded-For`. Outside Render it uses the ASGI connection address;
+Uvicorn's trusted-proxy configuration controls any rewriting of that address.
+Do not set `RENDER=true` on a directly reachable local server: callers could then
+forge the trusted header. Private-network callers bypassing Render's edge must
+be trusted. The request log uses the same resolved client identity as the limiter.
+
+For a deliberate **local** load benchmark, set `rate_limits.enabled: false` in
+`configs/serving.yaml` before starting the server, and restore it afterwards.
+Otherwise the benchmark measures quota rejections along with scoring latency.
+The earlier throughput results below predate application rate limiting.
 
 Checked against a live server with a 0.5 s budget: a 4.7 MB upload without
 a key → 401 in 0.9 ms (nothing read); with the key → 504; `/health` 200

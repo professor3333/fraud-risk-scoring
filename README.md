@@ -220,7 +220,7 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Analyst dashboard at `/`: CSV upload → summary tiles, ranked table with
   sort / filter / search, row inspector, ranked-CSV download; single-
   transaction form at `/single`. Dockerfile.
-- 136 fixture-based tests (no data, no network) + 4 slow real-data tests.
+- 153 fixture-based tests (no data, no network) + 4 slow real-data tests.
 
 ## Tech stack
 
@@ -279,7 +279,7 @@ fly.toml          Fly.io app definition (public deployment)
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 136 fixture tests; no data/network required
+uv run pytest            # 153 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -475,6 +475,13 @@ read the audit trail. Every guarded call is logged as one JSON line with its
 request id and bounded by `request_timeout_s` (`docs/deployment.md` →
 Hardening).
 
+**Rate limits** — per client in any 60 seconds: 60 single predictions,
+5 CSV/JSON batch requests combined, and 10 explanations. Excess calls return
+`429` with `Retry-After` before body parsing or inference. Configured in
+`configs/serving.yaml`; counters live in one process and reset on restart.
+See [deployment hardening](docs/deployment.md#hardening-for-a-public-url) for
+Render client identification and local benchmark configuration.
+
 **Model info** — what is being served:
 
 ```bash
@@ -580,7 +587,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 136 fixture tests, no data, no network, ~20 s
+uv run pytest              # 153 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

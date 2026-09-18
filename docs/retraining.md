@@ -5,6 +5,12 @@
 MLflow experiment `fraud-retrain`. Not scheduled; this reproduces the
 lifecycle offline so every step exists and is tested before any automation.
 
+**Stage 1 scope: complete.** No production job schedules monthly retraining
+or automatically publishes and deploys a promoted model. Connecting the
+retraining lifecycle, promotion gates, artifact publication and deployment
+is a future MLOps automation exercise. The existing deployment workflow runs
+on a release tag; it does not schedule retraining or publish new model artifacts.
+
 ```
 new month arrives (labels through day T are mature)
   ↓ training = days ≤ T − 30           (all mature months but the latest)

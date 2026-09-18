@@ -6,6 +6,8 @@ authors = [
     { name = "Niroj33", email = "86530493+professor3333@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 # Runtime dependencies are what the service needs; training-only tools live in
 # the `train` group so the Docker image stays small.
 dependencies = [

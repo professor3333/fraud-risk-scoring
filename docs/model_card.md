@@ -145,6 +145,12 @@ on E022 with the same profile.
 
 ## Limitations and known risks
 
+- **Autonomous blocking is a demonstration policy.** The overall block-precision
+  target does not hold in every subgroup. In a real payment system, weak
+  subgroups would need additional policy review and likely more conservative
+  treatment (`docs/subgroups.md`). Documenting this limitation is sufficient
+  for Stage 1; it does not justify introducing subgroup-specific thresholds
+  without further evidence and an explicit policy decision.
 - **Label semantics.** Positives include routine purchases on an account
   that was later reported. A "false positive" on such an account is not a
   model error under this label; error analysis must not treat it as one.

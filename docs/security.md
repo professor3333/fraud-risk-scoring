@@ -72,9 +72,15 @@ Stated rather than implied:
   not retroactive: every release published before that date — including
   `champion-7af85ec92813`, the one the live service actually fetches — remains
   replaceable by anyone with write access. The next promoted champion will be
-  covered; this one is only covered if its release is deleted and re-created.
+  covered. **Decided (2026-09-18): this one is not being re-published to close
+  it.** Doing so means deleting a release the running service fetches its weights
+  from, which opens a window in which a cold start cannot start at all — spending
+  a real chance of an outage to remove a risk the digest pin has already reduced
+  to a failed startup, and that needs write access to this repository to reach.
+  The next promotion closes it for nothing.
   The REST API exposes neither the repository flag nor an `immutable` field on
-  existing releases, so the setting is verifiable only by publishing. Either way
+  existing releases, so the setting was verifiable only by publishing: `v0.8.0`
+  came back `immutable=true`, `v0.7.4` did not. Either way
   the startup digest pin means a swapped asset fails startup rather than being
   loaded, so the residual risk is availability, not code execution.
 - **The champion's sidecar files are not digest-pinned.** Only `model.joblib` is
@@ -88,9 +94,12 @@ Stated rather than implied:
   protection and secret scanning are on for public repositories; nothing here
   adds to them. No secret has ever been committed — the weights, the data and
   the tokens have always lived outside git.
-- **No SBOM published** with releases, and no artifact signing (Sigstore,
-  attestations). The image is built by the host from a public commit; the
-  champion is verified by digest instead.
+- **No SBOM published** with releases, and no artifact signing of this project's
+  own doing (Sigstore, `actions/attest-build-provenance`). Releases created since
+  immutability was enabled carry GitHub's automatic *release* attestation, which
+  records the tag, commit and assets — but nothing here produces or verifies one;
+  the champion is verified by digest instead, and the image is built by the host
+  from a public commit.
 - **No container image scanning** (Trivy, Grype). Dependabot covers the base
   image tag and `pip-audit` covers the Python layer; what falls between them —
   OS packages in the base image — is unwatched.

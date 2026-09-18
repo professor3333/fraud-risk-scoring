@@ -120,6 +120,9 @@ class HealthResponse(BaseModel):
 
 
 class ModelInfoResponse(BaseModel):
+    # The served artifact's sha256. It is the deployment contract: a release asserts that
+    # what is live is the champion it was cut for (scripts/deploy_check.py, docs/promotion.md).
+    artifact_sha256: str
     model: str
     default_policy: Policy
     default_review_budget: int

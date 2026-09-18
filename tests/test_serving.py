@@ -994,3 +994,23 @@ def test_a_fetched_manifest_cannot_set_the_policy_bands(
             pass
     finally:
         server.shutdown()
+
+
+def test_model_info_reports_the_served_artifact_digest(served: dict[str, Any]) -> None:
+    """The deployment contract: a release asserts that the artifact the service has
+    loaded is the champion it was cut for (scripts/deploy_check.py). Consistency between
+    /health, /model-info and a scored batch cannot show that — a stale champion is
+    consistently the old model — so the digest itself is reported."""
+    import hashlib
+
+    artifact = Path(served["config"]).parents[1] / "models" / "m.joblib"
+    expected = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+    with TestClient(create_app(Path(served["config"]))) as c:
+        info = c.get("/model-info").json()
+        health = c.get("/health").json()
+
+    assert info["artifact_sha256"] == expected, "reported digest is not the served artifact"
+    # model_version carries the first 12 of the same digest, so the two cannot disagree
+    assert health["model_version"].rpartition("@")[2] == expected[:12]
+    assert info["version"] == health["model_version"]

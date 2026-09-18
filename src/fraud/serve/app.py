@@ -82,6 +82,7 @@ class ServingState:
     model: CalibratedModel
     bands: Bands
     model_version: str
+    artifact_sha256: str  # the served artifact's full digest; model_version carries its first 12
     parity_rows: int
     info: dict[str, Any]
     default_review_budget: int
@@ -210,7 +211,8 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
             )
         )
     model = joblib.load(model_path)
-    digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
+    artifact_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    digest = artifact_sha256[:12]
     # A promoted champion carries a manifest (scripts/promote.py): its version, facts and
     # policy bands come from there, so a promotion never edits this config.
     manifest = read_manifest(model_path)
@@ -259,6 +261,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         model=model,
         bands=bands,
         model_version=f"{raw['model_version']}@{digest}",
+        artifact_sha256=artifact_sha256,
         parity_rows=parity_rows,
         info=dict(raw.get("model_info", {})),
         default_review_budget=int(raw.get("default_review_budget", 200)),
@@ -625,6 +628,7 @@ def model_info(state: ServingState) -> ModelInfoResponse:
         default_review_budget=state.default_review_budget,
         experiment=str(info.get("experiment", "")),
         version=state.model_version,
+        artifact_sha256=state.artifact_sha256,
         feature_set=str(info.get("feature_set", "")),
         n_inputs=n_inputs,
         primary_metric=str(info.get("primary_metric", "pr_auc")),

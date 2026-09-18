@@ -43,10 +43,18 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   golden, the manifest and the monitoring reference from
   `FRAUD_CHAMPION_URL` — the assets of a `champion-<sha12>` pre-release on
   this repository (`scripts/publish_champion.py`; one immutable release per
-  promoted champion, public, no token, free) — and the usual startup parity
-  check runs: a tampered or mismatched file and the service never becomes
-  healthy. The URL pins the served weights by content hash, so what a
-  running service serves is readable from its environment. A store that
+  promoted champion, public, no token, free). `model.joblib` is a pickle, so
+  it is executed the moment it is loaded: its sha256 is checked against the
+  `<sha12>` in the URL's tag **before** the bytes are written or deserialized,
+  and a mismatch aborts startup with nothing written to disk. That anchor has
+  to come from the URL (deployer configuration, `render.yaml`) rather than
+  from the manifest or the frozen golden, because those are fetched from the
+  same store as the artifact and would be substituted along with it. A store
+  whose URL carries no tag must set `FRAUD_CHAMPION_SHA256`; an unpinned
+  remote fetch is refused. The startup parity check still runs afterwards,
+  but it guards *correctness* — that the artifact reproduces its frozen
+  probabilities — not provenance. The URL pins the served weights by content
+  hash, so what a running service serves is readable from its environment. A store that
   needs a bearer token takes it from `FRAUD_CHAMPION_TOKEN`. Publishing the
   weights is a choice: this is a portfolio model on public Kaggle data and
   every metric is already in the README, so a private store bought nothing

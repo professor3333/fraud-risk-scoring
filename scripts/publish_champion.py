@@ -5,7 +5,10 @@ fetches them at startup from FRAUD_CHAMPION_URL (docs/deployment.md). The store 
 release on this repository tagged ``champion-<sha12>`` — one immutable release per
 promoted champion, marked pre-release so it never becomes the repository's "Latest" —
 whose assets are the five champion files. Public, free, no token: the artifact is a
-portfolio model on public data and the startup parity check guards its integrity.
+portfolio model on public data, and the ``<sha12>`` in the tag is what the service
+pins the download against before it deserializes it (``fraud.serve.app``). The parity
+check cannot serve that purpose: it runs after ``joblib.load`` has already executed
+the pickle, and compares against a golden fetched from the same store.
 
     uv run python scripts/publish_champion.py
     uv run python scripts/publish_champion.py --dry-run
@@ -68,7 +71,7 @@ def main() -> None:
             "--prerelease", "--title", f"champion {manifest['model_version']}",
             "--notes", f"Served weights: {manifest['run_name']} ({manifest['model_version']}). "
             "Assets of this release are what the hosted service fetches at startup "
-            "(FRAUD_CHAMPION_URL); the startup parity check verifies them.",
+            "(FRAUD_CHAMPION_URL); the tag digest is verified before the artifact is loaded.",
         ]  # fmt: skip
         print("$", " ".join(cmd), flush=True)
         if not args.dry_run:

@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -102,7 +103,47 @@ CHAMPION_FILES = (
 )
 
 
-def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[str]:
+#: ``scripts/publish_champion.py`` tags one immutable release per champion
+#: ``champion-<sha12>``, so a release URL carries the artifact's own digest.
+CHAMPION_TAG_DIGEST = re.compile(r"champion-([0-9a-fA-F]{8,64})/?$")
+
+
+def expected_champion_digest(base_url: str, pin: str | None) -> str:
+    """The sha256 (or leading hex of it) ``model.joblib`` must have, from outside the store.
+
+    ``model.joblib`` is a pickle: ``joblib.load`` executes whatever it contains, so it
+    must not be opened before it is known to be the intended artifact. The manifest and
+    the frozen golden cannot establish that — they are fetched from the same base URL as
+    the artifact, so anything able to serve a malicious ``model.joblib`` can serve the
+    matching digest with it. The anchor has to come from somewhere the store does not
+    control: FRAUD_CHAMPION_SHA256, or the ``champion-<sha12>`` release tag in the URL,
+    both of which are deployer configuration (render.yaml, docs/deployment.md).
+
+    Raises ``RuntimeError`` when neither is present: an unpinned remote fetch is exactly
+    the case this check exists to refuse.
+    """
+    if pin:
+        candidate = pin.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{8,64}", candidate):
+            raise RuntimeError(
+                "FRAUD_CHAMPION_SHA256 must be at least 8 hex characters of the "
+                f"artifact's sha256, got {pin!r}"
+            )
+        return candidate
+    found = CHAMPION_TAG_DIGEST.search(base_url.rstrip("/"))
+    if found is None:
+        raise RuntimeError(
+            f"refusing to fetch an unpinned champion from {base_url}: model.joblib is a "
+            "pickle and is executed when it is loaded, so its digest must be known before "
+            "it is opened. Point FRAUD_CHAMPION_URL at a champion-<sha12> release "
+            "(scripts/publish_champion.py) or set FRAUD_CHAMPION_SHA256."
+        )
+    return found.group(1).lower()
+
+
+def fetch_champion(
+    model_path: Path, base_url: str, token: str | None, expected_digest: str
+) -> list[str]:
     """Populate the champion directory from an artifact store at startup.
 
     For hosts that build from the repository (Render, Koyeb — the image carries
@@ -113,6 +154,10 @@ def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[s
     startup parity check then treats them exactly like a local champion.
     Optional files (the monitoring reference) are skipped when the store lacks
     them; everything else must exist.
+
+    ``model.joblib`` is checked against ``expected_digest`` in memory and is written
+    only if it matches, so a substituted artifact is never handed to ``joblib.load``.
+    The parity check cannot do this job: it runs after the pickle has been executed.
     """
     import urllib.error
     import urllib.request
@@ -127,11 +172,20 @@ def fetch_champion(model_path: Path, base_url: str, token: str | None) -> list[s
         req = urllib.request.Request(f"{base_url.rstrip('/')}/{name}", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
-                target.write_bytes(resp.read())
+                body: bytes = resp.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404 and name == "model_monitor_reference.json":
                 continue
             raise RuntimeError(f"could not fetch {name} from {base_url}: HTTP {exc.code}") from exc
+        if name == "model.joblib":
+            digest = hashlib.sha256(body).hexdigest()
+            if not hmac.compare_digest(digest[: len(expected_digest)], expected_digest):
+                raise RuntimeError(
+                    f"refusing to load model.joblib from {base_url}: sha256 {digest[:12]} "
+                    f"is not the pinned {expected_digest[:12]}. The artifact was not "
+                    "written to disk and was not deserialized."
+                )
+        target.write_bytes(body)
         fetched.append(name)
     return fetched
 
@@ -142,8 +196,17 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model_path = root / raw["model_path"]
     champion_url = os.environ.get("FRAUD_CHAMPION_URL")
     if not model_path.exists() and champion_url:
-        fetched = fetch_champion(model_path, champion_url, os.environ.get("FRAUD_CHAMPION_TOKEN"))
-        request_log.info(json.dumps({"event": "champion_fetched", "files": fetched}))
+        expected_digest = expected_champion_digest(
+            champion_url, os.environ.get("FRAUD_CHAMPION_SHA256")
+        )
+        fetched = fetch_champion(
+            model_path, champion_url, os.environ.get("FRAUD_CHAMPION_TOKEN"), expected_digest
+        )
+        request_log.info(
+            json.dumps(
+                {"event": "champion_fetched", "files": fetched, "pinned": expected_digest[:12]}
+            )
+        )
     model = joblib.load(model_path)
     digest = hashlib.sha256(model_path.read_bytes()).hexdigest()[:12]
     # A promoted champion carries a manifest (scripts/promote.py): its version, facts and

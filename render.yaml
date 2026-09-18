@@ -15,6 +15,8 @@ services:
     autoDeploy: false
     healthCheckPath: /health
     envVars:
+      # The champion-<sha12> tag is the digest the artifact is pinned against before
+      # it is deserialized; an untagged URL needs FRAUD_CHAMPION_SHA256 instead.
       - key: FRAUD_CHAMPION_URL       # https://github.com/<owner>/<repo>/releases/download/champion-<sha12>
         sync: false
       - key: UVICORN_WORKERS

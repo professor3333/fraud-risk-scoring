@@ -799,16 +799,18 @@ def test_champion_is_fetched_from_a_private_store_at_startup(
 
     server = HTTPServer(("127.0.0.1", 0), Store)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_port}/resolve/main"
+    # the production shape: the release tag carries the artifact digest, which is the
+    # anchor fetch_champion verifies against before model.joblib is ever deserialized.
+    base = f"http://127.0.0.1:{server.server_port}/releases/download/champion-{sha[:12]}"
     try:
         # the module function: fetches what is missing, tolerates a missing reference
         target = tmp_path / "champion" / "model.joblib"
-        fetched = fetch_champion(target, base, "tok")
+        fetched = fetch_champion(target, base, "tok", sha[:12])
         assert set(fetched) == set(CHAMPION_FILES) - {"model_monitor_reference.json"}
         assert all(a == "Bearer tok" for _, a in seen)
-        assert fetch_champion(target, base, "tok") == []  # idempotent: nothing re-fetched
+        assert fetch_champion(target, base, "tok", sha[:12]) == []  # idempotent
         with pytest.raises(RuntimeError, match="HTTP 401"):
-            fetch_champion(tmp_path / "other" / "model.joblib", base, "wrong")
+            fetch_champion(tmp_path / "other" / "model.joblib", base, "wrong", sha[:12])
         # the service: an empty champion directory + the env → a serving, parity-checked app
         root = tmp_path / "svc"
         (root / "configs").mkdir(parents=True)
@@ -827,3 +829,72 @@ def test_champion_is_fetched_from_a_private_store_at_startup(
         assert (root / "models" / "champion" / "model.joblib").exists()
     finally:
         server.shutdown()
+
+
+def test_a_substituted_artifact_is_refused_before_it_is_deserialized(tmp_path: Path) -> None:
+    """model.joblib is a pickle: loading it executes it. The digest pinned outside the
+    store must be checked on the downloaded bytes, so a substituted artifact never
+    reaches joblib.load. Proven with a pickle that writes a file when it is executed."""
+    import hashlib
+    import pickle
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from fraud.serve.app import expected_champion_digest, fetch_champion
+
+    canary = tmp_path / "pwned"
+
+    class Payload:
+        def __reduce__(self) -> Any:
+            return (Path.write_text, (canary, "code execution"))
+
+    hostile = pickle.dumps(Payload())
+    honest_digest = hashlib.sha256(b"the artifact that was promoted").hexdigest()
+
+    # positive control: deserializing really does run the payload, so the assertion
+    # below that the canary is absent is evidence and not a vacuous pass.
+    pickle.loads(hostile)
+    assert canary.read_text() == "code execution"
+    canary.unlink()
+
+    class Store(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            body = hostile if self.path.endswith("model.joblib") else b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Store)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = (
+            f"http://127.0.0.1:{server.server_port}/releases/download/champion-{honest_digest[:12]}"
+        )
+        # the tag pins the digest; the store serves something else
+        assert expected_champion_digest(base, None) == honest_digest[:12]
+        target = tmp_path / "champion" / "model.joblib"
+        with pytest.raises(RuntimeError, match="is not the pinned"):
+            fetch_champion(target, base, None, honest_digest[:12])
+        assert not canary.exists(), "the hostile pickle was executed"
+        assert not target.exists(), "the rejected artifact was left on disk"
+    finally:
+        server.shutdown()
+
+
+def test_an_unpinned_champion_url_is_refused(tmp_path: Path) -> None:
+    """No champion-<sha12> tag and no FRAUD_CHAMPION_SHA256 means no anchor outside the
+    store, so there is nothing to verify against: fail closed rather than trust it."""
+    from fraud.serve.app import expected_champion_digest
+
+    with pytest.raises(RuntimeError, match="unpinned champion"):
+        expected_champion_digest("https://example.invalid/resolve/main", None)
+    with pytest.raises(RuntimeError, match="FRAUD_CHAMPION_SHA256 must be"):
+        expected_champion_digest("https://example.invalid/resolve/main", "not-hex")
+    # an explicit pin is an anchor even when the URL carries none, and wins over the tag
+    assert expected_champion_digest("https://example.invalid/x", "AABBCCDD") == "aabbccdd"
+    tagged = "https://e.invalid/champion-0123456789ab"
+    assert expected_champion_digest(tagged, None) == "0123456789ab"

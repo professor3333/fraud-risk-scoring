@@ -36,7 +36,7 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
 - [x] Small UI (analyst dashboard at `/`); public at https://fraud-risk-scoring-m1fp.onrender.com
-- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.7.3 current)
+- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.7.4 current)
 
 ## Current stage: **all six complete — operating and hardening**
 Every stage box above is ticked. Work since v0.5.0 is post-stage

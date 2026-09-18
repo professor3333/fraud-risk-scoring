@@ -1,9 +1,11 @@
 """Cut a release: checks → champion verified → git tag (→ deploy.yml deploys it).
 
-The pushed tag runs .github/workflows/deploy.yml: Render rebuilds main (== the tag)
-without the weights and the service fetches the champion from its GitHub release
-at startup; the Fly leg, when configured, deploys the image this script can push with
---fly-image. The weights never enter the repository or a public runner.
+The pushed tag runs .github/workflows/deploy.yml: Render rebuilds this tag's exact
+commit (the deploy hook is pinned with ?ref=) without the weights, the service fetches
+the champion from its GitHub release at startup, and the workflow fails unless the
+live /health reports the commit it asked for; the Fly leg, when configured,
+deploys the image this script can push with --fly-image. The weights never
+enter the repository or a public runner.
 
     uv run python scripts/release.py v0.6.0              # checks, tag, push
     uv run python scripts/release.py v0.6.0 --dry-run    # what would happen

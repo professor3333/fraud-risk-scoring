@@ -15,7 +15,7 @@ here is supply-chain rather than application logic.
 | `model.joblib` (a pickle: loading it executes it) | its sha256 is checked against the `champion-<sha12>` in `FRAUD_CHAMPION_URL` **before** it is written or deserialized; an unpinned remote fetch is refused (`fraud.serve.app.expected_champion_digest`, `docs/deployment.md`) |
 | which champion is live | `release.py` refuses to tag an unpublished champion; `deploy.yml` fails the release unless live `/health` reports the champion the tag was cut for (`docs/promotion.md`) |
 | which code is live | the deploy hook is pinned with `?ref=<the tag's commit>`, and the workflow fails unless `/health` reports that commit back |
-| Python dependencies | `uv.lock` pins every version and hash; `security.yml` audits it weekly |
+| Python dependencies | `uv.lock` pins every version and hash; `security.yml` audits it weekly, and Dependabot security updates are enabled |
 | GitHub Actions | pinned to releases — never a floating branch — and updated by Dependabot |
 | base images | Dependabot watches both Dockerfiles |
 
@@ -65,6 +65,22 @@ which mode it is in through `/health` (`auth`, `admin`).
 
 Stated rather than implied:
 
+- **Champion release assets are mutable.** GitHub release assets are not immutable
+  by default: anyone with write access to this repository can replace a published
+  `champion-<sha12>` asset. Enabling **Immutable Releases** (Settings → General →
+  Releases) locks assets and tags for *new* releases and generates a release
+  attestation; it does not retroactively protect `champion-7af85ec92813`. The
+  REST API ignores an `immutable_releases` field, so this is a UI toggle, not
+  something the tooling can set. The startup digest pin already means a swapped
+  asset fails startup instead of being loaded, so the residual risk is
+  availability, not code execution.
+- **The champion's sidecar files are not digest-pinned.** Only `model.joblib` is
+  verified against the URL's `champion-<sha12>`. The manifest and the frozen
+  golden are checked *for consistency with it* — a wrong `artifact_sha256`, wrong
+  probabilities or a substituted model all fail startup — but a manifest that
+  keeps `artifact_sha256` correct and changes `bands` passes every check, and
+  `bands` are the block and review thresholds. That is the one remaining way a
+  tampered release changes behaviour silently rather than failing closed.
 - **No secrets scanning configured by this repository.** GitHub's native push
   protection and secret scanning are on for public repositories; nothing here
   adds to them. No secret has ever been committed — the weights, the data and

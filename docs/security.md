@@ -15,6 +15,7 @@ here is supply-chain rather than application logic.
 | `model.joblib` (a pickle: loading it executes it) | its sha256 is checked against the `champion-<sha12>` in `FRAUD_CHAMPION_URL` **before** it is written or deserialized; an unpinned remote fetch is refused (`fraud.serve.app.expected_champion_digest`, `docs/deployment.md`) |
 | which champion is live | `release.py` refuses to tag an unpublished champion; `deploy.yml` fails the release unless live `/health` reports the champion the tag was cut for (`docs/promotion.md`) |
 | which code is live | the deploy hook is pinned with `?ref=<the tag's commit>`, and the workflow fails unless `/health` reports that commit back |
+| the block/review thresholds | `bands` are policy (ADR 0006) and are never taken from a fetched manifest, which is not digest-pinned. They come from `configs/serving.yaml`, which ships in the image from a reviewed commit, and a champion whose manifest disagrees with it fails startup rather than serving a policy nobody approved |
 | Python dependencies | `uv.lock` pins every version and hash; `security.yml` audits it weekly, and Dependabot security updates are enabled |
 | GitHub Actions | pinned to releases — never a floating branch — and updated by Dependabot |
 | base images | Dependabot watches both Dockerfiles |
@@ -76,11 +77,11 @@ Stated rather than implied:
   availability, not code execution.
 - **The champion's sidecar files are not digest-pinned.** Only `model.joblib` is
   verified against the URL's `champion-<sha12>`. The manifest and the frozen
-  golden are checked *for consistency with it* — a wrong `artifact_sha256`, wrong
-  probabilities or a substituted model all fail startup — but a manifest that
-  keeps `artifact_sha256` correct and changes `bands` passes every check, and
-  `bands` are the block and review thresholds. That is the one remaining way a
-  tampered release changes behaviour silently rather than failing closed.
+  golden are checked *for consistency with it*: a wrong `artifact_sha256`, wrong
+  probabilities or a substituted model all fail startup. What they cannot do is
+  change behaviour silently — see the bands row above; everything else they carry
+  is reporting (`model_version`, `model_info`), so tampering with it is visible in
+  `/model-info` and `/health` rather than acted on.
 - **No secrets scanning configured by this repository.** GitHub's native push
   protection and secret scanning are on for public repositories; nothing here
   adds to them. No secret has ever been committed — the weights, the data and

@@ -13,8 +13,12 @@ require_parity: true
 # (rank policy) or down to bands.review (threshold policy); approve the rest.
 # The evaluation threshold 0.08 (ADR 0006, configs/threshold.yaml) is reporting
 # material only and is not served.
+# These are policy, so they are versioned here rather than trusted from the network:
+# a champion fetched from FRAUD_CHAMPION_URL brings a manifest that is not
+# digest-pinned, and the service refuses to take its bands (docs/security.md). They
+# must equal the promoted champion's manifest bands exactly or startup fails.
 bands:
-  review: 0.062
+  review: 0.06224176041919635
   block: 0.42
 # Facts about the served model, for /model-info (numbers from reports/ and MLflow).
 model_info:

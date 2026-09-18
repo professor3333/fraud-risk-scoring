@@ -898,3 +898,26 @@ def test_an_unpinned_champion_url_is_refused(tmp_path: Path) -> None:
     assert expected_champion_digest("https://example.invalid/x", "AABBCCDD") == "aabbccdd"
     tagged = "https://e.invalid/champion-0123456789ab"
     assert expected_champion_digest(tagged, None) == "0123456789ab"
+
+
+def test_health_reports_the_commit_the_build_came_from(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release workflow pins the Render deploy to the tagged commit and then checks
+    the live service reports it. The served version cannot answer that: every commit
+    between one release bump and the next carries the same version."""
+    from fraud.serve.app import build_commit
+
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("FRAUD_BUILD_COMMIT", raising=False)
+    assert build_commit() is None  # a host that says nothing claims nothing
+    monkeypatch.setenv("FRAUD_BUILD_COMMIT", "  ")
+    assert build_commit() is None  # blank is not a commit
+    monkeypatch.setenv("FRAUD_BUILD_COMMIT", "deadbeefcafe")
+    assert build_commit() == "deadbeefcafe"
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "6dd8b796742f0befdb4e9b6644616fa2040b2523")
+    assert build_commit() == "6dd8b796742f0befdb4e9b6644616fa2040b2523"  # the host wins
+
+    with TestClient(create_app(Path(served["config"]))) as c:
+        body = c.get("/health").json()
+    assert body["build_commit"] == "6dd8b796742f0befdb4e9b6644616fa2040b2523"

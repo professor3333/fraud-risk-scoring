@@ -2,10 +2,11 @@
 #
 #   scripts/release.py vX.Y.Z  →  git tag  →  this workflow:
 #     checks   ci.yml (lint, types, tests, fixture image, container health)
-#     render   POST the Render deploy hook (Render builds main == this tag from
-#              deploy/hosted/Dockerfile, no weights; the service fetches the champion from
-#              its champion-<sha> GitHub release at startup), wait until the served version is the
-#              tag's, then scripts/deploy_check.py against the live URL
+#     render   POST the Render deploy hook with ?ref=<this tag's commit> (Render builds
+#              exactly that commit from deploy/hosted/Dockerfile, no weights; the service
+#              fetches the champion from its champion-<sha> GitHub release at startup),
+#              wait until the live /health reports that same commit, then
+#              scripts/deploy_check.py against the live URL
 #              needs: vars.RENDER_URL, secrets.RENDER_DEPLOY_HOOK  — the free, public demo
 #     fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z (image pushed by release.py
 #              --fly-image), then deploy_check.py — the paid alternative
@@ -35,18 +36,36 @@ jobs:
       RENDER_URL: ${{ vars.RENDER_URL }}
     steps:
       - uses: actions/checkout@v4
-      - name: Trigger the Render deploy of main (== this tag) through the deploy hook
-        run: curl -sf -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" >/dev/null
+      - name: Trigger the Render deploy of this tag's commit through the deploy hook
+        # Without ?ref= the hook builds whatever the tip of render.yaml's `branch: main`
+        # is when Render starts the build, which need not be the commit this tag names
+        # and CI just checked. Pinning the SHA removes that gap; the hook answers 200
+        # only for a valid commit, so a bad ref fails this step instead of shipping.
+        run: |
+          set -euo pipefail
+          hook="${{ secrets.RENDER_DEPLOY_HOOK }}"
+          sep='?'; case "$hook" in *\?*) sep='&';; esac
+          curl -sf -X POST "${hook}${sep}ref=${GITHUB_SHA}" >/dev/null
+          echo "requested deploy of ${GITHUB_SHA}"
       - uses: astral-sh/setup-uv@v6
       - name: Wait for the new build to serve, then verify it
         run: |
           set -euo pipefail
           expected=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          # a free instance builds for a few minutes and cold-starts in ~1 min; poll up to 20 min
+          # The version alone cannot confirm which commit is live: every commit between
+          # one release bump and the next carries the same version, so a build of the
+          # wrong commit would satisfy it. Wait for the commit, and treat the version as
+          # a secondary check.
           for i in $(seq 1 60); do
-            if curl -sf "$RENDER_URL/openapi.json" | grep -q "\"version\":\"$expected\""; then break; fi
+            live=$(curl -sf "$RENDER_URL/health" | python3 -c "import json,sys;print(json.load(sys.stdin).get('build_commit') or '')" || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then break; fi
             sleep 20
           done
+          live=$(curl -sf "$RENDER_URL/health" | python3 -c "import json,sys;print(json.load(sys.stdin).get('build_commit') or '')")
+          if [ "$live" != "$GITHUB_SHA" ]; then
+            echo "live service reports commit '${live:-unknown}', expected $GITHUB_SHA" >&2
+            exit 1
+          fi
           curl -sf "$RENDER_URL/openapi.json" | grep -q "\"version\":\"$expected\""
           uv run --no-project python scripts/deploy_check.py "$RENDER_URL"
         env:

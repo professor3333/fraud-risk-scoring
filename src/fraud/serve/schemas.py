@@ -113,6 +113,10 @@ class HealthResponse(BaseModel):
     auth: Literal["open", "api_key"] = "open"  # scoring endpoints need X-API-Key when api_key
     # /outcomes and /audit/* need the admin key; "disabled" = closed until FRAUD_ADMIN_API_KEY
     admin: Literal["disabled", "api_key"] = "disabled"
+    # The commit this build came from (RENDER_GIT_COMMIT, or FRAUD_BUILD_COMMIT on other
+    # hosts); None where the host does not say. The release workflow deploys a pinned
+    # commit and checks this reports it, so "which code is live" is answerable.
+    build_commit: str | None = None
 
 
 class ModelInfoResponse(BaseModel):

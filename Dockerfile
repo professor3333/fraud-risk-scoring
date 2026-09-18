@@ -2,7 +2,7 @@
 # Run:    docker run --rm -p 8000:8000 -v fraud-audit:/app/audit fraud-risk-scoring
 # The champion directory (models/champion/: artifact, frozen sample, manifest) must
 # exist locally before building: scripts/promote.py writes it (docs/promotion.md).
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
 

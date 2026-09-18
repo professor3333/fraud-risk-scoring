@@ -598,6 +598,23 @@ Column families and what was inferred about them: `docs/eda.md`.
   operational groups has been evaluated (see [model card](docs/model_card.md)
   and [subgroup analysis](docs/subgroups.md)).
 
+## Security
+
+The service loads a pickle it fetches over the network, so the risk here is
+mostly supply chain. `model.joblib` is verified against the digest in its
+release URL *before* it is deserialized; the deploy is pinned to the tagged
+commit; and a release fails unless the live service reports both that commit
+and the champion the tag was cut for.
+
+Dependencies are watched rather than assumed: Dependabot opens weekly PRs for
+`uv`, GitHub Actions and both Dockerfiles, and a weekly `security.yml` runs
+`pip-audit` over the locked runtime and development sets plus CodeQL. Weekly
+matters — a CVE against an untouched dependency still needs to surface.
+
+What is *not* covered (no SBOM, no image scanning, no artifact signing, tags
+rather than SHAs for actions) is listed explicitly in
+[docs/security.md](docs/security.md).
+
 ## Data storage
 
 `data/raw/` (CSVs), `data/processed/train.parquet` (81 MB cache, safe to

@@ -1,0 +1,56 @@
+# Dependency and code scanning (docs/security.md).
+#
+# Deliberately separate from ci.yml. Both jobs need the network — pip-audit queries the
+# advisory database — and ci.yml is what deploy.yml runs before a release, so folding
+# them in would let a PyPI outage block a deployment. Here they gate merges, not releases.
+#
+# The weekly run is the point: a vulnerability disclosed against a dependency this
+# repository has not touched in a month still needs to surface. A push-only scan would
+# never see it.
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"  # Mondays, after Dependabot opens its PRs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Known vulnerabilities in dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # Audit what the lock file pins rather than a fresh resolution: uv.lock is what
+      # CI installs, what the image builds from, and so what is actually exposed.
+      - name: Audit the runtime dependencies (what the image ships)
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt > runtime.txt
+          uvx pip-audit -r runtime.txt --progress-spinner off
+      - name: Audit the development dependencies (training and tooling)
+        run: |
+          uv export --frozen --no-emit-project --format requirements-txt > all.txt
+          uvx pip-audit -r all.txt --progress-spinner off
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # to upload the results to the Security tab
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3

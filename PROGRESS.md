@@ -77,5 +77,6 @@ policy whose block-precision target does not hold in every subgroup. MIT
 | UI | analyst dashboard at `/` |
 | Quality | 153 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
+| Security | digest-pinned champion, commit-pinned deploy, Dependabot (uv / actions / docker), weekly `pip-audit` + CodeQL (`security.yml`); scope and gaps in `docs/security.md` |
 | Documentation | MIT `LICENSE`, README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

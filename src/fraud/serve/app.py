@@ -255,6 +255,18 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     )
 
 
+def build_commit() -> str | None:
+    """The commit this build came from, when the host says which.
+
+    Render injects RENDER_GIT_COMMIT; other hosts can set FRAUD_BUILD_COMMIT. The
+    release workflow pins the deploy to a commit and then asserts /health reports it,
+    which the served version cannot do on its own: every commit between one release
+    bump and the next carries the same version.
+    """
+    commit = os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("FRAUD_BUILD_COMMIT")
+    return commit.strip() or None if commit else None
+
+
 def classify(p: float, bands: Bands) -> tuple[RiskLevel, Action]:
     if p >= bands.block:
         return "high", "block"
@@ -684,6 +696,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             audit_events=s.audit.count() if s.audit is not None else None,
             auth="api_key" if s.api_key else "open",
             admin="api_key" if s.admin_api_key else "disabled",
+            build_commit=build_commit(),
         )
 
     @app.get("/model-info", response_model=ModelInfoResponse)

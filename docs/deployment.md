@@ -90,9 +90,22 @@ gh secret set RENDER_DEPLOY_HOOK --body '<the hook URL>'
 ```
 
 From then on `uv run python scripts/release.py vX.Y.Z --full-checks` cuts a release
-whose tag posts the deploy hook, waits until the served version is the
-tag's, runs `deploy_check.py` against the live URL and cuts the GitHub
-release. The live URL goes into the README's *Live demo* line.
+whose tag posts the deploy hook **with `?ref=<the tag's commit>`**, waits until
+the live `/health` reports that same commit, runs `deploy_check.py` against the
+live URL and cuts the GitHub release. The live URL goes into the README's
+*Live demo* line.
+
+A bare deploy hook builds whatever the tip of `branch: main` happens to be when
+Render starts the build, which need not be the commit the tag names and CI
+checked — a merge landing during the run, or a tag cut on anything but the tip,
+ships untested code. Pinning the SHA closes that; the hook answers 200 only for
+a valid commit, so a bad ref fails the workflow instead of deploying.
+
+The served **version** cannot confirm which commit is live, because every commit
+between one release bump and the next carries the same version. `/health`
+therefore reports `build_commit` from Render's `RENDER_GIT_COMMIT`
+(`FRAUD_BUILD_COMMIT` on other hosts, `null` where the host says nothing), and
+the workflow fails unless it equals the commit it asked for.
 
 ## Fly.io (alternative)
 
@@ -141,9 +154,9 @@ scripts/release.py vX.Y.Z --full-checks   (the release machine)
                 │
                 ▼  .github/workflows/deploy.yml (on the tag)
   checks   ci.yml (lint, types, tests, fixture image, container health)
-  render   POST the deploy hook → Render builds main (== the tag) from deploy/hosted/Dockerfile,
-           the service fetches the champion at startup → wait for the tag's version
-           → scripts/deploy_check.py https://<service>.onrender.com
+  render   POST the deploy hook ?ref=<tag's commit> → Render builds exactly that commit
+           from deploy/hosted/Dockerfile, the service fetches the champion at startup
+           → wait until /health reports that commit → scripts/deploy_check.py
   fly      flyctl deploy --image registry.fly.io/<app>:vX.Y.Z → deploy_check.py
   release  gh release create vX.Y.Z --generate-notes
 ```

@@ -95,24 +95,31 @@ champion at startup from whatever `FRAUD_CHAMPION_URL` is set on the host
 ```
 promote.py        → models/champion/            (local: the promoted champion)
 publish_champion.py → champion-<sha12> release  (public: the fetchable copy)
-FRAUD_CHAMPION_URL on the host → that release   (manual: what is actually served)
+FRAUD_CHAMPION_URL on the host → that release   (what is actually served)
 ```
 
-**The third step is manual and nothing infers it.** Promoting and publishing a
-new champion does not change what the service serves; the host keeps fetching the
-release its environment names. That failure is silent by construction: the old
-champion is correctly digest-pinned to its own release, so it fetches, verifies
-and serves cleanly, and `/health` is green throughout. The only tell is the sha
-in `model_version`.
+**The third step is the one that decides what runs.** Promoting and publishing a
+new champion does not by itself change what the service serves; the host fetches
+the release its environment names. Left stale, that fails silently by
+construction: the old champion is correctly digest-pinned to its own release, so
+it fetches, verifies and serves cleanly with `/health` green throughout. The only
+tell is the sha in `model_version`.
 
-It is manual because the URL *is* the trust anchor. The digest that `model.joblib`
-is checked against before it is deserialized comes from the `champion-<sha12>` tag
-in that URL, deliberately from deployer configuration rather than from anything
-the artifact store serves (ADR: `docs/deployment.md`). Resolving "the latest
-champion" at startup would automate the step by removing the anchor, which is the
-one thing it must not do. Automating it properly means the release pipeline
-setting the URL through the host's API — the authority moves to CD, the pin stays
-out-of-band. That is not wired up; the two guards below are what stand in for it.
+`deploy.yml` now sets it. The release reads the champion out of the tag
+annotation and writes `FRAUD_CHAMPION_URL` on the host through Render's API
+before triggering the deploy, then reads it back and refuses to continue unless
+the value landed and the service's other variables are still there — the
+single-key endpoint is used precisely because the bulk one replaces the entire
+list. Without `RENDER_API_KEY` and `RENDER_SERVICE_ID` the step is skipped and
+says so, and the verification below still fails the release rather than letting
+it drift.
+
+The authority for the URL moves to CD, and the pin stays out-of-band: the digest
+`model.joblib` is checked against before it is deserialized still comes from the
+`champion-<sha12>` tag in that URL, written by the pipeline rather than served by
+the artifact store. Resolving "the latest champion" at startup would have
+automated the step by *removing* the anchor, which is the one thing it must not
+do (`docs/deployment.md`).
 
 **A promotion that changes the bands needs a config commit.** The hosted service
 refuses to take `bands` from a fetched manifest — they decide block and review, and
@@ -143,8 +150,9 @@ Its other checks are consistency checks — `/health`, `/model-info` and a score
 batch agreeing with each other — and a stale champion passes all of them, because
 it is consistently the *old* model. Only the digest distinguishes them.
 
-Neither can update the host for you. They convert a silent staleness into a
-failed release that names the URL to set.
+With no API key configured neither can update the host for you; they convert a
+silent staleness into a failed release that names the URL to set. With one, the
+host is set before the deploy and these remain the check that it worked.
 
 ## What it does not do
 

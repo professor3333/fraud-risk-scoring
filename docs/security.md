@@ -111,5 +111,8 @@ Stated rather than implied:
 
 ## Reporting
 
-Open an issue on the repository. There is no private disclosure channel and
-nothing here processes real payment data.
+[`SECURITY.md`](../SECURITY.md) is the policy: GitHub **private vulnerability
+reporting** is enabled (*Security* tab → *Report a vulnerability*) and is the
+channel for anything exploitable. Public issues are right for everything else,
+including the accepted limitations listed above. Nothing here processes real
+payment data.

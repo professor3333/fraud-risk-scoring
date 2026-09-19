@@ -31,6 +31,17 @@ the right place for everything else, including the accepted limitations below.
 Expect a reply within a week. This is a personal project maintained in spare
 time, so there is no guaranteed response window beyond that.
 
+## Do not submit real data
+
+The demo is open to anyone and stores what it is given. Submitted rows are scored
+and written to a prediction audit trail (transaction id, amount, product, card
+network and type, device type and derived flags), which is what makes the drift
+monitoring demonstrable. That store is ephemeral and is not isolated per visitor.
+
+**Do not upload real cardholder, customer, or confidential transaction data.**
+Use the included synthetic sample or synthetic data of your own. Submitting real
+records is a misuse of the demo rather than a vulnerability in it.
+
 ## What is in scope
 
 - The scoring service (`src/fraud/serve/`) and its public deployment.

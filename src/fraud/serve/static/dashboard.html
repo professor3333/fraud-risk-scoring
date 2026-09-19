@@ -23,6 +23,10 @@
   .tile .label { color:var(--muted); font-size:12px; }
   .tile .value { font-size:24px; font-weight:600; margin-top:2px; }
   .tile .sub { color:var(--muted); font-size:12px; }
+  .demo-warning { border:1px solid #b45309; background:#fffbeb; color:#7c2d12;
+    border-radius:8px; padding:10px 12px; margin:0 0 14px; font-size:13px; line-height:1.5; }
+  @media (prefers-color-scheme: dark) { .demo-warning {
+    background:#2a1f0a; color:#fcd34d; border-color:#a16207; } }
   .tile.block .value { color:var(--orange); }
   .tile.review .value { color:#c98500; }
   .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
@@ -73,6 +77,13 @@
       <span id="auth" hidden> · <label for="apikey" style="color:var(--muted)">API key</label> <input id="apikey" type="password" placeholder="X-API-Key" style="width:150px;font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:6px"></span></div>
     <small><a href="/single">single transaction</a> · <a href="/docs">API</a></small>
   </header>
+
+  <p class="demo-warning"><strong>Demo only — do not upload real cardholder,
+  customer, or confidential transaction data.</strong> Use the included synthetic
+  sample or synthetic data of your own. Submitted rows are scored and written to a
+  prediction audit trail (transaction id, amount, product, card network and type,
+  device type and derived flags), which is how the monitoring in this project is
+  demonstrated.</p>
 
   <div class="upload">
     <input id="file" type="file" accept=".csv,text/csv">

@@ -10,6 +10,10 @@
   main { max-width:820px; margin:0 auto; }
   h1 { font-size:20px; margin:0 0 4px; }
   p.sub { color:var(--muted); margin:0 0 16px; }
+  .demo-warning { border:1px solid #b45309; background:#fffbeb; color:#7c2d12;
+    border-radius:8px; padding:10px 12px; margin:0 0 14px; font-size:13px; line-height:1.5; }
+  @media (prefers-color-scheme: dark) { .demo-warning {
+    background:#2a1f0a; color:#fcd34d; border-color:#a16207; } }
   .row { display:flex; gap:16px; flex-wrap:wrap; }
   .col { flex:1 1 320px; min-width:0; }
   textarea { width:100%; box-sizing:border-box; min-height:300px; font:12px/1.4 ui-monospace,monospace; border:1px solid var(--line); border-radius:6px; padding:8px; }
@@ -26,6 +30,12 @@
 <body>
 <main>
   <h1>Fraud Risk Scoring — demo</h1>
+  <p class="demo-warning"><strong>Demo only — do not upload real cardholder,
+  customer, or confidential transaction data.</strong> Use the included synthetic
+  sample or synthetic data of your own. Submitted rows are scored and written to a
+  prediction audit trail (transaction id, amount, product, card network and type,
+  device type and derived flags), which is how the monitoring in this project is
+  demonstrated.</p>
   <p class="sub">POSTs one transaction to <code>/predict</code> and shows the calibrated probability and its risk band. <code>/predict</code> scores; it does not choose approve or review. Blocking is a fixed threshold, but selecting the day's highest remaining scores for an analyst needs the rest of the day's scores, so the <a href="/">review queue</a> makes that call under the rank-based policy. Field names follow the IEEE-CIS schema; omit identity fields to score a transaction without an identity record.</p>
   <div class="row">
     <div class="col">

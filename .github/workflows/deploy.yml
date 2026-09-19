@@ -36,6 +36,56 @@ jobs:
       RENDER_URL: ${{ vars.RENDER_URL }}
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve the champion this tag was cut for
+        # scripts/release.py records it in the tag annotation, on the machine that has
+        # models/champion/ and verified its parity.
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha \
+                | xargs -I{} gh api "repos/$GITHUB_REPOSITORY/git/tags/{}" --jq .message \
+                | sed -n 's/.*(\([0-9a-f]\{12\}\)).*/\1/p')
+          if [ -z "$sha" ]; then echo "tag annotation names no champion sha" >&2; exit 1; fi
+          echo "CHAMPION_SHA=$sha" >> "$GITHUB_ENV"
+          echo "champion for this release: $sha"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Point the host at this release's champion
+        # Promotion and publication do not move the host; it fetches whatever
+        # FRAUD_CHAMPION_URL names (docs/promotion.md). With a Render API key this closes
+        # that hop; without one the step is skipped and the verify below fails the release
+        # instead of drifting silently.
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${RENDER_SERVICE_ID:-}" ]; then
+            echo "no RENDER_API_KEY/RENDER_SERVICE_ID: leaving FRAUD_CHAMPION_URL alone."
+            echo "Set it by hand if this release promotes a new champion."
+            exit 0
+          fi
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/champion-$CHAMPION_SHA"
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
+          # One key at a time. The bulk PUT /env-vars replaces the whole list and would
+          # delete every variable not restated, UVICORN_WORKERS included.
+          curl -sf -X PUT "$api/FRAUD_CHAMPION_URL" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'content-type: application/json' \
+            -d "$(python3 -c 'import json,sys;print(json.dumps({"value": sys.argv[1]}))' "$url")" \
+            >/dev/null
+          # Read it back: confirm the value landed and that nothing else was dropped.
+          curl -sf "$api" -H "Authorization: Bearer $RENDER_API_KEY" > vars.json
+          python3 - "$url" <<'PY'
+          import json, sys
+          want = sys.argv[1]
+          got = {e["envVar"]["key"]: e["envVar"]["value"] for e in json.load(open("vars.json"))}
+          if got.get("FRAUD_CHAMPION_URL") != want:
+              sys.exit(f"FRAUD_CHAMPION_URL is {got.get('FRAUD_CHAMPION_URL')!r}, wanted {want!r}")
+          if "UVICORN_WORKERS" not in got:
+              sys.exit("UVICORN_WORKERS is gone; the write replaced the whole list")
+          print(f"host now points at champion-{want.rsplit('-', 1)[1]}; {len(got)} vars intact")
+          PY
+          rm -f vars.json
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
       - name: Trigger the Render deploy of this tag's commit through the deploy hook
         # Without ?ref= the hook builds whatever the tip of render.yaml's `branch: main`
         # is when Render starts the build, which need not be the commit this tag names
@@ -74,12 +124,8 @@ jobs:
           # passes every other check. scripts/release.py records the champion it cut this
           # release for in the tag annotation; deploy_check.py asserts the live service
           # has loaded that exact artifact.
-          want=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq .object.sha \
-                 | xargs -I{} gh api "repos/$GITHUB_REPOSITORY/git/tags/{}" --jq .message \
-                 | sed -n 's/.*(\([0-9a-f]\{12\}\)).*/\1/p')
-          if [ -z "$want" ]; then echo "tag annotation names no champion sha" >&2; exit 1; fi
           uv run --no-project python scripts/deploy_check.py "$RENDER_URL" \
-            --expected-artifact-sha "$want"
+            --expected-artifact-sha "$CHAMPION_SHA"
         env:
           FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}
           GH_TOKEN: ${{ github.token }}

@@ -19,6 +19,7 @@ here is supply-chain rather than application logic.
 | Python dependencies | `uv.lock` pins every version and hash; `security.yml` audits it weekly, and Dependabot security updates are enabled |
 | GitHub Actions | pinned to releases — never a floating branch — and updated by Dependabot |
 | base images | Dependabot watches both Dockerfiles |
+| the host's `FRAUD_CHAMPION_URL` | set by `deploy.yml` from the champion in the tag annotation, then read back and checked, so the value that carries the digest pin is written by the pipeline rather than by hand. `RENDER_API_KEY` is an **account-wide** Render credential held as a repository secret; it is the broadest secret in CI and is the reason the write is limited to one key and verified |
 
 The manifest and the frozen golden cannot attest the artifact's provenance:
 they are fetched from the same store as the artifact, so anything able to

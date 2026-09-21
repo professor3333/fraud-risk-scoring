@@ -145,8 +145,9 @@ block threshold no one had reviewed, and every other check still passed.
   assumption) or fresh months the dataset does not have.
 - **Cost.** One cycle is three fits of the production recipe (1,600 trees,
   depth 12) — the challenger and two calibration folds — plus scoring both
-  models. The workflow allows five hours and runs monthly; on this machine the
-  bootstrap cycle took ~19 minutes.
+  models and rebuilding the monitoring reference. Measured here: 9 min 44 s for
+  a cycle training through day 92, and the artifact it produces is 32 MB. The
+  workflow allows five hours and runs monthly.
 - **The registry gains a version per cycle**, promoted or not, with its gate
   results — so "why is this model serving?" is answerable from the ledger
   rather than from a workflow log that expires.

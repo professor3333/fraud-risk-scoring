@@ -282,10 +282,7 @@ def main() -> None:
         args.tracking_uri, promotion, result.challenger_artifact,
         result.challenger_run_name, result.gates, promote,
     )  # fmt: skip
-    info = cycle_info(
-        result, retrain, calibration="sigmoid",
-        experiment=f"retrain-cycle-day{result.as_of_day}",
-    )  # fmt: skip
+    info = cycle_info(result, retrain, experiment=f"retrain-cycle-day{result.as_of_day}")
     new_manifest = build_manifest(
         result.challenger_run_name, result.challenger_artifact,
         result.challenger_metrics, result.gates, info, version,

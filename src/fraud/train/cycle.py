@@ -58,6 +58,7 @@ class CycleResult:
     positives: int
     challenger_run_name: str
     challenger_artifact: Path
+    calibration: str  # the map the challenger actually carries, not an assumption
     challenger_metrics: dict[str, float]
     champion_run_name: str | None
     champion_trained_through: int | None
@@ -162,6 +163,7 @@ def run_cycle(
         positives=int(month_rows[schema.TARGET_COL].sum()),
         challenger_run_name=run_name,
         challenger_artifact=artifact,
+        calibration=challenger.method,
         challenger_metrics=challenger_metrics,
         champion_run_name=champion_run_name,
         champion_trained_through=champion_trained_through,
@@ -174,9 +176,7 @@ def run_cycle(
     )
 
 
-def cycle_info(
-    result: CycleResult, retrain: RetrainConfig, calibration: str, experiment: str
-) -> dict[str, Any]:
+def cycle_info(result: CycleResult, retrain: RetrainConfig, experiment: str) -> dict[str, Any]:
     """The manifest's `model_info` for a retrained champion.
 
     `test_pr_auc` is deliberately absent: a model retrained through the end of the
@@ -190,7 +190,7 @@ def cycle_info(
         "experiment": experiment,
         "feature_set": Path(tc.features).stem,
         "primary_metric": "pr_auc",
-        "calibration": calibration,
+        "calibration": result.calibration,
         "training_window_days": [1, result.train_end],
         "validation_window_days": [result.month[0], result.month[1]],
         "retrained_as_of_day": result.as_of_day,

@@ -178,3 +178,51 @@ a retired demo is not an incident:
 
 Run it by hand from the Actions tab (`workflow_dispatch`) with a window and a
 dry-run box before trusting the schedule.
+
+## Why there is no metrics collector, dashboard or tracing stack
+
+The conventional shape for this — OpenTelemetry in the app, Prometheus
+scraping it, Grafana on top, an alert manager notifying — is absent on
+purpose, not by oversight. Three reasons, in the order they matter.
+
+**1. It covers the half that was already easy, and cannot express the
+half that is hard.** The API signals a collector would gather already
+exist: a middleware records every `/predict*` call in the `requests` table
+— success, 401, 422, 429 and 504 alike — and the report computes
+requests/s, latency p50 / p95 / max, errors and error rate per endpoint
+(→ *What is monitored*). Putting those behind a scrape endpoint changes
+where they are stored and how they are drawn, not what is known. The
+signals that decide whether this model should still be serving are
+eventual PR-AUC, block precision, recall and calibration on **closed
+cohorts** — predictions joined to labels that arrive up to 120 days later,
+keyed by cohort age, with matured / pending / overdue accounting
+(`docs/feedback.md`). A time-series database has no representation for
+"today this cohort became mature enough to score", and the value it would
+hold for a given day keeps changing for four months after that day ends.
+That is a retrospective join, which is why it is a report and not a gauge.
+
+**2. It does not fit the deployment target.** The default host is a Render
+free web service: 512 MB, 0.1 CPU, sleeps after 15 minutes idle, and the
+image already sits at 238 MiB at rest (`docs/deployment.md`). Prometheus
+and Grafana as sidecars do not fit and are not free there. A hosted
+backend would fit, at the cost of a vendor account, a remote-write
+credential and an egress path out of a demo instance whose SQLite state
+does not survive a restart — for dashboards over traffic that is often
+zero for a day at a time. Under G10 that complexity has nothing to buy.
+
+**3. The alerting path already terminates somewhere a human reads.** A
+daily Action fetches the report and opens one labelled GitHub issue per
+alert episode, comments on it while it lasts, and closes it on the first
+healthy run (ADR 0011). An alert manager would replace the transport, not
+add a signal — and the issue thread is the better medium here, because
+these alerts are read once a day, not paged on.
+
+**What would change this.** Traffic that is continuous rather than
+demonstrative, more than one replica (the audit trail is already the
+constraint there — `docs/deployment.md` → Hardening), or a host where the
+service runs long enough for a 30-day retention window to mean something.
+At that point the cheap first step is not a stack but a `/metrics`
+endpoint in Prometheus text format over the counters the service already
+computes, which leaves the choice of collector to whoever deploys it. That
+is roughly 40 lines, or one small dependency; it is not written, because
+nothing currently scrapes it.

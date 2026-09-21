@@ -21,7 +21,9 @@ seed noise is 0.002 sd (ADR 0003).
 Reading: F1 – F4 wander within noise (±0.004); F5 and F6 are the only
 steps larger than the noise floor, and they are the same two sets the
 one-at-a-time experiments accepted (E016, E006). F7 costs a little, as in
-E007/E017. The ladder and the per-set experiments agree.
+E007/E017. The ladder and the per-set experiments agree — at this capacity.
+At E022's, F7's features turn positive (E025); the ladder was built on the
+E016 recipe and was never re-run after capacity changed.
 
 **"+F6" at 0.6255 looked like a new best** (shipped E016 = F0+F5+F6 scores
 0.6190). Seed-paired (E019): 0.6255 / 0.6156 / 0.6214 vs 0.6190 / 0.6221 /
@@ -64,8 +66,9 @@ Three answers to "how much comes from my features versus Vesta's?":
    and time deltas — which summarise each card's history at authorization
    — are what makes a 0.6 model possible; nothing computable from the
    remaining raw fields plus my frequency tables recovers them (E007 and
-   E017 tried the history route and found the provider had already done
-   it). Identity adds ≈ 0.005 on raw columns and ≈ 0.02 on the shipped set.
+   E017 tried the history route and found the provider had already done it
+   — with the qualifier E025 added: not yet, for a card it has barely
+   seen). Identity adds ≈ 0.005 on raw columns and ≈ 0.02 on the shipped set.
 
 The honest summary for the README: on this dataset the provider's
 engineering carries the model; the engineering done here adds ~0.02 PR-AUC

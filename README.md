@@ -4,10 +4,13 @@
 
 A fraud risk scoring system built on the Kaggle IEEE-CIS Fraud Detection
 dataset. Given one online transaction, it returns a calibrated probability
-that the transaction is fraudulent and one action (approve / review / block)
-from a review policy sized to an analyst budget — served over a FastAPI
-endpoint, with every modelling decision recorded and every improvement
-measured on a strictly later window of time.
+that the transaction is fraudulent and the risk band that probability falls
+in. Given a batch or a CSV, it also returns one action per row — approve /
+review / block — from a review policy sized to an analyst budget, because the
+review half of that policy ranks a transaction against the rest of its day and
+so cannot be decided for a lone request. Served over a FastAPI endpoint, with
+every modelling decision recorded and every improvement measured on a strictly
+later window of time.
 
 **Live demo:** https://fraud-risk-scoring-m1fp.onrender.com — the analyst
 dashboard; `https://fraud-risk-scoring-m1fp.onrender.com/docs` is the API.
@@ -44,8 +47,10 @@ monitoring history.
    │   · one-hot low-cardinality (+<missing>)  │                       │
    │   · frequency tables (train population)   │                       ▼
    │   · numerics with NaN kept                │            /predict → probability,
-   └────────────────────┬────────────────────┘             risk level, action,
+   └────────────────────┬────────────────────┘             risk level,
                         │                                   model version
+                        │                                  /predict/batch, /predict/csv
+                        │                                   → the above + one action
         CalibratedModel (sigmoid map fit on
         out-of-fold training-window scores)
                         │
@@ -100,7 +105,7 @@ it is not a strictly blind holdout (consultation log in ADR 0002).
 | E003 | XGBoost, raw columns | 0.570 | 0.912 | 0.292 |
 | E005 | + hour / weekday | 0.576 · rejected (+0.002 seed-paired) | 0.912 | 0.284 |
 | E006 | + frequency encoding (ADR 0005) | 0.578 · accepted (+0.009 seed-paired) | 0.919 | 0.294 |
-| E007 | + card-history features, earlier rows only (ADR 0004) | 0.582 · rejected (−0.002 seed-paired) | 0.920 | 0.280 |
+| E007 | + card-history features, earlier rows only (ADR 0004) | 0.582 · rejected (−0.002 seed-paired; see E025) | 0.920 | 0.280 |
 | E008 | E006 tuned by expanding-window CV | 0.616 | 0.929 | 0.330 |
 | E011 | E008 + median imputation & indicators before the trees | 0.613 · neutral | 0.933 | 0.326 |
 | E012 | E008 + rare one-hot levels grouped | 0.621 · neutral (+0.002 seed-paired) | 0.930 | 0.326 |
@@ -175,7 +180,12 @@ of card history all added nothing (E005, E007, E013 – E015, E017); only
 frequency encoding (E006) and frequency-encoded card × address / e-mail
 keys (E016) earned their place. The reconstructed card identifier that
 drives Kaggle solutions adds nothing once restricted to what a live system
-can compute. Ablation shows the 339 `V`
+can compute — **with one qualifier added later**: every one of those
+feature experiments ran at the capacity shipped at the time, and when the
+card-history set was re-run at the deeper model's capacity it turned
+positive (E025: +0.0066 overall, +0.043 on cards first seen under a
+fortnight ago). It is measured, written up and **not shipped** — serving it
+requires the history store ADR 0004 makes binding. Ablation shows the 339 `V`
 columns carry 76 % of split gain but are almost fully substitutable
 (−0.005 when removed), while `card*` and `C*` are irreplaceable
 (`docs/ablation.md`). Interpretation, limitations and drift are in
@@ -205,9 +215,11 @@ columns carry 76 % of split gain but are almost fully substitutable
   column and family with the calibration step stated (`POST /explain`,
   shown in the dashboard's row inspector; `docs/explanation.md`).
 - Single test-window evaluation with top-*k*-per-day review metrics.
-- FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
-  returning one authoritative `action` (approve / review / block) from the
-  rank-based review policy, `/explain`, `/model-info`, `/audit/recent`,
+- FastAPI service: `/health`, `/predict` (probability + risk band),
+  `/predict/batch` and `/predict/csv` (the same, plus one authoritative
+  `action` — approve / review / block — from the rank-based review policy,
+  which needs a day's transactions to rank against), `/explain`,
+  `/model-info`, `/audit/recent`,
   `/audit/monitor`; startup parity
   check against a frozen golden; every scored transaction, every request
   and an input snapshot persisted to a SQLite audit trail; two-tier access

@@ -127,8 +127,10 @@ stated separately (`docs/explanation.md`); it explains rank, not fraud.
 The provider's `C*` counts and the `card*` fields are irreplaceable (−0.05
 PR-AUC each when removed). The 339 `V` columns take 76 % of split gain but
 are almost fully substitutable (−0.005 when removed). `has_identity` is
-unused; hour of day and reconstructed card-history features added nothing
-over the provider's columns (E005, E007, E017); row-local missing counts,
+unused; hour of day added nothing (E005), and reconstructed card-history
+features added nothing over the provider's columns at the capacity they
+were tried at (E007, E017) — E025 found they do pay at the shipped
+capacity, on new cards, and they remain unpromoted and unserved; row-local missing counts,
 amount structure and e-mail families added nothing (E013 – E015). Family
 cuts (`docs/feature_sets.md`): the provider's `C`/`D`/`M`/`V` families are
 worth 0.19 PR-AUC; the frequency / key features here add ≈ 0.02; `V` alone

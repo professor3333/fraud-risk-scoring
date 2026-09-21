@@ -51,10 +51,14 @@ fits at 238 MiB). **Live since 2026-09-17: https://fraud-risk-scoring-m1fp.onren
 (`deploy_check.py` passes against it; the champion is served from its
 GitHub release). Continuous deployment on tag is configured through `RENDER_DEPLOY_HOOK`
 and `RENDER_URL`; the workflow waits for the new version and verifies the live service. A documentation scope pass (2026-09-18) states plainly what is
-operated versus simulated: monitoring and retraining run manually, the free
+operated versus simulated: retraining runs manually, the free
 demo's SQLite state is ephemeral, and autonomous blocking is a demonstration
 policy whose block-precision target does not hold in every subgroup. MIT
-`LICENSE` added and recorded in `pyproject.toml`.
+`LICENSE` added and recorded in `pyproject.toml`. **Monitoring is now
+scheduled** (2026-09-21, ADR 0011): the service builds its own report over its
+audit trail (`GET /audit/monitor`), a daily GitHub Action fetches it and opens
+one labelled issue per alert episode, closing it on the first healthy run.
+Retraining is still the operator's call — nothing promotes automatically.
 
 ## Completion evidence
 
@@ -73,10 +77,11 @@ policy whose block-precision target does not hold in every subgroup. MIT
 | Reasoning | `docs/EXPERIMENT_LOG.md`, `docs/experiments.md` |
 | Operations | threshold 0.08 (ADR 0006), review policy (`docs/review_policy.md`); delayed-label loop — outcomes → predictions → cohort-aged monitoring → retraining on matured labels (ADR 0009, `docs/feedback.md`, `reports/feedback/`) |
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
-| API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
+| API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/audit/monitor`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 153 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Quality | 183 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
+| Monitoring | frozen reference per artifact, report over any window (`scripts/monitor.py`, local or `--from-url`), scheduled daily against the live service with GitHub-issue alerts (ADR 0011, `monitor.yml`, `scripts/alert.py`, `configs/alerting.yaml`, `docs/monitoring.md`) |
 | Security | digest-pinned champion, commit-pinned deploy, Dependabot (uv / actions / docker), weekly `pip-audit` + CodeQL (`security.yml`); scope and gaps in `docs/security.md` |
-| Documentation | MIT `LICENSE`, README, ADRs 0001–0010, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
+| Documentation | MIT `LICENSE`, README, ADRs 0001–0011, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

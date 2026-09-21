@@ -224,3 +224,39 @@ def test_simulated_arrivals_respect_the_window_and_the_seed() -> None:
         events.assign(transaction_dt=np.nan).iloc[:5], a.iloc[:0], clock, cfg.maturity_days
     )
     assert (untimed["label_status"] == "unknown_time").all()
+
+
+def test_the_api_section_ignores_the_admin_surface() -> None:
+    """A monitoring call that is refused must not become the error rate it alerts on."""
+    from fraud.monitor.report import api_section
+
+    rows = pd.DataFrame(
+        {
+            "endpoint": ["/predict", "/predict/csv", "/audit/monitor", "/outcomes"],
+            "started_at": [
+                "2026-09-21T07:00:00+00:00",
+                "2026-09-21T07:00:10+00:00",
+                "2026-09-21T07:00:20+00:00",
+                "2026-09-21T07:00:30+00:00",
+            ],
+            "status_code": [200, 200, 404, 200],
+            "latency_ms": [40.0, 500.0, 5.0, 10.0],
+            "n_rows": [1, 200, 0, 50],
+        }  # fmt: skip
+    )
+    section = api_section(rows)
+    assert section["requests"] == 2 and section["errors"] == 0
+    assert section["rows_scored"] == 201
+    assert set(section["by_endpoint"]) == {"/predict", "/predict/csv"}
+    assert api_section(rows[rows["endpoint"].str.startswith("/audit")]) == {"requests": 0}
+
+
+def test_psi_does_not_depend_on_key_insertion_order() -> None:
+    """Bit-for-bit, so the service's report and an offline one over the same rows agree.
+
+    The sum is over floats and Python randomises string hashing per process, so iterating
+    a set of keys would make the two differ in the last place (ADR 0011).
+    """
+    ref = {"a": 0.5, "b": 0.3, "c": 0.15, "<other>": 0.05}
+    now = {"c": 0.4, "<other>": 0.05, "a": 0.35, "b": 0.2}
+    assert psi(ref, now) == psi(dict(reversed(ref.items())), dict(reversed(now.items())))

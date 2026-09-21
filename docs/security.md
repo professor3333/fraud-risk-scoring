@@ -57,8 +57,16 @@ trade of release availability for strictness; it has not been made.
 The public demo runs with no API key by design — a dashboard that needs a key
 is not a demo. What limits it instead: per-client application rate limits, an
 upload cap, a 5,000-row CSV ceiling, a 60 s request time budget, and admin
-endpoints (`POST /outcomes`, `GET /audit/recent`) closed unless
-`FRAUD_ADMIN_API_KEY` is set, which it is not (`docs/deployment.md`).
+endpoints (`POST /outcomes`, `GET /audit/recent`, `GET /audit/monitor`) closed
+unless `FRAUD_ADMIN_API_KEY` is set, which it is not (`docs/deployment.md`).
+
+`GET /audit/monitor` returns aggregates only — counts, shares, PSIs, latency
+quantiles, metrics — never a transaction, an identifier or a score, and it
+counts a window before loading it (`monitor_max_rows`) so a wide window is
+refused rather than served at the cost of the 0.1-CPU instance. The scheduled
+monitoring job (ADR 0011) publishes those aggregates into a GitHub issue in a
+public repository; that is the intended exposure and the reason the report
+carries no row-level data.
 
 Setting `FRAUD_API_KEY` closes scoring to key holders; the service reports
 which mode it is in through `/health` (`auth`, `admin`).

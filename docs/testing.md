@@ -1,6 +1,6 @@
 # Testing
 
-`uv run pytest` — 153 tests using synthetic fixtures (`tests/fixtures/`),
+`uv run pytest` — 183 tests using synthetic fixtures (`tests/fixtures/`),
 no data download, no network, ~20 s. `uv run pytest -m slow` — 4 tests
 against the real files and the production artifact when present. CI runs
 the default set plus a smoke training through the CLI, a Docker build and a
@@ -46,7 +46,8 @@ and dry-run behavior with Git, model loading and shell commands stubbed out.
 | API == offline, batch == single, CSV == single | `test_serving::test_predict_matches_offline_pipeline`, `test_batch_is_ranked_and_matches_single_predictions`, `test_csv_upload_scores_ranks_and_summarises` |
 | calibration preserves ranking; cost / policy arithmetic | `test_model::test_calibrated_model_keeps_ranking_and_improves_brier`, `test_cost_curve_prefers_catching_expensive_fraud`, `test_policy_bands_and_budget_sizing`, `test_top_k_per_day_reviews_the_highest_scores` |
 | experiment record complete (provenance, metrics, artifacts) | `test_model::test_run_logs_provenance_and_artifacts` |
-| monitoring: PSI arithmetic, reference from the fixture, report over stored traffic with and without labels; requests table records errors; input snapshots stored | `test_monitoring`, `test_serving::test_requests_and_inputs_are_recorded_for_monitoring` |
+| monitoring: PSI arithmetic, reference from the fixture, report over stored traffic with and without labels; requests table records errors; input snapshots stored; the API section ignores the admin surface so a refused monitoring call cannot raise the error rate it alerts on; PSI is bit-identical whatever the key order | `test_monitoring`, `test_serving::test_requests_and_inputs_are_recorded_for_monitoring` |
+| scheduled monitoring (ADR 0011): the service's `/audit/monitor` report equals an offline run over the same rows, is admin-only, and refuses a window past `monitor_max_rows`; a window below `min_rows` is `no_data` and never pages; `warn` does not page unless configured; an episode is one issue (opened → commented → closed) and an unrelated labelled issue is left alone; a refusal from the service is a readable error | `test_serving::test_monitor_endpoint_matches_the_offline_report_over_the_same_trail`, `test_monitor_endpoint_refuses_a_window_wider_than_it_can_afford`, `test_monitor_endpoint_is_admin_only`, `test_alerting` |
 | prediction audit trail (single, batch and CSV events; request id echoed; per-transaction lookup; disable switch; transaction clock stored) | `test_serving::test_predictions_are_audited`, `test_csv_upload_is_audited_with_one_request_id`, `test_audit_can_be_disabled` |
 | delayed labels: outcomes attach to predictions (first label wins, redelivery is a no-op, bad bodies rejected); simulated arrivals respect the window and the seed; arrived-label positive rate is biased, closed-cohort rate is not; eventual metrics only on closed cohorts and equal the complete-label ones once all close; a feed gap is an alert | `test_serving::test_outcomes_attach_to_scored_transactions`, `test_monitoring::test_simulated_arrivals_respect_the_window_and_the_seed`, `test_reference_and_report_on_fixture` |
 | promotion: gates apply absolute bounds and champion tolerance; candidate metrics from validation; the materialised champion (artifact, golden, reference, manifest) is what the service reports; a manifest for a different artifact is refused; the registry records every candidate and moves the alias only on promotion | `test_promotion` |

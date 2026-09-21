@@ -71,8 +71,12 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   set either, which *closes* `POST /outcomes` and `GET /audit/recent`
   (403): anonymous visitors can score but cannot write to the delayed-label
   store or read other visitors' scored rows. Setting the admin key on the
-  host re-enables both for whoever holds it. On 0.1 CPU uploads much beyond
-  the 200-row sample run into the time budget.
+  host re-enables both for whoever holds it — and is what the scheduled
+  monitoring job needs (ADR 0011): give Render `FRAUD_ADMIN_API_KEY` and
+  GitHub the same value as the `FRAUD_ADMIN_API_KEY` secret, and
+  `monitor.yml` starts reporting daily on the live service. Until then the
+  job runs and reports that there is nothing to monitor. On 0.1 CPU uploads
+  much beyond the 200-row sample run into the time budget.
 
 ## One-time setup (needs the account owner, once; free — done 2026-09-17: https://fraud-risk-scoring-m1fp.onrender.com)
 
@@ -197,7 +201,7 @@ the existing champion verification still apply.
 | protection | where | behaviour |
 |---|---|---|
 | scoring key | `FRAUD_API_KEY` (an environment variable on the host; unset on the free demo) | when set, `/predict*` and `/explain` require a matching `X-API-Key` (constant-time compare) → 401 before the body is read; `/health`, `/model-info` and the dashboard stay open, and `/health` reports `auth: api_key`. The dashboard shows a key field when the server asks for one and keeps it in the browser only. Unset = open, for the demo and local use. |
-| admin key | `FRAUD_ADMIN_API_KEY` (unset on the free demo) | `POST /outcomes` and `GET /audit/*` are operational endpoints — one writes the delayed-label store, the other reads scored rows. They answer only to this key, never to the scoring key, and while it is unset they return 403 (`/health` reports `admin: disabled`). Fail-closed: a host with no configuration exposes nothing beyond scoring. `deploy_check.py` asserts an anonymous `/audit/recent` is refused on every deployment. |
+| admin key | `FRAUD_ADMIN_API_KEY` (unset on the free demo) | `POST /outcomes` and `GET /audit/*` are operational endpoints — one writes the delayed-label store, the others read scored rows (`/audit/recent`) and build the monitoring report over them (`/audit/monitor`, ADR 0011). They answer only to this key, never to the scoring key, and while it is unset they return 403 (`/health` reports `admin: disabled`). Fail-closed: a host with no configuration exposes nothing beyond scoring. `deploy_check.py` asserts an anonymous `/audit/recent` is refused on every deployment. |
 | upload cap | `serving.yaml` `max_upload_bytes` (25 MB) | declared length checked, then the stream abandoned the moment it exceeds the cap → 413; the row limit stops the parser one row past 5,000 → 422 |
 | time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
 | request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |

@@ -1056,3 +1056,96 @@ def test_single_predictions_do_not_spend_the_review_budget(
     banded = [e for e in predict_rows if e["transaction_id"] == medium["TransactionID"]]
     assert banded and {e["action"] for e in banded} == {"approve"}
     assert {e["risk_level"] for e in banded} == {"medium"}  # the band is still reported
+
+
+def _reference_for(served: dict[str, Any], fixture_raw_dir: Path) -> Path:
+    """Freeze a monitoring reference next to the served fixture artifact."""
+    from fraud.monitor.reference import build_reference, reference_path, save_reference
+
+    artifact = Path(served["config"]).parents[1] / "models" / "m.joblib"
+    parts = split(load_train(fixture_raw_dir), load_split_config(ROOT / "configs" / "split.yaml"))
+    ref = build_reference(served["model"], parts["train"], parts["validation"], 0.42, 5, "abc")
+    save_reference(ref, artifact)
+    assert reference_path(artifact).exists()
+    return artifact
+
+
+def test_monitor_endpoint_matches_the_offline_report_over_the_same_trail(
+    served: dict[str, Any], fixture_raw_dir: Path, tmp_path: Path
+) -> None:
+    """GET /audit/monitor is the offline monitor run where the audit trail lives (ADR 0011).
+
+    Same `build_report`, same database, same window — so the scheduled job is reading
+    the report `scripts/monitor.py` would have produced, not a second implementation.
+    """
+    from fraud.monitor.reference import load_reference, reference_path
+    from fraud.monitor.report import build_report
+    from fraud.serve.audit import AuditLog
+
+    artifact = Path(served["config"]).parents[1] / "models" / "m.joblib"
+    reference_path(artifact).unlink(missing_ok=True)  # the precondition, whatever ran before
+    with _fresh_client(served, tmp_path) as c:
+        missing = c.get("/audit/monitor")
+        assert missing.status_code == 404
+        assert "scripts/monitor_reference.py" in missing.json()["detail"]
+
+        _reference_for(served, fixture_raw_dir)
+        rows = [_payload(row) for _, row in served["rows"].head(30).iterrows()]
+        assert c.post("/predict/batch", json={"transactions": rows}).status_code == 200
+
+        report = c.get("/audit/monitor").json()
+        assert report["status"] in ("ok", "warn", "alert")
+        assert report["predictions"]["rows"] == 30 and report["data"]["rows"] == 30
+        # the scoring call only: the monitor's own /audit calls are not the traffic it judges
+        assert report["api"]["requests"] == 1 and report["api"]["error_rate"] == 0.0
+        assert set(report["api"]["by_endpoint"]) == {"/predict/batch"}
+        assert isinstance(report["flags"], list)
+
+        audit = AuditLog(tmp_path / "audit.sqlite")
+        offline = build_report(
+            audit.frame("requests"),
+            audit.frame("prediction_events"),
+            audit.frame("input_features"),
+            load_reference(artifact),
+            None,
+            (None, None),
+            None,
+            0,
+        )
+        assert offline["predictions"] == report["predictions"]
+        assert offline["data"] == report["data"]
+        assert offline["status"] == report["status"] and offline["flags"] == report["flags"]
+
+        later = c.get("/audit/monitor", params={"since": "2099-01-01T00:00:00+00:00"}).json()
+        assert later["predictions"] == {"rows": 0} and later["status"] == "ok"
+
+
+def test_monitor_endpoint_refuses_a_window_wider_than_it_can_afford(
+    served: dict[str, Any], fixture_raw_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The free host is 0.1 CPU: a window is counted before it is loaded into pandas."""
+    _reference_for(served, fixture_raw_dir)
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    cfg.write_text(f"{text}audit_db: {tmp_path / 'capped.sqlite'}\nmonitor_max_rows: 5\n")
+    monkeypatch.setenv("FRAUD_ADMIN_API_KEY", ADMIN_KEY)
+    with TestClient(create_app(cfg), headers={"X-API-Key": ADMIN_KEY}) as c:
+        rows = [_payload(row) for _, row in served["rows"].head(8).iterrows()]
+        assert c.post("/predict/batch", json={"transactions": rows}).status_code == 200
+        refused = c.get("/audit/monitor")
+        assert refused.status_code == 413 and "shorter window" in refused.json()["detail"]
+
+
+def test_monitor_endpoint_is_admin_only(served: dict[str, Any], tmp_path: Path) -> None:
+    with _fresh_client(served, tmp_path, admin_key=None) as c:
+        assert c.get("/audit/monitor").status_code == 403  # no admin key set: disabled outright
+    (tmp_path / "keyed").mkdir()
+    with _fresh_client(served, tmp_path / "keyed", admin_key="adm1n") as c:
+        assert c.get("/audit/monitor", headers={"X-API-Key": "wrong"}).status_code == 401

@@ -263,6 +263,28 @@ class AuditLog:
             row = self._conn.execute("SELECT COUNT(*) FROM prediction_events").fetchone()
         return int(row[0])
 
+    def count_between(self, table: str, since: str | None, until: str | None) -> int:
+        """Rows of one table in a time window, without reading them.
+
+        The monitoring endpoint asks this before building a report so a window
+        wider than the service can afford is refused rather than pulled into
+        pandas (the free host has 0.1 CPU and 512 MB).
+        """
+        time_col = {"requests": "started_at", "outcomes": "recorded_at"}.get(table, "scored_at")
+        clauses, params = [], []
+        if since:
+            clauses.append(f"{time_col} >= ?")
+            params.append(since)
+        if until:
+            clauses.append(f"{time_col} < ?")
+            params.append(until)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*) FROM {table}{where}", tuple(params)
+            ).fetchone()
+        return int(row[0])
+
     def recent(self, limit: int = 50, transaction_id: int | None = None) -> list[dict[str, Any]]:
         sql = "SELECT id, " + ", ".join(COLUMNS) + " FROM prediction_events"
         params: tuple[Any, ...] = ()

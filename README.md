@@ -378,7 +378,7 @@ uv run uvicorn fraud.serve.app:app --port 8000
 # http://127.0.0.1:8000/        analyst dashboard: upload a CSV, get a ranked review queue
 # http://127.0.0.1:8000/single  one transaction as JSON
 # http://127.0.0.1:8000/docs    OpenAPI
-curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","parity_rows":50,"audit_events":201}
+curl http://127.0.0.1:8000/health      # {"status":"ok","model_version":"…","parity_rows":50,"audit_events":201,"auth":"open","admin":"disabled","build_commit":null}
 curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
   -d '{"TransactionID":3000001,"TransactionDT":12000000,"TransactionAmt":49.0,"ProductCD":"W",
        "card1":9500,"card4":"visa","card6":"debit","C1":1,"D1":120}'
@@ -387,12 +387,19 @@ curl -X POST http://127.0.0.1:8000/predict -H 'content-type: application/json' \
 Response:
 
 ```json
-{"transaction_id":3000001,"fraud_probability":0.1466,"risk_level":"medium","action":"review","model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
+{"transaction_id":3000001,"fraud_probability":0.14656427775136324,"risk_level":"medium","model_version":"xgb_f5_capacity+sigmoid@7af85ec92813"}
 ```
 
-`action` is the one command for the payment system (approve / review /
-block) and `risk_level` its low / medium / high reading, from the review
-policy (`docs/review_policy.md`). The evaluation threshold 0.08 (ADR 0006)
+**No `action` here, deliberately.** `risk_level` is the band the probability
+falls in — `high` is at or above the block threshold (`/model-info` →
+`bands`). The served policy blocks by threshold and then reviews the
+highest-scoring remainder up to the day's analyst budget
+(`docs/review_policy.md`), and that second half cannot be decided for one
+transaction: whether a score belongs in the day's top *N* depends on the
+day's other scores, which a single request does not have. Returning
+approve/review here would be fixed bands — a different policy than the
+experiments chose. `/predict/batch` and `/predict/csv` have the day in hand
+and do return one `action` per row. The evaluation threshold 0.08 (ADR 0006)
 is reporting material and is not served — the API never returns two
 competing decisions.
 

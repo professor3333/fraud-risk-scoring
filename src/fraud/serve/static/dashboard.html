@@ -162,7 +162,8 @@ fetch("/health").then(r => r.json()).then(h => {
   $("apikey").onchange = () => localStorage.setItem("fraudApiKey", $("apikey").value.trim());
 }).catch(() => {});
 fetch("/model-info").then(r => r.json()).then(m => {
-  $("model").textContent = `${m.model} · ${m.experiment} · ${m.version} · validation PR-AUC ${m.validation_pr_auc} · test ${m.test_pr_auc}`;
+  const testPrAuc = m.test_pr_auc == null ? "n/a (retrained through the test window)" : m.test_pr_auc;
+  $("model").textContent = `${m.model} · ${m.experiment} · ${m.version} · validation PR-AUC ${m.validation_pr_auc} · test ${testPrAuc}`;
 }).catch(() => { $("model").textContent = "model info unavailable"; });
 
 let lastFile = null;

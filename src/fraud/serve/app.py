@@ -217,6 +217,21 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     model = joblib.load(model_path)
     artifact_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
     digest = artifact_sha256[:12]
+    # `champion_sha256`, when the config names one, is the artifact these bands were
+    # reviewed for (ADR 0012). It is checked on the *fetched* champion only: that is the
+    # case where the host decides which artifact to load (FRAUD_CHAMPION_URL) while the
+    # bands come from this file, so without it a host pointed at a newer champion would
+    # serve a block threshold nobody approved and pass every other check. A champion
+    # directory built into the image is already part of a reviewed build, and CI's
+    # fixture artifact has no reviewed policy to contradict.
+    pinned = raw.get("champion_sha256") if from_network else None
+    if pinned and not artifact_sha256.startswith(str(pinned).strip().lower()):
+        raise RuntimeError(
+            f"{model_path.name} is sha256 {digest}, not the {pinned} that "
+            f"{config_path.name} carries bands for. Point FRAUD_CHAMPION_URL at the "
+            "reviewed champion, or update the config's bands and champion_sha256 "
+            "together (scripts/retrain_cycle.py writes that patch)."
+        )
     # A promoted champion carries a manifest (scripts/promote.py): its version, facts and
     # policy bands come from there, so a promotion never edits this config.
     manifest = read_manifest(model_path)
@@ -666,7 +681,7 @@ def model_info(state: ServingState) -> ModelInfoResponse:
         n_inputs=n_inputs,
         primary_metric=str(info.get("primary_metric", "pr_auc")),
         validation_pr_auc=float(info.get("validation_pr_auc", float("nan"))),
-        test_pr_auc=float(info.get("test_pr_auc", float("nan"))),
+        test_pr_auc=None if info.get("test_pr_auc") is None else float(info["test_pr_auc"]),
         calibration=str(info.get("calibration", state.model.method)),
         bands=state.bands,
         training_window_days=tuple(info.get("training_window_days", (0, 0))),

@@ -221,6 +221,11 @@ columns carry 76 % of split gain but are almost fully substitutable
   the service builds the same report over its own trail (`GET /audit/monitor`)
   and a daily GitHub Action fetches it and raises one issue per alert episode
   (ADR 0011).
+- Automated retraining: a monthly cycle decides whether a month of matured
+  labels the champion has not seen exists, fits a challenger, scores it and
+  the champion on that month, applies the gates plus a margin, promotes,
+  publishes the artifact and opens the policy change as a pull request
+  (ADR 0012); merging it deploys and verifies the digest.
 - Model promotion: candidate → acceptance gates (PR-AUC, recall at the
   review budget, ECE, Brier, block precision, cost per transaction, parity)
   → champion; the MLflow model registry is the ledger, `models/champion/`
@@ -250,7 +255,7 @@ configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   policy.yaml, serving.yaml, feedback.yaml, promotion.yaml,
                   alerting.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0011), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0012), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
@@ -265,14 +270,16 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report, benchmark_api,
                   release, publish_champion, split_comparison, deploy_check,
-                  alert, make_fixture_artifact
+                  alert, retrain_cycle, make_fixture_artifact
 deploy/hosted/    Dockerfile without the weights (Render builds it; the service
                   fetches the champion from its release at startup)
 src/fraud/
   data/           schema (contract), validate (checks), load (read + join), split
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
   pipeline/       build (preprocessing + model), calibrated
-  train/          run (MLflow), tune (expanding-window CV)
+  train/          run (MLflow), tune (expanding-window CV), lifecycle (offline
+                  replay), trigger + cycle (one scheduled cycle), promotion,
+                  serving_config (the policy patch a promotion implies)
   evaluate/       metrics, curves, calibration, threshold, importance
   serve/          app, schemas, frames, parity (frozen-golden check), audit
                   (SQLite events, requests, input snapshots), static/
@@ -280,7 +287,9 @@ src/fraud/
                   remote (fetch a deployed service's report), alerts (what pages)
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 .github/          ci.yml, security.yml, deploy.yml (tag → Render), monitor.yml
-                  (daily report on the live service → issue on alert)
+                  (daily report on the live service → issue on alert),
+                  retrain.yml (monthly cycle → PR), deploy-champion.yml
+                  (merged policy change → the host serves it)
 Dockerfile        runtime-only image, non-root
 render.yaml       Render blueprint — the free public demo (the live deployment)
 fly.toml          Fly.io app definition — the optional paid alternative
@@ -298,7 +307,7 @@ fly.toml          Fly.io app definition — the optional paid alternative
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 183 fixture tests; no data/network required
+uv run pytest            # 200 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -487,11 +496,35 @@ FRAUD_ADMIN_API_KEY=… uv run python scripts/monitor.py \
 uv run python scripts/alert.py reports/monitoring/<stamp>.json --source <url> --dry-run
 ```
 
-**Retraining status** — the monthly lifecycle is simulated offline through
-`scripts/retrain.py`, completing the Stage 1 scope. Scheduled production
-retraining and automatic publication/deployment of promoted models remain a
-future MLOps automation exercise. Release-tag deployment does not automate
-that lifecycle; see [retraining](docs/retraining.md).
+**Retraining** (`docs/retraining.md`, ADR 0012) — the monthly lifecycle is
+replayed offline by `scripts/retrain.py` (that is where the staleness numbers
+come from), and run for real, one cut-off at a time, by
+`scripts/retrain_cycle.py` + `.github/workflows/retrain.yml`:
+
+```
+label feed clock (+ the monitor's eventual PR-AUC)
+  → is a cycle due?          a month of matured labels the champion has not seen,
+                             or measured degradation with new data to answer it
+  → fit the challenger       on days ≤ train_end, calibrated out-of-fold inside it
+  → score both models        on train_end+1 … mature_through, which neither was fit on
+                             (the champion is re-scored there, never quoted from its
+                              manifest — those numbers belong to another window)
+  → gates + margin           ADR 0010's gates, plus "better by 0.005", which they do
+                             not require and an unattended job should
+  → promote · publish        models/champion/, registry alias, champion-<sha12> release
+  → pull request             configs/serving.yaml: the new bands + champion_sha256
+  → merge → deploy           deploy-champion.yml points the host at it and verifies
+```
+
+One step is not automated, on purpose: a human reads that diff. The block and
+review bands decide what happens to a customer's transaction, and the service
+takes them from a reviewed commit rather than from a fetched manifest
+(`docs/security.md`). Nothing retrains, promotes or deploys behind that gate.
+
+What this dataset lets the automation *do* is narrow, and the pipeline says so
+rather than pretending otherwise: under the host's 120-day label maturity, 183
+days of data leave no evaluation month the current champion was not itself
+trained on, so a scheduled cycle stops and explains which rule stopped it.
 
 **Promotion** (`docs/promotion.md`, ADR 0010) — the service loads
 `models/champion/`, which only `scripts/promote.py` writes: a candidate is
@@ -546,6 +579,7 @@ Render client identification and local benchmark configuration.
 curl http://127.0.0.1:8000/model-info
 # {"model":"xgboost","default_policy":"rank","default_review_budget":200,"experiment":"E022","version":"xgb_f5_capacity+sigmoid@7af85ec92813",
 #  "feature_set":"f5_interactions","n_inputs":439,"primary_metric":"pr_auc","validation_pr_auc":0.6367,"test_pr_auc":0.561,
+#   (test_pr_auc is null for a champion retrained through the test window — ADR 0012)
 #  "calibration":"sigmoid","bands":{"review":0.062,"block":0.42},
 #  "training_window_days":[1,122],"validation_window_days":[123,152],"parity_rows":50}
 ```
@@ -675,7 +709,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 183 fixture tests, no data, no network, ~20 s
+uv run pytest              # 200 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

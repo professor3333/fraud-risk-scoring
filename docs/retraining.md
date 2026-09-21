@@ -1,15 +1,18 @@
-# Monthly retraining lifecycle (simulated offline)
+# Retraining: the offline lifecycle, and the scheduled cycle
 
-`uv run python scripts/retrain.py` → `reports/retrain/lifecycle.csv`,
-`models/retrain/cutoff_<T>/` (artifact, frozen golden, `decision.json`).
-MLflow experiment `fraud-retrain`. Not scheduled; this reproduces the
-lifecycle offline so every step exists and is tested before any automation.
+Two things live here. **The lifecycle** (`scripts/retrain.py`) replays several
+calendar cut-offs offline to show every step works and to measure what
+staleness costs — that is the table below. **The scheduled cycle**
+(`scripts/retrain_cycle.py`, ADR 0012) runs *one* cut-off against the artifact
+that is actually serving, and is what `.github/workflows/retrain.yml` calls
+monthly: decide → retrain → gate → promote → publish → open the policy pull
+request. Merging that request deploys (`deploy-champion.yml`).
 
-**Stage 1 scope: complete.** No production job schedules monthly retraining
-or automatically publishes and deploys a promoted model. Connecting the
-retraining lifecycle, promotion gates, artifact publication and deployment
-is a future MLOps automation exercise. The existing deployment workflow runs
-on a release tag; it does not schedule retraining or publish new model artifacts.
+The one step that is not automated is reading that diff. It carries the block
+and review bands the new champion re-derived, and they decide what happens to a
+customer's transaction; the service takes them from a reviewed commit and not
+from a fetched manifest (`docs/security.md`), so a machine may propose them and
+a person approves them.
 
 ```
 new month arrives (labels through day T are mature)
@@ -58,17 +61,92 @@ Reading:
   promoting noise; on this data every cycle clears it by two orders of
   magnitude, which says monthly is, if anything, not frequent enough.
 
-## What would make this a scheduled job
+## The scheduled cycle (ADR 0012)
 
-1. A label feed: `POST /outcomes` and the `outcomes` table exist
-   (`docs/feedback.md`); the cycle reads the closed cohort
-   (`fraud.monitor.feedback.mature_rows`) rather than the raw label file,
-   which in this simulation is the same thing.
-2. A trigger: the monitor's labelled report (`docs/monitoring.md`) drops
-   below the reference → run the cycle; or simply monthly.
-3. Deployment: the promoted artifact + golden replace the served files;
-   the service refuses to start on a parity mismatch, so a bad promotion
-   cannot serve. `scripts/deploy_check.py` is the post-deploy gate.
-4. Registry: `scripts/promote.py` (`docs/promotion.md`) — a promoted
-   challenger is a candidate for it; the acceptance gates and the
-   `champion` alias replace the cycle's `decision.json` as the record.
+```
+label feed clock (+ the monitor's eventual PR-AUC, docs/monitoring.md)
+  → fraud.train.trigger.decide     run a cycle, or record why not
+  → fraud.train.cycle.run_cycle    challenger fit on days ≤ train_end;
+                                   challenger AND the serving champion scored on
+                                   train_end+1 … mature_through, which neither saw;
+                                   ADR 0010's gates + the cycle's margin
+  → promote                        models/champion/ + registry alias (docs/promotion.md)
+  → publish                        one immutable champion-<sha12> release
+  → pull request                   configs/serving.yaml: bands + champion_sha256
+  → merge → deploy-champion.yml    point the host at it, redeploy, verify the digest
+```
+
+**The evaluation window moves with the model.** `scripts/promote.py` measures a
+candidate on the frozen validation window (days 123–152, ADR 0002). That is the
+right window for a model trained on the frozen training window and the wrong one
+for a model retrained *through* it — those rows are now training data. So the
+cycle scores both models on the latest month of matured labels, one day after
+the challenger's training data ends, and **re-scores the champion there**
+rather than reusing its manifest metrics, which belong to a different window.
+If the champion was itself fitted inside that month, the cycle raises instead of
+reporting a comparison that would flatter it.
+
+**What starts a cycle** (`configs/retrain.yaml` → `cycle:`):
+
+| rule | value | why |
+|---|---|---|
+| `min_new_train_days` | 30 | a month of matured labels the champion has not seen. Less is churn |
+| `monitor_pr_auc_drop` | 0.03 | eventual PR-AUC this far below its reference brings a cycle forward — but only when new training days exist, because refitting the same rows cannot answer drift |
+| `promotion_margin` | 0.005 | on top of every ADR 0010 gate. Those gates accept a candidate 0.005 *worse* than the champion, which is right for a person choosing a model and wrong for a job replacing one in service |
+| `label_maturity_days` | 120 | the host's rule (ADR 0009). The offline lifecycle above uses 0 to reproduce its published table; a scheduled cycle must not |
+| `allow_reporting_window` | false | a cycle whose month reaches day 153 consumes held-out data. Turning this on is a consultation to log in ADR 0002 |
+
+**What this dataset lets the automation do is narrow, and the pipeline says so.**
+Under a 120-day maturity, 183 days of data leave no month the current champion
+(trained through day 122) was not itself fitted on: a scheduled cycle stops with
+"labels are mature only through day 63" or "the champion was trained through day
+122, inside the evaluation month". That is the delayed-label cost
+`docs/feedback.md` measured, stated by the code rather than by a paragraph.
+Exercising the machinery needs `--label-maturity-days 0` — the offline
+simulation's assumption — or months this dataset does not have.
+
+```bash
+uv run python scripts/retrain_cycle.py --dry-run                      # decide, fit, gate, stop
+uv run python scripts/retrain_cycle.py --as-of-day 152 --label-maturity-days 0
+uv run python scripts/retrain_cycle.py --force --champion-dir /tmp/c  # somewhere harmless
+```
+
+### Two cycles, end to end (2026-09-21)
+
+Run against a scratch champion directory and a scratch MLflow store, so the real
+registry and the served champion were untouched. `--label-maturity-days 0` — the
+offline simulation's assumption, and the only way this dataset yields two
+comparable cycles (see above).
+
+| | cycle 1 (bootstrap) | cycle 2 |
+|---|---|---|
+| trigger | `bootstrap` — no champion | `calendar` — 30 new training days since day 92 |
+| trained through | day 92 | day 122 |
+| evaluation month | days 93–122 (93,880 rows, 3,756 fraud) | days 123–152 (85,044 rows, 2,884 fraud) |
+| challenger PR-AUC | 0.6219 | **0.6367** |
+| champion PR-AUC on the same month | — | **0.5305** |
+| gates | 6/6 pass | 6/6 pass |
+| decision | PROMOTE (bootstrap) | **PROMOTE** (+0.1062, clears the 0.005 margin) |
+| bands re-derived | review 0.0837 / block 0.48 | review 0.06224176 / block 0.42 |
+| wall clock | 9 min 44 s | ~11 min |
+
+Three things this checks that a test cannot:
+
+- **The cycle reproduces the shipped model.** Cycle 2 trains through day 122 and
+  scores days 123–152 — the project's frozen split — and lands on PR-AUC
+  0.63670 against the champion's published 0.6367, with **bit-identical policy
+  bands** (`review: 0.06224176041919635`, `block: 0.42`). An independent path
+  through training, calibration and threshold selection arriving at the same
+  numbers is the strongest evidence available that this pipeline is the same
+  pipeline. The artifact's *digest* differs, as it must: it is a different fit
+  with out-of-fold calibration, not a copy.
+- **Staleness shows up at the size the offline lifecycle predicted.** A champion
+  one month stale scores 0.5305 where the fresh challenger scores 0.6367:
+  **+0.1062** for thirty days of data, next to the +0.125 the lifecycle measured
+  at neighbouring cut-offs, and +0.067 for every feature and tuning experiment
+  in the project combined.
+- **The policy patch is reviewable.** Against the real `configs/serving.yaml`,
+  cycle 2's output differs in exactly two lines — `model_version` and
+  `champion_sha256` — because it re-derived the same bands. Cycle 1's differs in
+  four. Every comment in the file survives, which is what makes the diff worth
+  reading rather than scrolling.

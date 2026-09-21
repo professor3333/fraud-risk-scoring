@@ -6,6 +6,11 @@
 # they remain here as the fallback for a directory without one (CI's fixture artifact).
 model_path: models/champion/model.joblib
 model_version: xgb_f5_capacity+sigmoid
+# The artifact these bands were measured on. Checked when the champion is fetched from
+# FRAUD_CHAMPION_URL (ADR 0012): the host chooses which artifact to load, the bands come
+# from this reviewed file, and the service refuses to serve a pairing nobody approved.
+# scripts/retrain_cycle.py writes this line and the bands together.
+champion_sha256: 7af85ec92813
 # Startup parity check against the frozen sample next to the artifact (G8).
 require_parity: true
 # Production policy (docs/review_policy.md): block at bands.block (the 80 % precision

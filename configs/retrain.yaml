@@ -19,3 +19,32 @@ calibration_folds: [2, 1]
 # this PR-AUC margin (single seed; monthly windows have ~3k positives).
 promotion_margin: 0.005
 block_min_precision: 0.80
+
+# --- the scheduled cycle (ADR 0012, scripts/retrain_cycle.py) -------------------------
+# The block above replays several cut-offs offline to show the lifecycle works. This
+# block governs ONE cut-off run against the artifact that is actually serving, which is
+# what .github/workflows/retrain.yml calls.
+cycle:
+  # Labels are final only this many days after the transaction (ADR 0009). The offline
+  # simulation above uses 0 to reproduce its published table; a scheduled cycle must not,
+  # because a young cohort's arrived labels are positive-enriched (docs/feedback.md).
+  label_maturity_days: 120
+  # Training days that must have matured since the champion's cut-off before the calendar
+  # starts a cycle. A month: less is churn, and the lifecycle table measured a month of
+  # fresh data as worth far more than any feature work here (docs/retraining.md).
+  min_new_train_days: 30
+  # What the challenger must beat the champion by, on the evaluation month, on top of
+  # every ADR 0010 gate. The gates allow a candidate to be 0.005 *worse* and still be
+  # accepted; that is the right rule for a human choosing between models and the wrong
+  # one for an unattended job, which should replace a serving model only for measured
+  # gain. ~2 seed standard deviations (ADR 0003).
+  promotion_margin: 0.005
+  # Degradation can bring a cycle forward before the calendar would: eventual PR-AUC this
+  # far below its reference in the monitor's report (docs/monitoring.md). It only counts
+  # when new training days exist — refitting the same rows cannot answer drift.
+  monitor_pr_auc_drop: 0.03
+  # The reporting window (ADR 0002). A cycle whose evaluation month reaches day 153 or
+  # later consumes held-out data; it is refused unless this is true in a reviewed commit,
+  # and turning it on is a consultation to record in ADR 0002's log.
+  allow_reporting_window: false
+  reporting_window_start_day: 153

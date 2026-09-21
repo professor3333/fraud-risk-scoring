@@ -58,7 +58,14 @@ policy whose block-precision target does not hold in every subgroup. MIT
 scheduled** (2026-09-21, ADR 0011): the service builds its own report over its
 audit trail (`GET /audit/monitor`), a daily GitHub Action fetches it and opens
 one labelled issue per alert episode, closing it on the first healthy run.
-Retraining is still the operator's call — nothing promotes automatically.
+**Retraining is scheduled** (2026-09-21, ADR 0012): a monthly cycle decides
+whether a month of matured labels the champion has not seen exists, fits a
+challenger, scores it and the champion on that month, applies ADR 0010's gates
+plus a margin, promotes, publishes the artifact and opens the policy change
+(bands + `champion_sha256`) as a pull request; merging it deploys through
+`deploy-champion.yml`, which verifies the live digest. Reading that diff is the
+only manual step, and it is the one that decides what happens to a customer's
+transaction.
 
 ## Completion evidence
 
@@ -70,7 +77,7 @@ Retraining is still the operator's call — nothing promotes automatically.
 | Leakage | `docs/leakage_audit.md` |
 | Baseline | E001 dummy, E002b / E002 logistic regression |
 | Features | F0 → F7 (E005 – E017), ladder + family cuts (E018 – E020), `docs/feature_sets.md` |
-| Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped and confirmed by E023; monthly lifecycle `scripts/retrain.py` (E024) |
+| Model | `scripts/train.py` from config, seeds logged, reproducibility test; E022 shipped and confirmed by E023; monthly lifecycle `scripts/retrain.py` (E024); scheduled cycle `scripts/retrain_cycle.py` + `retrain.yml` (ADR 0012) |
 | Imbalance | ADR 0003 |
 | Evaluation | PR-AUC, ROC-AUC, threshold metrics, top-k/day, Brier/ECE; `reports/final/`; subgroup robustness (`docs/subgroups.md`, `reports/subgroups/`) |
 | Experiments | MLflow (`sqlite:///mlflow.db`), provenance hashes per run |
@@ -79,9 +86,10 @@ Retraining is still the operator's call — nothing promotes automatically.
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/audit/monitor`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 183 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Quality | 200 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
+| Retraining | trigger → cycle → gates on a moving month → promote → publish → reviewed policy PR → `deploy-champion.yml` (ADR 0012, `docs/retraining.md`) |
 | Monitoring | frozen reference per artifact, report over any window (`scripts/monitor.py`, local or `--from-url`), scheduled daily against the live service with GitHub-issue alerts (ADR 0011, `monitor.yml`, `scripts/alert.py`, `configs/alerting.yaml`, `docs/monitoring.md`) |
 | Security | digest-pinned champion, commit-pinned deploy, Dependabot (uv / actions / docker), weekly `pip-audit` + CodeQL (`security.yml`); scope and gaps in `docs/security.md` |
-| Documentation | MIT `LICENSE`, README, ADRs 0001–0011, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
+| Documentation | MIT `LICENSE`, README, ADRs 0001–0012, model card, error analysis, explanation, subgroups, monitoring, feedback, promotion, retraining, deployment, progression |
 | Learning | `docs/defending_the_decisions.md` — the owner's study sheet |

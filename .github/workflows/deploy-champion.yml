@@ -1,0 +1,128 @@
+# Put a reviewed champion into service (ADR 0012, docs/deployment.md).
+#
+# A retraining cycle promotes an artifact and publishes it, but it may not change what
+# the service blocks: the policy bands live in configs/serving.yaml, which ships in the
+# image from a reviewed commit, and `champion_sha256` names the artifact they were
+# measured on. Merging that pairing to main is the approval — and this workflow is what
+# acts on it: point the host at champion-<sha>, redeploy, and verify the live service
+# loaded that exact artifact.
+#
+# deploy.yml does the same thing for a version tag, where the *code* changes too. This
+# one exists for the far more common case: same code, new model. They share a
+# concurrency group so they can never race for the host.
+#
+# Needs: vars.RENDER_URL, vars.RENDER_SERVICE_ID, secrets.RENDER_API_KEY,
+# secrets.RENDER_DEPLOY_HOOK. Without them the job exits 0 having done nothing.
+name: deploy-champion
+
+on:
+  push:
+    branches: [main]
+    paths: ["configs/serving.yaml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-deploy  # shared with deploy.yml: one deployment at a time
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Point the host at the reviewed champion
+    runs-on: ubuntu-latest
+    # Configure this environment with required reviewers to hold every model change for
+    # a second pair of eyes; leave it unprotected to deploy on merge.
+    environment: production
+    env:
+      RENDER_URL: ${{ vars.RENDER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Read the champion this commit approves
+        id: champion
+        run: |
+          set -euo pipefail
+          sha=$(python3 -c "import yaml;print(yaml.safe_load(open('configs/serving.yaml')).get('champion_sha256',''))")
+          if [ -z "$sha" ]; then
+            echo "configs/serving.yaml names no champion_sha256; nothing to deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${RENDER_URL:-}" ] || [ -z "${RENDER_API_KEY:-}" ] || [ -z "${HOOK:-}" ]; then
+            echo "the Render deployment is not configured here; nothing to do."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The release must exist before the host is pointed at it, or the service
+          # fetches a 404 at startup and stays down.
+          gh release view "champion-$sha" --json tagName -q .tagName
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+
+      - name: Point FRAUD_CHAMPION_URL at it
+        if: steps.champion.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/champion-${{ steps.champion.outputs.sha }}"
+          api="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
+          # One key at a time: the bulk PUT replaces the whole list and would drop
+          # everything not restated (deploy.yml carries the same warning).
+          curl -sf -X PUT "$api/FRAUD_CHAMPION_URL" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'content-type: application/json' \
+            -d "$(python3 -c 'import json,sys;print(json.dumps({"value": sys.argv[1]}))' "$url")" \
+            >/dev/null
+          curl -sf "$api" -H "Authorization: Bearer $RENDER_API_KEY" > vars.json
+          python3 - "$url" <<'PY'
+          import json, sys
+          want = sys.argv[1]
+          got = {e["envVar"]["key"]: e["envVar"]["value"] for e in json.load(open("vars.json"))}
+          if got.get("FRAUD_CHAMPION_URL") != want:
+              sys.exit(f"FRAUD_CHAMPION_URL is {got.get('FRAUD_CHAMPION_URL')!r}, wanted {want!r}")
+          if "UVICORN_WORKERS" not in got:
+              sys.exit("UVICORN_WORKERS is gone; the write replaced the whole list")
+          print(f"host now points at {want}; {len(got)} vars intact")
+          PY
+          rm -f vars.json
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+
+      - name: Redeploy this commit so the service fetches the new champion
+        # The champion is downloaded once, at startup, and kept: changing the variable
+        # alone leaves the old artifact serving until the instance restarts.
+        if: steps.champion.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          hook="${{ secrets.RENDER_DEPLOY_HOOK }}"
+          sep='?'; case "$hook" in *\?*) sep='&';; esac
+          curl -sf -X POST "${hook}${sep}ref=${GITHUB_SHA}" >/dev/null
+          echo "requested deploy of ${GITHUB_SHA}"
+
+      - name: Wait for it, then verify the live service loaded that artifact
+        if: steps.champion.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            live=$(curl -sf "$RENDER_URL/health" | python3 -c "import json,sys;print(json.load(sys.stdin).get('build_commit') or '')" || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then break; fi
+            sleep 20
+          done
+          live=$(curl -sf "$RENDER_URL/health" | python3 -c "import json,sys;print(json.load(sys.stdin).get('build_commit') or '')")
+          if [ "$live" != "$GITHUB_SHA" ]; then
+            echo "live service reports commit '${live:-unknown}', expected $GITHUB_SHA" >&2
+            exit 1
+          fi
+          # The point of the whole workflow: the artifact serving must be the one this
+          # commit's bands were measured on, not merely "a" champion.
+          uv run --no-project python scripts/deploy_check.py "$RENDER_URL" \
+            --expected-artifact-sha "${{ steps.champion.outputs.sha }}"
+        env:
+          FRAUD_API_KEY: ${{ secrets.FRAUD_API_KEY }}

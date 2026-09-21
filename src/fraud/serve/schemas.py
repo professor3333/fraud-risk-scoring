@@ -144,7 +144,10 @@ class ModelInfoResponse(BaseModel):
     n_inputs: int
     primary_metric: str
     validation_pr_auc: float
-    test_pr_auc: float
+    # None for a champion with no untouched test window left to report one on: a model
+    # retrained through the end of the matured data (ADR 0012) has consumed it, and the
+    # previous champion's number belongs to the previous champion.
+    test_pr_auc: float | None
     calibration: str
     bands: Bands  # production policy: block at .block; review by budget (rank) or down to .review
     training_window_days: tuple[int, int]

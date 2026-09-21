@@ -4,8 +4,10 @@ The pushed tag runs .github/workflows/deploy.yml: Render rebuilds this tag's exa
 commit (the deploy hook is pinned with ?ref=) without the weights, the service fetches
 the champion from its GitHub release at startup, and the workflow fails unless the
 live /health reports the commit it asked for; the Fly leg, when configured,
-deploys the image this script can push with --fly-image. The weights never
-enter the repository or a public runner.
+deploys the image this script can push with --fly-image. The weights never enter
+the repository; they are built either here or by the retraining workflow
+(.github/workflows/retrain.yml, ADR 0012) and reach the host as a digest-pinned
+release asset.
 
     uv run python scripts/release.py v0.6.0              # checks, tag, push
     uv run python scripts/release.py v0.6.0 --dry-run    # what would happen

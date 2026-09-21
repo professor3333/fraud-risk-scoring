@@ -13,7 +13,9 @@
 #              needs: vars.FLY_APP, secrets.FLY_API_TOKEN
 #     release  GitHub release from the tag, after checks and configured deployments pass
 #
-# The model weights never enter the repository, a public runner or a public image.
+# The model weights never enter the repository or a public image. The retraining
+# workflow fits them on a runner (ADR 0012); the digest in the release tag is what
+# the service pins against, not the machine that built it.
 # Unconfigured deployment legs may be skipped; failed or cancelled legs block release.
 name: deploy
 
@@ -23,6 +25,12 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  # Shared with deploy-champion.yml (ADR 0012), which ships a new model on the same
+  # host without a code release: two deployments must never race for one service.
+  group: render-deploy
+  cancel-in-progress: false
 
 jobs:
   checks:

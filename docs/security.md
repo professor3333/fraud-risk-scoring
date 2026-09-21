@@ -71,6 +71,23 @@ carries no row-level data.
 Setting `FRAUD_API_KEY` closes scoring to key holders; the service reports
 which mode it is in through `/health` (`auth`, `admin`).
 
+## Which model is allowed to serve
+
+Three checks, each closing a different hole (ADR 0010, ADR 0012):
+
+| check | where | what it stops |
+|---|---|---|
+| the digest in the release tag (`champion-<sha12>`) or `FRAUD_CHAMPION_SHA256` | before `joblib.load` | a substituted `model.joblib`; it is a pickle, so this must happen before the bytes are opened, and the parity check cannot do it — parity runs after execution |
+| `champion_sha256` in `configs/serving.yaml` | after the fetch, at startup | a host pointed at a *genuine but unreviewed* champion. The host chooses the artifact, the repository supplies the policy bands, and the service refuses a pairing no commit approved |
+| the frozen golden | at startup, every start | an artifact that no longer reproduces the probabilities it was promoted on |
+
+The retraining workflow (ADR 0012) fits model weights on a GitHub-hosted
+runner, with Kaggle credentials held as repository secrets. The dataset is
+public competition data and is never uploaded as a run artifact; the resulting
+model is published exactly like any other champion, and is subject to all three
+checks above before it can serve. The runner was never what made a champion
+trustworthy.
+
 ## Not covered
 
 Stated rather than implied:

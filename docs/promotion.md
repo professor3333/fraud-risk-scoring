@@ -24,6 +24,15 @@ gates vs the champion's manifest (configs/promotion.yaml) + parity
 service: loads models/champion/model.joblib; version, facts and bands from the manifest
 ```
 
+
+**A retrained candidate is not gated here.** `scripts/promote.py` measures a
+candidate on the frozen validation window, which a model retrained through that
+window has been fitted on. The scheduled cycle (`scripts/retrain_cycle.py`,
+ADR 0012) reuses these gates and this registry, but on the latest month of
+matured labels, with the champion re-scored on that same month — and adds a
+margin, because a gate that accepts a candidate 0.005 worse than the champion is
+not a rule an unattended job should promote on.
+
 ## Gates
 
 | gate | rule | why this bar |

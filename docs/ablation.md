@@ -85,8 +85,12 @@ experiment `fraud-ablation`):
 2. **`C` and `card` are irreplaceable.** They rank high on permutation
    *and* ablation. `C*` are the provider's counts of entities linked to the
    card; `card1–6` identify the card itself. This is also why E007's
-   entity-history features added nothing: the provider had already
-   summarised the card's past into these columns.
+   entity-history features added nothing *at this capacity*: the provider
+   had already summarised the card's past into these columns. E025 later
+   found the summary is not complete for a card the provider has barely
+   seen — on cards under a fortnight old the same features are worth
+   +0.043 — so read this row as "irreplaceable", not as "sufficient"
+   (`docs/experiments.md` → E025).
 3. **Frequency encoding earns its place a second way.** Ablation −0.014 is
    larger than the E006 seed-paired gain (+0.009), consistent with the
    tuned, deeper model making more use of it.

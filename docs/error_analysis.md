@@ -123,8 +123,17 @@ Two mechanisms, and the entity check separates them:
    the deviation signal lives in ~⅓ of ¼ of the fraud, and the provider's
    `C` / `D` columns already carry the coarse version. A targeted
    experiment — history features evaluated on the `W`-product,
-   established-card slice only — is the follow-up this analysis suggests,
-   and the one this project has not run.
+   established-card slice only — is the follow-up this analysis suggests.
+   **It has since been run (E025), and it overturned the premise of this
+   paragraph.** `W` ∩ `D1 >= 14` scores 0.798; product `W`'s weakness lives
+   entirely in cards under a fortnight old, which score 0.211. The history
+   features help *there* (+0.043 every seed) and hurt on the established
+   slice (−0.012). The reasoning above selected the wrong population
+   because it started from *high-confidence* false negatives, and those are
+   established by construction: a stolen card with a long clean history
+   produces a confident wrong answer, a new card an uncertain one that
+   never enters this set. The mechanism described here is real; its size
+   and its location were not what this section inferred.
 
 ### Confident true fraud is one pattern
 

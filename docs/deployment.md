@@ -53,11 +53,18 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   whose URL carries no tag must set `FRAUD_CHAMPION_SHA256`; an unpinned
   remote fetch is refused. The corollary: **promoting and publishing a new
   champion does not change what this service serves** until `FRAUD_CHAMPION_URL`
-  is repointed by hand. The old champion stays correctly pinned to its own
-  release and keeps passing every check, so the staleness is silent
-  (`docs/promotion.md` → Shipping a promoted champion). `release.py` and
-  `deploy.yml` fail a release that would ship with the wrong champion live,
-  but neither updates the host. The startup parity check still runs afterwards,
+  points at it. The old champion stays correctly pinned to its own release and
+  keeps passing every check, so the staleness would otherwise be silent
+  (`docs/promotion.md` → Shipping a promoted champion). Two things close that
+  hop, and which one applies depends on the credentials the workflow has:
+  `deploy.yml`'s *Point the host at this release's champion* step `PUT`s
+  `FRAUD_CHAMPION_URL` through Render's API and then verifies both that it took
+  and that no other environment variable moved; with no `RENDER_API_KEY` /
+  `RENDER_SERVICE_ID` it skips, says so, and the verify step fails the release
+  rather than letting it drift. For a model change with no release tag,
+  `deploy-champion.yml` does the same from `configs/serving.yaml` (ADR 0012).
+  Setting it by hand is the fallback when neither workflow is credentialed, not
+  the normal path. The startup parity check still runs afterwards,
   but it guards *correctness* — that the artifact reproduces its frozen
   probabilities — not provenance. The URL pins the served weights by content
   hash, so what a running service serves is readable from its environment. A store that

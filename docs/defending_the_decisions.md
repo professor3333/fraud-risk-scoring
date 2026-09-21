@@ -129,10 +129,16 @@ little to gain.
 
 ### "Kaggle solutions get most of their lift from a card 'uid'. Where is yours?"
 
-Built, tested and rejected twice (ADR 0004; E007 −0.002, E017 −0.001).
-Restricted to what a live system can compute — label-free aggregates over
-strictly earlier rows of the entity — it adds nothing over the provider's
-own `C*` / `D*` columns, which already summarise the card's past. Kaggle's
+Built, tested and rejected twice at the capacity of the day (ADR 0004;
+E007 −0.002, E017 −0.001), then re-run at the shipped model's capacity and
+found to pay (E025: +0.0066 overall, +0.043 on cards first seen under a
+fortnight ago, −0.012 on established ones). Restricted to what a live system
+can compute — label-free aggregates over strictly earlier rows of the entity
+— it adds nothing over the provider's own `C*` / `D*` columns **for a card
+those columns have had time to summarise**; for a new card they have not,
+and that is where the whole effect lives. Nothing is promoted on it yet:
+the gain is just over the decision rule, the backtests have not run, and
+serving it needs the history store ADR 0004 makes binding. Kaggle's
 gains came from aggregating over the whole dataset (future rows and, through
 propagation, the label) on a test set sharing those entities.
 

@@ -156,7 +156,8 @@ in the report (§ *What is monitored*), so an offline run and the service agree.
 | rule | value | why |
 |---|---|---|
 | `window_hours` | 24 | matches the daily cron |
-| `min_rows` | 200 | below this the window is `no_data` and never alerts — a PSI over forty rows measures the sample size, not the traffic, and the demo is idle for days at a time |
+| `min_rows` | 200 | below this the window's *distribution* comparisons are not believed: it is recorded as `no_data` and never alerts, because a PSI over forty rows measures the sample size, not the traffic, and the demo is idle for days at a time |
+| `min_requests` | 20 | the floor does **not** suppress availability. A service erroring on every call scores nothing and would otherwise look exactly like an idle one, so an error rate over 5 % — or a label-feed gap — alerts on its own once the window holds this many calls |
 | `alert_on` | `alert` | a lone `warn` (one PSI in 0.10–0.20) is an ordinary day; `alert` means PSI ≥ 0.20, error rate > 5 %, a label-feed gap, or an eventual metric below its reference |
 | `issue.title` / `issue.label` | *Monitoring alert: live service* / `monitoring` | the title is the identity: one issue per **episode**, commented on while it lasts and closed on the first healthy run |
 

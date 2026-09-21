@@ -21,8 +21,13 @@ from typing import Any
 
 import yaml
 
+from fraud.monitor.report import ERROR_RATE_FLAG, LABEL_GAP_FLAG
+
 #: Ordered by seriousness; ``no_data`` is not a failure, it is an absence of evidence.
 SEVERITIES = ("no_data", "ok", "warn", "alert")
+#: Flags that hold however few rows the window has: the service is erroring, or labels
+#: have stopped arriving. Everything else compares distributions and needs volume.
+AVAILABILITY_FLAGS = (ERROR_RATE_FLAG, LABEL_GAP_FLAG)
 BODY_LIMIT = 60_000  # GitHub caps an issue body at 65,536 characters
 
 
@@ -38,6 +43,7 @@ class AlertConfig:
 
     window_hours: int
     min_rows: int
+    min_requests: int  # calls the window needs before an error rate is believed
     alert_on: str  # "warn" or "alert": the lowest severity that notifies
     label: str
     title: str
@@ -46,8 +52,10 @@ class AlertConfig:
     def __post_init__(self) -> None:
         if self.alert_on not in ("warn", "alert"):
             raise ValueError(f"alert_on must be 'warn' or 'alert', got {self.alert_on!r}")
-        if self.window_hours <= 0 or self.min_rows < 0:
-            raise ValueError("window_hours must be positive and min_rows non-negative")
+        if self.window_hours <= 0 or self.min_rows < 0 or self.min_requests < 1:
+            raise ValueError(
+                "window_hours and min_requests must be positive and min_rows non-negative"
+            )
 
 
 def load_alert_config(path: Path) -> AlertConfig:
@@ -56,6 +64,7 @@ def load_alert_config(path: Path) -> AlertConfig:
     return AlertConfig(
         window_hours=int(raw["window_hours"]),
         min_rows=int(raw["min_rows"]),
+        min_requests=int(raw["min_requests"]),
         alert_on=str(raw["alert_on"]),
         label=str(issue["label"]),
         title=str(issue["title"]),
@@ -93,6 +102,12 @@ def summarise(report: dict[str, Any], severity: str, source: str | None = None) 
         return (
             f"No usable traffic{where} in {_window(report)}: {_rows(report)} predictions, "
             f"{api.get('requests', 0)} requests. Nothing was measured."
+        )
+    if _rows(report) < 1:
+        return (
+            f"{severity.upper()}{where}: the service scored nothing in {_window(report)} "
+            f"over {api.get('requests', 0)} requests, error rate "
+            f"{api.get('error_rate', 0.0):.1%}."
         )
     flags = report.get("flags") or []
     head = f"{len(flags)} flag(s)" if flags else "no flags"
@@ -140,17 +155,30 @@ def decide(
     """The severity of one report and whether it notifies.
 
     A window below ``min_rows`` predictions is ``no_data``: its PSIs are computed
-    from too few rows to mean anything, so it is recorded and never paged on.
+    from too few rows to mean anything, so it is recorded and never paged on. The
+    exception is the availability flags — a service erroring on every call also
+    scores nothing, and a silent "no data" is the wrong answer to an outage.
     """
     flags = tuple(str(f) for f in report.get("flags", ()))
-    if _rows(report) < config.min_rows:
-        severity, paging = "no_data", False
-        flags = ()
+    status = str(report.get("status", "ok"))
+    if status not in SEVERITIES:
+        raise ValueError(f"report status {status!r} is not one of {SEVERITIES}")
+    if _rows(report) >= config.min_rows:
+        severity = status
     else:
-        severity = str(report.get("status", "ok"))
-        if severity not in SEVERITIES:
-            raise ValueError(f"report status {severity!r} is not one of {SEVERITIES}")
-        paging = SEVERITIES.index(severity) >= SEVERITIES.index(config.alert_on)
+        # The floor suppresses distribution comparisons, which need rows to mean
+        # anything — not availability, which is true however few rows there are. A
+        # service erroring on every call scores nothing, and must not look idle.
+        flags = tuple(f for f in flags if f.startswith(AVAILABILITY_FLAGS))
+        api: dict[str, Any] = report.get("api", {})
+        severity = (
+            "alert" if flags and int(api.get("requests", 0)) >= config.min_requests else "no_data"
+        )
+        if severity == "no_data":
+            flags = ()
+    paging = severity != "no_data" and (
+        SEVERITIES.index(severity) >= SEVERITIES.index(config.alert_on)
+    )
     summary = summarise(report, severity, source)
     alert = Alert(
         severity=severity,

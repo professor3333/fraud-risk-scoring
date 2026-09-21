@@ -40,6 +40,13 @@ def _window_seconds(started: pd.Series) -> float:
 #: raise the error rate it then alerts on.
 ADMIN_ENDPOINTS = ("/audit", "/outcomes")
 
+#: Flag thresholds and the words the flags start with. The alerting layer (ADR 0011)
+#: selects on these prefixes to tell an availability problem, which is true however few
+#: rows the window holds, from a distribution comparison, which is not.
+ERROR_RATE_ALERT = 0.05
+ERROR_RATE_FLAG = "error rate"
+LABEL_GAP_FLAG = "label feed gap"
+
 
 def api_section(requests: pd.DataFrame) -> dict[str, Any]:
     if not requests.empty:
@@ -217,8 +224,8 @@ def _flags(report: dict[str, Any]) -> list[str]:
     for col, f in data.get("features", {}).items():
         if f["drift"] in ("warn", "alert"):
             flags.append(f"feature drift {f['drift']}: {col} (PSI {f['psi']:.3f})")
-    if api.get("error_rate", 0) > 0.05:
-        flags.append(f"error rate {api['error_rate']:.1%}")
+    if api.get("error_rate", 0) > ERROR_RATE_ALERT:
+        flags.append(f"{ERROR_RATE_FLAG} {api['error_rate']:.1%}")
     d_pr = ev.get("delta_pr_auc_vs_reference")
     if d_pr is not None and d_pr < -0.03:
         flags.append(f"eventual PR-AUC {ev['pr_auc']:.3f} is {d_pr:+.3f} vs reference")
@@ -228,7 +235,7 @@ def _flags(report: dict[str, Any]) -> list[str]:
     labels: dict[str, Any] = report["model"].get("labels") or {}
     if labels.get("overdue"):
         flags.append(
-            f"label feed gap: {labels['overdue']} transactions past the"
+            f"{LABEL_GAP_FLAG}: {labels['overdue']} transactions past the"
             f" {labels['maturity_days']}-day window without an outcome"
         )
     return flags
@@ -253,7 +260,7 @@ def build_report(
         "model": model_section(events, ref, outcomes, clock, maturity_days),
     }
     flags = _flags(report)
-    serious = ("alert", "eventual", "block precision", "error rate", "label feed gap")
+    serious = ("alert", "eventual", "block precision", ERROR_RATE_FLAG, LABEL_GAP_FLAG)
     report["flags"] = flags
     report["status"] = (
         "alert" if any(any(k in f for k in serious) for f in flags) else "warn" if flags else "ok"

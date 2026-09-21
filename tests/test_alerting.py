@@ -22,7 +22,7 @@ from fraud.monitor.remote import fetch_report, window_bounds
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = AlertConfig(
-    window_hours=24, min_rows=200, alert_on="alert", label="monitoring",
+    window_hours=24, min_rows=200, min_requests=20, alert_on="alert", label="monitoring",
     title="Monitoring alert: live service", timeout_s=180.0,
 )  # fmt: skip
 
@@ -86,6 +86,7 @@ def test_the_shipped_alerting_config_loads_and_is_consistent() -> None:
     config = load_alert_config(ROOT / "configs" / "alerting.yaml")
     assert config.alert_on in ("warn", "alert")
     assert config.window_hours > 0 and config.min_rows > 0 and config.timeout_s > 0
+    assert config.min_requests > 0
     assert config.title and config.label
 
 
@@ -111,6 +112,36 @@ def test_paging_follows_the_configured_severity(status: str, alert_on: str, pagi
     config = AlertConfig(**{**CONFIG.__dict__, "alert_on": alert_on})
     alert = decide(_report(status, ["something"] if status != "ok" else [], rows=5_000), config)
     assert alert.severity == status and alert.paging is paging
+
+
+def test_an_erroring_service_alerts_even_with_nothing_scored() -> None:
+    """A service failing every call scores nothing; it must not be read as idle."""
+    broken = _report("alert", ["error rate 100.0%"], rows=0)
+    broken["api"] = {**broken["api"], "requests": 40, "errors": 40, "error_rate": 1.0}
+    alert = decide(broken, CONFIG, source="https://demo")
+    assert alert.severity == "alert" and alert.paging is True
+    assert alert.flags == ("error rate 100.0%",)
+    assert "scored nothing" in alert.summary
+
+    # …but a couple of failed calls on an idle day still say nothing
+    quiet = _report("alert", ["error rate 100.0%"], rows=0)
+    quiet["api"] = {**quiet["api"], "requests": 2, "errors": 2, "error_rate": 1.0}
+    assert decide(quiet, CONFIG).severity == "no_data"
+
+
+def test_a_label_feed_gap_survives_the_volume_floor() -> None:
+    """Labels stopping is true however little was scored in the window."""
+    gap = _report("alert", ["label feed gap: 812 transactions past the 120-day window"], rows=10)
+    gap["api"] = {**gap["api"], "requests": 30}
+    alert = decide(gap, CONFIG)
+    assert alert.severity == "alert" and alert.paging and len(alert.flags) == 1
+
+
+def test_drift_flags_do_not_survive_the_volume_floor() -> None:
+    thin = _report("alert", ["score drift alert (PSI 0.31)", "error rate 30.0%"], rows=12)
+    thin["api"] = {**thin["api"], "requests": 30, "error_rate": 0.30}
+    alert = decide(thin, CONFIG)
+    assert alert.flags == ("error rate 30.0%",)  # the PSI over twelve rows is not evidence
 
 
 def test_an_unknown_status_is_refused_rather_than_downgraded() -> None:

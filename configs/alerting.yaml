@@ -18,6 +18,13 @@ window_hours: 24
 # quieter and blinder; lowering it invites drift flags that are sampling noise.
 min_rows: 200
 
+# Calls the window needs before its error rate is believed. The volume floor above
+# suppresses drift comparisons, which need rows; it must not suppress availability,
+# because a service erroring on every call scores nothing and would otherwise look
+# exactly like an idle one. With this many requests and an error rate over 5 %, the
+# run alerts however few predictions it holds.
+min_requests: 20
+
 # The lowest severity that notifies: `alert` or `warn`. `warn` is a single PSI
 # between 0.10 and 0.20 — common on live traffic and usually not actionable, so
 # the page is reserved for `alert` (a PSI past 0.20, a label-feed gap, an error

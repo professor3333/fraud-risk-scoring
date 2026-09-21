@@ -84,6 +84,12 @@ the difference between an alert channel an operator keeps and one they mute:
   public demo is idle for days. A PSI over forty rows measures the sample
   size, not the traffic; reporting it as drift would train the operator to
   ignore the channel. The run is still recorded, with its summary.
+- **Except for availability.** A service erroring on every call also scores
+  nothing, so the volume floor alone would report an outage as "no data". The
+  two flags that hold however few rows a window has — the error rate and a
+  label-feed gap — survive the floor and alert on their own once the window
+  holds `min_requests` (20) calls. Their prefixes are named in
+  `fraud.monitor.report`, so the two modules cannot drift apart.
 - **`warn` does not page.** A single PSI between 0.10 and 0.20 happens on
   ordinary days — `n_missing_transaction` alone does it whenever provider
   coverage shifts (`docs/monitoring.md`). `alert` means a PSI past 0.20, an

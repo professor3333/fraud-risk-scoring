@@ -39,4 +39,9 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s CMD ["/app/.venv/bin/python", "-c", \
     "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+# ONE uvicorn worker, deliberately, and no knob to change it. The review budget and the
+# per-client rate limiter live in this process — its memory and its SQLite audit trail —
+# so a second worker would charge a different budget and hand the same transaction a
+# different action (docs/model_card.md: "The features are stateless; the service is not").
+# Scaling this service means sharing that state first, not adding processes.
 CMD ["/app/.venv/bin/uvicorn", "fraud.serve.app:app", "--host", "0.0.0.0", "--port", "8000"]

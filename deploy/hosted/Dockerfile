@@ -29,4 +29,9 @@ RUN useradd --create-home --uid 10001 app \
 USER app
 
 EXPOSE 8000
+# ONE uvicorn worker, deliberately, and no knob to change it. The review budget and the
+# per-client rate limiter live in this process — its memory and its SQLite audit trail —
+# so a second worker would charge a different budget and hand the same transaction a
+# different action (docs/model_card.md: "The features are stateless; the service is not").
+# Scaling this service means sharing that state first, not adding processes.
 CMD ["/bin/sh", "-c", "exec /app/.venv/bin/uvicorn fraud.serve.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

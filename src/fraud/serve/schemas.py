@@ -250,3 +250,23 @@ class OutcomesResponse(BaseModel):
     received: int
     recorded: int  # new rows; a transaction already labelled keeps its first label
     total: int
+
+
+class MonitoringReportResponse(BaseModel):
+    """The monitoring report the service builds over its own audit trail (GET /audit/monitor).
+
+    The same object `scripts/monitor.py` writes offline: four sections plus the
+    flags a scheduled job alerts on (docs/monitoring.md, ADR 0011). The sections
+    are free-form dicts — their shape belongs to `fraud.monitor.report`, and
+    pinning it twice would only make the two drift apart — but the fields a
+    caller *acts* on (status, flags, window, the row counts) are typed here.
+    """
+
+    status: Literal["ok", "warn", "alert"]
+    flags: list[str]
+    generated_at: str
+    window: dict[str, str | None]
+    api: dict[str, Any]
+    predictions: dict[str, Any]
+    data: dict[str, Any]
+    model: dict[str, Any]

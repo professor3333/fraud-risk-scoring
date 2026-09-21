@@ -49,6 +49,7 @@ from fraud.serve.schemas import (
     ExplanationResponse,
     HealthResponse,
     ModelInfoResponse,
+    MonitoringReportResponse,
     OutcomesRequest,
     OutcomesResponse,
     Policy,
@@ -83,6 +84,7 @@ class ServingState:
     bands: Bands
     model_version: str
     artifact_sha256: str  # the served artifact's full digest; model_version carries its first 12
+    artifact_path: Path  # where it was loaded from; the monitoring reference sits next to it
     parity_rows: int
     info: dict[str, Any]
     default_review_budget: int
@@ -93,6 +95,8 @@ class ServingState:
     request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
     rate_limiter: RateLimiter | None = None
     render_client_ip: bool = False
+    label_maturity_days: int = 0  # configs/feedback.yaml; 0 = treat every outcome as final
+    monitor_max_rows: int = 100_000  # widest window GET /audit/monitor will build a report over
 
 
 CHAMPION_FILES = (
@@ -257,11 +261,20 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         if audit_path
         else None
     )
+    # The label-maturity window (ADR 0009) the monitoring endpoint ages cohorts by; the
+    # same configs/feedback.yaml scripts/monitor.py reads, absent only in a stripped image.
+    feedback_config = root / "configs" / "feedback.yaml"
+    maturity_days = (
+        int(yaml.safe_load(feedback_config.read_text())["maturity_days"])
+        if feedback_config.exists()
+        else 0
+    )
     return ServingState(
         model=model,
         bands=bands,
         model_version=f"{raw['model_version']}@{digest}",
         artifact_sha256=artifact_sha256,
+        artifact_path=model_path,
         parity_rows=parity_rows,
         info=dict(raw.get("model_info", {})),
         default_review_budget=int(raw.get("default_review_budget", 200)),
@@ -272,6 +285,8 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         request_timeout_s=float(raw.get("request_timeout_s", 60.0)),
         rate_limiter=RateLimiter(RateLimitConfig.model_validate(raw.get("rate_limits", {}))),
         render_client_ip=os.environ.get("RENDER") == "true",
+        label_maturity_days=maturity_days,
+        monitor_max_rows=int(raw.get("monitor_max_rows", 100_000)),
     )
 
 
@@ -857,6 +872,53 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         if s.audit is None:
             raise HTTPException(404, "prediction auditing is disabled on this server")
         return [AuditEvent(**e) for e in s.audit.recent(min(limit, 1000), transaction_id)]
+
+    @app.get("/audit/monitor", response_model=MonitoringReportResponse)
+    def audit_monitor(
+        request: Request, since: str | None = None, until: str | None = None
+    ) -> MonitoringReportResponse:
+        """The monitoring report over this service's own audit trail (ADR 0011).
+
+        The report is built here rather than by the scheduler because the audit
+        trail is this container's SQLite file: nothing outside can open it, and
+        shipping the rows out to compute the same numbers would move prediction
+        data for no gain. `fraud.monitor.report.build_report` is the one code
+        path, offline and online alike (G8 in spirit: no second implementation).
+        Outcomes are read as of the label feed's clock, so eventual metrics cover
+        closed cohorts only (docs/feedback.md).
+        """
+        from fraud.monitor.reference import load_reference, reference_path
+        from fraud.monitor.report import build_report
+
+        s: ServingState = request.app.state.serving
+        if s.audit is None:
+            raise HTTPException(404, "prediction auditing is disabled on this server")
+        artifact = s.artifact_path
+        if not reference_path(artifact).exists():
+            raise HTTPException(
+                404,
+                "no monitoring reference for the served artifact; freeze one with "
+                "scripts/monitor_reference.py and promote it (docs/monitoring.md)",
+            )
+        rows = s.audit.count_between("prediction_events", since, until)
+        if rows > s.monitor_max_rows:
+            raise HTTPException(
+                413,
+                f"{rows} predictions in that window exceed monitor_max_rows "
+                f"({s.monitor_max_rows}); ask for a shorter window",
+            )
+        clock = s.audit.feed_clock()
+        report = build_report(
+            s.audit.frame("requests", since, until),
+            s.audit.frame("prediction_events", since, until),
+            s.audit.frame("input_features", since, until),
+            load_reference(artifact),
+            s.audit.frame("outcomes") if clock is not None else None,
+            (since, until),
+            clock,
+            s.label_maturity_days,
+        )
+        return MonitoringReportResponse(**report)
 
     @app.post("/outcomes", response_model=OutcomesResponse)
     def post_outcomes(

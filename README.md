@@ -207,7 +207,8 @@ columns carry 76 % of split gain but are almost fully substitutable
 - Single test-window evaluation with top-*k*-per-day review metrics.
 - FastAPI service: `/health`, `/predict`, `/predict/batch` and `/predict/csv`
   returning one authoritative `action` (approve / review / block) from the
-  rank-based review policy, `/explain`, `/model-info`, `/audit/recent`; startup parity
+  rank-based review policy, `/explain`, `/model-info`, `/audit/recent`,
+  `/audit/monitor`; startup parity
   check against a frozen golden; every scored transaction, every request
   and an input snapshot persisted to a SQLite audit trail; two-tier access
   (`FRAUD_API_KEY` for scoring, `FRAUD_ADMIN_API_KEY` for `/outcomes` and
@@ -216,7 +217,10 @@ columns carry 76 % of split gain but are almost fully substitutable
   (`docs/deployment.md`).
 - Monitoring: a frozen reference per artifact and a report over any window
   of stored predictions — API rate / latency / errors, score and action
-  PSI, per-feature drift, eventual performance and calibration with labels.
+  PSI, per-feature drift, eventual performance and calibration with labels;
+  the service builds the same report over its own trail (`GET /audit/monitor`)
+  and a daily GitHub Action fetches it and raises one issue per alert episode
+  (ADR 0011).
 - Model promotion: candidate → acceptance gates (PR-AUC, recall at the
   review budget, ECE, Brier, block precision, cost per transaction, parity)
   → champion; the MLflow model registry is the ledger, `models/champion/`
@@ -243,9 +247,10 @@ matplotlib · pytest · ruff · mypy · Docker.
 ```
 configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   tuning/*.yaml, backtest.yaml, retrain.yaml, threshold.yaml,
-                  policy.yaml, serving.yaml, feedback.yaml, promotion.yaml
+                  policy.yaml, serving.yaml, feedback.yaml, promotion.yaml,
+                  alerting.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0010), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0011), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
@@ -260,7 +265,7 @@ scripts/          download_data, validate_data, eda, train, tune, param_sweep,
                   feedback, simulate_feedback, promote, subgroups, ablation,
                   feature_ladder, evaluate_test, final_report, benchmark_api,
                   release, publish_champion, split_comparison, deploy_check,
-                  make_fixture_artifact
+                  alert, make_fixture_artifact
 deploy/hosted/    Dockerfile without the weights (Render builds it; the service
                   fetches the champion from its release at startup)
 src/fraud/
@@ -271,8 +276,11 @@ src/fraud/
   evaluate/       metrics, curves, calibration, threshold, importance
   serve/          app, schemas, frames, parity (frozen-golden check), audit
                   (SQLite events, requests, input snapshots), static/
-  monitor/        drift (PSI, bins), reference (frozen 'normal'), report
+  monitor/        drift (PSI, bins), reference (frozen 'normal'), report,
+                  remote (fetch a deployed service's report), alerts (what pages)
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
+.github/          ci.yml, security.yml, deploy.yml (tag → Render), monitor.yml
+                  (daily report on the live service → issue on alert)
 Dockerfile        runtime-only image, non-root
 render.yaml       Render blueprint — the free public demo (the live deployment)
 fly.toml          Fly.io app definition — the optional paid alternative
@@ -290,7 +298,7 @@ fly.toml          Fly.io app definition — the optional paid alternative
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 153 fixture tests; no data/network required
+uv run pytest            # 179 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -437,8 +445,9 @@ latency. `GET /audit/recent?limit=50&transaction_id=…` reads the tail;
 overridden by `FRAUD_AUDIT_DB`; `null` disables it. In Docker the file lives
 on the `/app/audit` volume.
 
-`/audit/recent` and `POST /outcomes` are admin endpoints: they answer only
-to `FRAUD_ADMIN_API_KEY` and return 403 while it is unset (the public demo).
+`/audit/recent`, `/audit/monitor` and `POST /outcomes` are admin endpoints:
+they answer only to `FRAUD_ADMIN_API_KEY` and return 403 while it is unset
+(the public demo).
 
 ```bash
 export FRAUD_ADMIN_API_KEY=dev     # before starting the server
@@ -459,9 +468,24 @@ per-feature data drift, and — with matured labels — eventual PR-AUC, block
 precision, recall and calibration against the reference. Demonstrated on
 one validation day (eventual PR-AUC 0.655) and one reporting-window day
 (0.617, Brier worse) in `reports/monitoring/`.
-Monitoring runs manually through `scripts/monitor.py`; no recurring production
-job or alert delivery is deployed. This meets the Stage 1 monitoring scope.
-A scheduler and automated alerts remain future MLOps work.
+A scheduled GitHub Action (`.github/workflows/monitor.yml`, ADR 0011) closes
+the loop to the point of notification: daily it asks the live service for the
+same report over `GET /audit/monitor` — the service owns the audit trail, so
+it runs `build_report` itself and only aggregates leave it — keeps the report
+as a run artifact, and opens one labelled issue per episode when the status is
+`alert`, commenting while it lasts and closing it on the first healthy run. A
+window with fewer than 200 predictions is recorded as `no_data` and never
+alerts. Nothing retrains or promotes automatically; that decision stays with
+the operator (ADR 0010, `docs/retraining.md`). What the free demo can report is
+bounded by the free demo: its instance sleeps and its SQLite audit trail does
+not survive a restart, so the job demonstrates the mechanism, not a month of
+uninterrupted production monitoring.
+
+```bash
+FRAUD_ADMIN_API_KEY=… uv run python scripts/monitor.py \
+    --from-url https://fraud-risk-scoring-m1fp.onrender.com --window-hours 24
+uv run python scripts/alert.py reports/monitoring/<stamp>.json --source <url> --dry-run
+```
 
 **Retraining status** — the monthly lifecycle is simulated offline through
 `scripts/retrain.py`, completing the Stage 1 scope. Scheduled production
@@ -501,7 +525,8 @@ purchase was fraud.
 explanation (`/predict*`, `/explain`); unset, they are open, `/health`
 reports `auth: open`, and the dashboard needs no key. `FRAUD_ADMIN_API_KEY`
 guards the operational endpoints (`POST /outcomes` writes the delayed-label
-store, `GET /audit/recent` reads scored rows); unset, they return 403 and
+store, `GET /audit/recent` reads scored rows, `GET /audit/monitor` builds the
+monitoring report over them); unset, they return 403 and
 `/health` reports `admin: disabled`. Neither key unlocks the other's routes.
 The public demo sets neither: anyone can score, nobody can write labels or
 read the audit trail. Every guarded call is logged as one JSON line with its
@@ -650,7 +675,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 153 fixture tests, no data, no network, ~20 s
+uv run pytest              # 179 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

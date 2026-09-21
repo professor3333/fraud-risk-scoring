@@ -1,0 +1,36 @@
+# Scheduled monitoring and alerting (ADR 0011, docs/monitoring.md).
+#
+# Detection thresholds are NOT here: PSI 0.10 / 0.20, eventual PR-AUC −0.03,
+# block precision −0.05 and error rate 5 % belong to the report itself
+# (src/fraud/monitor/report.py), so the same numbers hold whether the report is
+# built offline or by the service. What lives here is the orchestration — when
+# the job looks, when it believes what it sees, and what is worth a notification.
+
+# Trailing window the scheduled job asks for, ending at the run time. A day is
+# the shortest window in which the demo accumulates enough rows to compare
+# distributions, and it matches the daily cron.
+window_hours: 24
+
+# Predictions the window must contain before its numbers are judged. Below this
+# the run is recorded as `no_data` and never alerts: a PSI computed from a
+# handful of rows says more about the sample size than about the traffic, and
+# the public demo is often idle for a day at a time. Raising this makes the job
+# quieter and blinder; lowering it invites drift flags that are sampling noise.
+min_rows: 200
+
+# The lowest severity that notifies: `alert` or `warn`. `warn` is a single PSI
+# between 0.10 and 0.20 — common on live traffic and usually not actionable, so
+# the page is reserved for `alert` (a PSI past 0.20, a label-feed gap, an error
+# rate over 5 %, or an eventual metric below its reference).
+alert_on: alert
+
+# Seconds the scheduler waits for the service to build its report. The free host
+# is 0.1 CPU and may be cold; a day of demo traffic still builds in seconds.
+timeout_s: 180
+
+issue:
+  # One open issue per episode. The title is the identity: a run finding the
+  # same title open comments instead of opening a second issue, and the run that
+  # finds the service healthy again closes it.
+  title: "Monitoring alert: live service"
+  label: monitoring

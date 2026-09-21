@@ -14,7 +14,10 @@ EPS = 1e-6
 
 def psi(reference: dict[str, float], current: dict[str, float]) -> float:
     """Population stability index between two share dictionaries (same keys expected)."""
-    keys = set(reference) | set(current)
+    # Sorted, not set order: the sum is over floats, and Python randomises string hashing
+    # per process, so an unordered sum makes the same window differ in the last bit between
+    # the service and an offline run. The scheduled monitor compares the two (ADR 0011).
+    keys = sorted(set(reference) | set(current))
     total = 0.0
     for k in keys:
         r = max(float(reference.get(k, 0.0)), EPS)

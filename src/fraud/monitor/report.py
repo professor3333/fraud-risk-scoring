@@ -34,7 +34,16 @@ def _window_seconds(started: pd.Series) -> float:
     return max(float((t.max() - t.min()).total_seconds()), 1.0)
 
 
+#: The admin surface (/audit/*, /outcomes) is plumbing: the monitor's own calls and the
+#: label feed's. They are recorded like everything else, but they are not the service
+#: being monitored — counting them would let a monitoring run that got itself refused
+#: raise the error rate it then alerts on.
+ADMIN_ENDPOINTS = ("/audit", "/outcomes")
+
+
 def api_section(requests: pd.DataFrame) -> dict[str, Any]:
+    if not requests.empty:
+        requests = requests[~requests["endpoint"].str.startswith(ADMIN_ENDPOINTS)]
     if requests.empty:
         return {"requests": 0}
     seconds = _window_seconds(requests["started_at"])

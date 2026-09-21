@@ -1,10 +1,13 @@
 # Monitoring
 
-**Deployment status:** monitoring runs manually through `scripts/monitor.py`.
-There is no deployed recurring monitoring job or alert delivery. Threshold
-breaches appear in the generated report; they do not send notifications.
-The Stage 1 monitoring scope is complete. A scheduler and automated alerts
-remain future MLOps work.
+**Deployment status:** a scheduled GitHub Action reports on the live service
+every day and raises a labelled issue when the report says `alert` (ADR 0011,
+→ Scheduled monitoring). `scripts/monitor.py` still runs by hand for any
+window, local or remote. Nothing here retrains or promotes a model; the
+operator decides that (`docs/retraining.md`, ADR 0010). What the free demo can
+report is bounded by the free demo: its instance sleeps and its SQLite audit
+trail does not survive a restart, so the scheduled job demonstrates the
+mechanism rather than a month of uninterrupted production monitoring.
 
 The offline analysis showed drift (validation PR-AUC 0.637 → reporting
 window 0.561; calibration and block precision degrade with time). The
@@ -25,6 +28,9 @@ scripts/monitor.py  ──  reference (frozen from train + validation)  ──�
                           + outcomes as of the feed clock  →  matured / pending / overdue,
                             eventual PR-AUC / precision / calibration on closed cohorts,
                             early signal on open cohorts (docs/feedback.md)
+                     │
+                     ▼
+        ─►  status ok / warn / alert  ──►  scripts/alert.py  ──►  one GitHub issue per episode
 ```
 
 ## What is monitored
@@ -109,7 +115,65 @@ Without `--labels` the report reads the `outcomes` table as of the label
 feed's clock and treats every label as delayed (`docs/feedback.md`); the
 two demonstration days above were produced with a complete label file,
 which is the `--labels` path. Reports land in `reports/monitoring/<stamp>.md`
-and `.json`. A future MLOps stage can schedule daily reports and deliver
-notifications for threshold breaches. Eventual metrics update when the report
-is rerun with newly matured labels; no background job currently does this.
-Monitoring does not automatically trigger `scripts/retrain.py`.
+and `.json`. Eventual metrics update when the report is rerun with newly
+matured labels. Monitoring never triggers `scripts/retrain.py`: a drift flag
+is not evidence that a retrained model would be better (`docs/retraining.md`),
+and a promotion has its own gates (ADR 0010).
+
+## Scheduled monitoring
+
+ADR 0011. The audit trail is a SQLite file inside the service's container, so
+the report is built **where the data is** and the scheduler fetches it:
+
+```
+07:10 UTC, .github/workflows/monitor.yml
+  → GET /audit/monitor?since=…&until=…        (admin key; the service runs build_report)
+  → reports/monitoring/live.{json,md}          uploaded as a run artifact, kept 90 days
+  → scripts/alert.py live.json                 opens / comments on / closes one issue
+```
+
+The endpoint is the same `fraud.monitor.report.build_report` as the offline
+script — one code path, and a test asserts the service's report and an offline
+run over the same rows are equal. It is admin-only (`FRAUD_ADMIN_API_KEY`,
+refused outright while unset, like `/outcomes`), it counts a window before
+loading it (`monitor_max_rows`, default 100,000 → 413), and no prediction rows
+leave the service: the report is aggregates.
+
+```bash
+# the same report, fetched from a running service
+FRAUD_ADMIN_API_KEY=… uv run python scripts/monitor.py \
+    --from-url https://fraud-risk-scoring-m1fp.onrender.com --window-hours 24
+
+# what it would tell the operator, without touching an issue
+uv run python scripts/alert.py reports/monitoring/<stamp>.json --source <url> --dry-run
+```
+
+### When it alerts
+
+`configs/alerting.yaml` holds the orchestration; the detection thresholds stay
+in the report (§ *What is monitored*), so an offline run and the service agree.
+
+| rule | value | why |
+|---|---|---|
+| `window_hours` | 24 | matches the daily cron |
+| `min_rows` | 200 | below this the window is `no_data` and never alerts — a PSI over forty rows measures the sample size, not the traffic, and the demo is idle for days at a time |
+| `alert_on` | `alert` | a lone `warn` (one PSI in 0.10–0.20) is an ordinary day; `alert` means PSI ≥ 0.20, error rate > 5 %, a label-feed gap, or an eventual metric below its reference |
+| `issue.title` / `issue.label` | *Monitoring alert: live service* / `monitoring` | the title is the identity: one issue per **episode**, commented on while it lasts and closed on the first healthy run |
+
+The API section of the report ignores `/audit/*` and `/outcomes` — those are
+the monitor's own calls and the label feed's, and counting them let a refused
+monitoring request raise the error rate the next one alerted on.
+
+### Setting it up
+
+The job needs two things, and does nothing (exit 0) without them, so a fork or
+a retired demo is not an incident:
+
+| where | name | value |
+|---|---|---|
+| GitHub → repository variables | `RENDER_URL` | the service's base URL (already set for `deploy.yml`) |
+| GitHub → repository secrets | `FRAUD_ADMIN_API_KEY` | a random string |
+| Render → environment | `FRAUD_ADMIN_API_KEY` | the **same** string; this also enables `/outcomes` and `/audit/*` on the live service |
+
+Run it by hand from the Actions tab (`workflow_dispatch`) with a window and a
+dry-run box before trusting the schedule.

@@ -1,0 +1,114 @@
+# Scheduled monitoring of the deployed service (ADR 0011, docs/monitoring.md).
+#
+#   cron  →  GET /audit/monitor on the live service (it owns the audit trail, so it
+#            builds the report: the same fraud.monitor.report code path as offline)
+#         →  reports/monitoring/*.json|md uploaded as a run artifact
+#         →  scripts/alert.py opens, comments on or closes one labelled issue
+#
+# Deliberately separate from ci.yml and security.yml: this job says nothing about the
+# code in the repository, only about the service that is running. It is the one workflow
+# that fails for reasons no commit caused, so it must never gate a merge or a release.
+#
+# Needs: vars.RENDER_URL (the service) and secrets.FRAUD_ADMIN_API_KEY (the same value
+# the service has in FRAUD_ADMIN_API_KEY; /audit/* is refused without it and disabled
+# while the service has none). Without both the job exits 0 having done nothing —
+# a fork, or a demo taken down, is not an incident.
+name: monitor
+
+on:
+  schedule:
+    - cron: "10 7 * * *"  # daily, after a full night of whatever traffic the demo saw
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: "Trailing window to report on (default: configs/alerting.yaml)"
+        required: false
+        type: string
+      dry_run:
+        description: "Decide and print, but touch no issue"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write  # the alert is a labelled issue, opened, commented on and closed
+
+concurrency:
+  group: monitor  # never two reports racing for the same issue
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Report on the live service and alert on a breach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Check the job is configured
+        id: config
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_URL:-}" ] || [ -z "${FRAUD_ADMIN_API_KEY:-}" ]; then
+            echo "no RENDER_URL variable or FRAUD_ADMIN_API_KEY secret: nothing to monitor."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+          FRAUD_ADMIN_API_KEY: ${{ secrets.FRAUD_ADMIN_API_KEY }}
+
+      - name: Install
+        if: steps.config.outputs.ready == 'true'
+        run: uv sync --frozen
+
+      - name: Window to report on
+        id: window
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          hours="${WINDOW_HOURS:-}"
+          if [ -z "$hours" ]; then
+            hours=$(uv run python -c \
+              "import yaml; print(yaml.safe_load(open('configs/alerting.yaml'))['window_hours'])")
+          fi
+          echo "reporting on the last $hours hours"
+          echo "hours=$hours" >> "$GITHUB_OUTPUT"
+        env:
+          WINDOW_HOURS: ${{ inputs.window_hours }}
+
+      - name: Fetch the report from the service
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          uv run python scripts/monitor.py \
+            --from-url "$RENDER_URL" --window-hours "$HOURS" --name live
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+          FRAUD_ADMIN_API_KEY: ${{ secrets.FRAUD_ADMIN_API_KEY }}
+          HOURS: ${{ steps.window.outputs.hours }}
+
+      - name: Keep the report
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-report
+          path: reports/monitoring/live.*
+          retention-days: 90
+
+      - name: Alert the operator
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          uv run python scripts/alert.py reports/monitoring/live.json \
+            --source "$RENDER_URL" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" ${DRY_RUN:+--dry-run}
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}

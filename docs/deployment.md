@@ -218,6 +218,7 @@ the existing champion verification still apply.
 | time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
 | request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |
 | structured logs | logger `fraud.serve.requests` | one JSON line per guarded call — `ts, request_id, method, path, status, latency_ms, rows, client` — success, 401, 422, 429 and 504 alike; Fly ships stdout to `flyctl logs` |
+| metrics endpoint | none | there is no `/metrics`, no collector and no dashboard. The signals one would scrape (latency p50 / p95 / max, error rate, throughput per endpoint) are in the `requests` table and the monitoring report instead; the reasons that stack is not wired are in `docs/monitoring.md` → *Why there is no metrics collector, dashboard or tracing stack* |
 | proxy concurrency (Fly only) | `fly.toml` `[http_service.concurrency]` soft 20 / hard 50 | Fly's proxy queues then refuses beyond the hard limit per machine; the benchmark (README → Performance) is why 20 is the soft limit |
 
 Application rate limits apply on Render, Fly and local runs, through

@@ -1,6 +1,12 @@
 # ADR 0004 — Entity reconstruction and history features
 
-**Date:** 2026-09-14 · **Status:** accepted
+**Date:** 2026-09-14 · **Status:** accepted as the legitimate way to build
+these features — then **built, measured and rejected at the capacity of the
+day** (E007, E017), and in **E025 (2026-09-21) found to pay at the shipped
+model's capacity**, on new cards rather than established ones. They are still
+**not in the served model**, which is row-local, and nothing is promoted. Read
+*Outcome* below before reading the rest as a description of what this system
+does.
 
 ## Context
 
@@ -84,3 +90,86 @@ dropped from the served model rather than approximated.
   test rows have long ones. That is the true production situation (a deployed
   model always sees more history than it was trained on) and is *not* a
   leak, but it is a shift worth watching in the ablation.
+
+## Outcome (added 2026-09-21)
+
+The decision above was about *legitimacy*: option 4 is the only construction
+of entity history that survives G2 and G3, and that judgement still stands.
+It says nothing about whether the features are worth having, and the
+consequences section's "expected to be the largest single step in the
+project" turned out to be wrong. Recorded here because this file is the one
+a reader reaches first, and until now it read as a description of the
+shipped system.
+
+**What was measured.** Two entity definitions, eight features, four rounds
+of experiments:
+
+| experiment | entity | features | validation Δ | verdict |
+|---|---|---|---:|---|
+| E007 | `(card1, addr1, day − D1)` | the five above | −0.002 seed-paired | reject |
+| E017 | `card1 + addr1` (no `D1`) | + expanding std / max | −0.001 | reject |
+| F7 on the ladder | as E007 | five, on top of F0–F6 | −0.006 (462 cols) | not shipped |
+| E025 | `card1 + addr1` | eight, at E022 capacity | **+0.0066** aggregate; **+0.043** on `W` ∩ `D1 < 14`; −0.012 on `W` ∩ `D1 >= 14` | over the rule — not promoted, see below |
+
+**Why.** The provider's `C*` columns are counts of entities linked to the
+card and `D*` are time deltas — the provider had already summarised each
+card's past at authorization time, presumably by this same route. Once the
+history is restricted to what a live system can compute (label-free
+aggregates over strictly earlier rows), there is nothing left to add **for a
+card the provider has had time to summarise** — E025 below is the qualifier
+that sentence needed.
+`docs/ablation.md` §2 reaches the same conclusion from the other direction:
+`C` and `card` rank high on both permutation and ablation, and they are
+irreplaceable. The Kaggle gains attributed to "uid" features came from
+aggregates over the whole dataset — future rows, and through label
+propagation the label itself — evaluated on a test set sharing those
+entities. None of that exists at authorization. This is the project's most
+important negative result.
+
+**What this means for the serving contract.** It is not in force, because
+the features are not served. Every model input is in the request, the
+score of a transaction depends on nothing but its own row, and the startup
+parity check covers exactly that (`docs/model_card.md`). The contract above
+stays written down as the bar any future history feature has to clear
+first — a feature store plus incremental-vs-batch parity, or the feature is
+dropped rather than approximated.
+
+**What stays in the repo.** `src/fraud/features/history.py`,
+`configs/features/v3_history.yaml`, and the G3 synthetic-frame test that
+proves a later row cannot change an earlier row's features. They are the
+reference implementation for a legitimate variant, not dead code awaiting
+deletion.
+
+**The question this left open, and what answering it found (E025,
+2026-09-21).** The aggregate was flat; the slice, it turned out, was not —
+but neither was it the slice this file expected. E025 re-ran the features at
+E022's capacity on product `W` with `D1 >= 14`, and:
+
+- **The slice chosen was the strong one.** `W` ∩ `D1 >= 14` scores 0.798,
+  as well as the identity-present segment. Product `W`'s 0.457
+  (`docs/subgroups.md`) lives entirely in cards first seen under a fortnight
+  ago, which score **0.211**. `docs/error_analysis.md` pointed at
+  established-account takeover because it reasoned from *high-confidence*
+  false negatives, and those are established by construction: a stolen card
+  with a long clean history produces a confident wrong answer, a new card
+  produces an uncertain one that never enters that set.
+- **The features help on the opposite population.** +0.043 seed-paired on
+  `W` ∩ `D1 < 14`, every seed — the largest feature effect in this project —
+  and −0.012 on the established slice. Velocity on a card with almost no
+  history is what `C*` / `D*` cannot summarise for a card they have barely
+  seen; for an established card they already do.
+- **E007 and E017 are bounded, not overturned.** Both measured at E016's
+  capacity (depth 8, 800 trees). At E022's (depth 12, 1,600 trees) the same
+  family is **+0.0066** on the whole validation window — over the +0.005
+  rule. The null was true where it was measured. Nothing re-ran the feature
+  question after capacity changed, which is how this sat between two
+  experiments for four months.
+
+So the "rejected on evidence" verdict above is correct *for the shipped
+recipe at the time it was measured*, and is now bounded rather than general.
+Nothing is promoted: the aggregate gain is just over the rule against a seed
+sd of 0.002, ADR 0010's gates and the ADR 0008 backtests have not run, the
+test window is untouched, and the **serving contract in this file becomes
+binding the moment these features enter a served model** — a history store
+and incremental-vs-batch parity, or they are dropped rather than
+approximated. Full result and caveats: `docs/experiments.md` → E025.

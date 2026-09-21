@@ -171,8 +171,20 @@ scripts/release.py vX.Y.Z --full-checks   (the release machine)
   release  gh release create vX.Y.Z --generate-notes
 ```
 
+A **model** change does not need a release tag. `deploy-champion.yml` runs when
+`configs/serving.yaml` changes on `main` (ADR 0012): it reads `champion_sha256`,
+checks that `champion-<sha>` exists, points `FRAUD_CHAMPION_URL` at it, redeploys
+the current commit so the service fetches it, and then requires the live artifact
+to be that digest. It shares the `render-deploy` concurrency group with the
+release workflow, so a release and a model change never race for the host, and it
+runs in the `production` environment — add required reviewers there to hold every
+model change for approval, or leave it unprotected to deploy on merge.
+
 The weights are git-ignored and are not in any image a public runner
-builds. On the Render leg the host builds an image without them and the
+builds. (They are *fitted* on one when the retraining workflow runs, ADR 0012;
+what protects the artifact is the digest in its release tag, which the service
+pins the download against before it deserializes anything, and the golden it
+must reproduce — never the runner.) On the Render leg the host builds an image without them and the
 service fetches the champion from its GitHub release at startup;
 on the Fly leg the runner deploys an image built where the champion is.
 The release job waits for checks and both deployment legs. Checks must pass;

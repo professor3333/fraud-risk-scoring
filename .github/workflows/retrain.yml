@@ -1,0 +1,204 @@
+# Scheduled retraining: decide → retrain → gate → promote → publish → open the policy PR.
+# ADR 0012, docs/retraining.md.
+#
+#   label feed clock (+ the live monitor's report, when the demo is configured)
+#     → scripts/retrain_cycle.py: is there a month of matured labels the champion
+#       has not seen? then fit a challenger on them, score it AND the serving
+#       champion on the month neither was fit on, run ADR 0010's gates plus a margin
+#     → promote: models/champion/ replaced, MLflow registry alias moved
+#     → publish: one immutable champion-<sha12> release (scripts/publish_champion.py)
+#     → open a pull request carrying the policy edit the new champion implies
+#
+# It stops at the pull request on purpose. The block and review bands decide what
+# happens to a customer's transaction, the service takes them from configs/serving.yaml
+# rather than from a fetched manifest (docs/security.md), and a human merging that diff
+# is the approval. deploy-champion.yml then points the host at the reviewed pairing.
+#
+# Needs: secrets.KAGGLE_USERNAME / KAGGLE_KEY (the training data is not in the
+# repository). Without them the job exits 0 having done nothing.
+name: retrain
+
+on:
+  schedule:
+    - cron: "40 3 1 * *"  # 03:40 UTC on the 1st: monthly, the step the cycle policy uses
+  workflow_dispatch:
+    inputs:
+      as_of_day:
+        description: "Calendar day of the cycle (default: the label feed's clock)"
+        required: false
+        type: string
+      label_maturity_days:
+        description: "Override configs/retrain.yaml cycle.label_maturity_days"
+        required: false
+        type: string
+      force:
+        description: "Run even if the trigger says wait"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "Train, score and gate; promote nothing, publish nothing"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write        # the champion release, and the branch the PR is opened from
+  pull-requests: write
+
+concurrency:
+  group: retrain
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    name: One retraining cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # the production recipe is 1,600 trees at depth 12, fitted three times
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Check the job is configured
+        id: config
+        run: |
+          set -euo pipefail
+          if [ -z "${KAGGLE_KEY:-}" ] || [ -z "${KAGGLE_USERNAME:-}" ]; then
+            echo "no Kaggle credentials: the training data cannot be fetched, nothing to do."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+      - name: Install
+        if: steps.config.outputs.ready == 'true'
+        run: uv sync --frozen
+
+      - name: Fetch the champion this repository has reviewed
+        # The incumbent must be the artifact the served policy belongs to, not "the newest
+        # release": configs/serving.yaml names it, and the cycle compares against that one.
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          sha=$(uv run python -c "import yaml;print(yaml.safe_load(open('configs/serving.yaml')).get('champion_sha256',''))")
+          if [ -z "$sha" ]; then
+            echo "configs/serving.yaml names no champion_sha256; the cycle will bootstrap." >&2
+            exit 0
+          fi
+          mkdir -p models/champion
+          gh release download "champion-$sha" --dir models/champion --clobber
+          echo "champion-$sha downloaded"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Fetch the training data
+        if: steps.config.outputs.ready == 'true'
+        run: uv run python scripts/download_data.py
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+      - name: Ask the live service how the champion is doing
+        # Best effort: eventual PR-AUC below its reference can bring a cycle forward
+        # (docs/monitoring.md). A demo that is asleep, unconfigured or idle just means
+        # the trigger decides on the calendar alone.
+        if: steps.config.outputs.ready == 'true' && vars.RENDER_URL != ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          uv run python scripts/monitor.py --from-url "$RENDER_URL" --window-hours 720 --name pre-retrain
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+          FRAUD_ADMIN_API_KEY: ${{ secrets.FRAUD_ADMIN_API_KEY }}
+
+      - name: Run the cycle
+        id: cycle
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          # Built with if/then, not `[ ... ] && ...`: under `set -e` a false test in the
+          # last position would end the step with a success that never ran the cycle.
+          args=""
+          if [ -n "${AS_OF_DAY:-}" ]; then args="$args --as-of-day $AS_OF_DAY"; fi
+          if [ -n "${MATURITY:-}" ]; then args="$args --label-maturity-days $MATURITY"; fi
+          if [ -n "${FORCE:-}" ]; then args="$args --force"; fi
+          if [ -n "${DRY_RUN:-}" ]; then args="$args --dry-run"; fi
+          if [ -f reports/monitoring/pre-retrain.json ]; then
+            args="$args --monitor-report reports/monitoring/pre-retrain.json"
+          fi
+          # The script writes promoted / trigger / report_md / champion_sha to
+          # $GITHUB_OUTPUT itself, so nothing here has to guess from the file system.
+          uv run python scripts/retrain_cycle.py $args | tee cycle.log
+          { echo '```'; cat cycle.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          AS_OF_DAY: ${{ inputs.as_of_day }}
+          MATURITY: ${{ inputs.label_maturity_days }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+
+      - name: Keep the cycle's reports
+        if: steps.config.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrain-cycle
+          path: |
+            reports/retrain/cycles/
+            reports/monitoring/pre-retrain.*
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Publish the promoted champion
+        # One immutable release per champion; its tag carries the digest the service
+        # pins the download against before it deserializes anything (docs/deployment.md).
+        if: steps.cycle.outputs.promoted == 'true'
+        run: uv run python scripts/publish_champion.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Check the patched config before proposing it
+        # A pull request opened with GITHUB_TOKEN does not start other workflows, so
+        # ci.yml will not run on this branch — it runs after the merge. The checks that
+        # the edit could break are cheap, so they run here instead of nowhere.
+        if: steps.cycle.outputs.promoted == 'true'
+        run: |
+          set -euo pipefail
+          uv run ruff check .
+          uv run python -c "import yaml;yaml.safe_load(open('configs/serving.yaml'))"
+          uv run pytest -q
+
+      - name: Open the policy pull request
+        if: steps.cycle.outputs.promoted == 'true'
+        run: |
+          set -euo pipefail
+          sha="${{ steps.cycle.outputs.champion_sha }}"
+          branch="retrain/champion-$sha"
+          git config user.name "${GIT_AUTHOR}"
+          git config user.email "${GIT_EMAIL}"
+          git switch -c "$branch"
+          git add configs/serving.yaml reports/retrain/cycles/
+          # printf arguments, not a heredoc: a heredoc inside this block scalar would
+          # carry the YAML indentation into the commit message.
+          body=$(printf '%s\n' \
+            "scripts/retrain_cycle.py promoted a challenger that cleared every ADR 0010" \
+            "gate and the cycle margin against the serving champion, on a month neither" \
+            "model was fitted on. The artifact is published as champion-$sha." \
+            "" \
+            "This carries the half a promotion may not decide on its own: the policy" \
+            "bands the new champion re-derived, and the digest they belong to. Merging" \
+            "it lets deploy-champion.yml point the host at this pairing." \
+            "" \
+            "The cycle's report is in reports/retrain/cycles/.")
+          git commit -m "Serve the champion retrained on $(date -u +%Y-%m-%d)" -m "$body"
+          git push -u origin "$branch"
+          gh pr create --title "Serve the retrained champion ($sha)" \
+            --body-file "${{ steps.cycle.outputs.report_md }}" \
+            --base main --head "$branch"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_AUTHOR: ${{ vars.GIT_AUTHOR_NAME || 'Niroj33' }}
+          GIT_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL || '86530493+professor3333@users.noreply.github.com' }}

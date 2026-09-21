@@ -88,7 +88,8 @@ uv run python scripts/promote.py --run-name <run>               # promote if eve
 uv run python scripts/publish_champion.py                       # champion-<sha12> release
 #   → then set FRAUD_CHAMPION_URL on the host to that release (see below)
 uv run python scripts/release.py vX.Y.Z --full-checks           # tag → deploy → verify
-uv run python scripts/promote.py --run-name <previous>          # revert = promote the previous champion
+uv run python scripts/promote.py --run-name <previous>          # revert the registry + champion dir
+#   → and revert the configs/serving.yaml commit to revert what is SERVED (below)
 ```
 
 `reports/promotion/<run>.json` has every evaluation; `mlflow ui` shows the
@@ -173,3 +174,25 @@ host is set before the deploy and these remain the check that it worked.
   forward.
 - No automatic rollback; no artifact bytes in the registry (it records the
   path and sha; the file lives in `models/`).
+
+**What a rollback actually is, since ADR 0012.** Two halves, and only the
+first is `promote.py`:
+
+| what | how |
+|---|---|
+| the registry and `models/champion/` | `scripts/promote.py --run-name <previous>` — it re-runs the gates, so a revert is as checked as a promotion |
+| what the service serves | `git revert` the `configs/serving.yaml` commit. That restores the previous bands *and* `champion_sha256`; `deploy-champion.yml` fires on the change, points the host back at the previous `champion-<sha12>` release, and fails unless the live service reports that exact digest |
+
+Every champion keeps its own immutable release, so the artifact to roll back
+to is always still there, and the rollback is a reviewed diff that verifies
+itself — which is most of what "automatic rollback" is usually bought for.
+
+**Why automating it further is not the obvious next step.** An automatic
+rollback needs a regression signal, and the only signal here that measures
+*quality* is eventual PR-AUC, which waits for labels to mature (120 days,
+ADR 0009). The fast signals — score PSI, action shares, error rate — say the
+inputs moved, not that the model got worse. A control loop with a four-month
+lag on its input is not a control loop. The piece that would pay here is the
+one usually treated as optional: **shadow scoring** a challenger against live
+traffic, which gives score-distribution and action-agreement differences
+within a day and needs no labels at all. Neither is built (ADR 0012).

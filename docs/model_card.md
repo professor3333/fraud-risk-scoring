@@ -209,7 +209,11 @@ on E022 with the same profile.
   same batch, and replaying a day reproduces its actions only in the
   original order; with auditing disabled the budget is per request and the
   memory is gone. The audit trail is also what an investigation, the drift
-  monitor and the feedback loop read.
+  monitor and the feedback loop read. The deployment files therefore pin the
+  service to one process and one instance, and `docs/deployment.md` records
+  what lifting that would take — shared state is the smaller half of it, since
+  correct budget accounting needs the capacity *reserved* transactionally, not
+  read and then spent.
 
 ## Reproduce
 

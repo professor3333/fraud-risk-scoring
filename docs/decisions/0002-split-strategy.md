@@ -126,3 +126,17 @@ Going forward: any further candidate is reported on this window with the
 caveat above, or — cleaner — a validation protocol with a later horizon is
 adopted first (PROGRESS.md follow-up #1) so that the reporting window can
 be re-frozen for a genuinely single final look.
+
+**Amended 2026-09-21.** No split of this dataset can restore a blind window:
+all 183 labelled days have now been seen, and manufacturing another "test"
+month from them would look like evidence while being none. What restores
+honest out-of-sample evaluation is not a split but a *procedure*, and ADR
+0012's retraining cycle is it — each cycle fits a challenger on days ≤
+`train_end` and judges it, and the serving champion, on `train_end+1 …
+mature_through`: a window nothing consulted before the fit, by construction
+rather than by discipline. The monitor's eventual metrics do the same on
+live traffic once labels mature (ADR 0009, ADR 0011). The caveat belongs in
+the same breath: on IEEE-CIS those months are produced by advancing a clock
+over data already seen, so what is genuinely blind there is the procedure,
+not the data. Against a real stream it would be both — which is the argument
+for the pipeline, not for another split.

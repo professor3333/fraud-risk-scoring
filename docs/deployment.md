@@ -253,6 +253,16 @@ this service scale horizontally means sharing that state first, and sharing it
 correctly means *reserving* budget transactionally rather than reading a count and
 then deciding; durable storage alone removes the amnesia but not that race.
 
+The shortlist, if that day comes, and they are not interchangeable: a Postgres
+transaction (`SELECT … FOR UPDATE`) makes the reservation atomic at the cost of a
+round trip on every scored batch; a Redis counter is faster but splits the count
+from the record of *which* transactions were reviewed, so the two need
+reconciling against the audit trail; a central decision service takes the policy
+out of the scoring path entirely, which is the cleanest and the most
+infrastructure. The same applies, less seriously, to the rate limiter: replicas
+there degrade a protection (N replicas, N times the limit) rather than change a
+decision about a customer's transaction, so it ranks below the budget.
+
 On Render (`RENDER=true`, supplied by the platform), the client key comes from
 `CF-Connecting-IP`, which Render documents as overwritten by its Cloudflare edge.
 See [Render's client-IP guidance](https://render.com/articles/host-pocketbase-on-render#making-pocketbase-see-the-real-client-ip).

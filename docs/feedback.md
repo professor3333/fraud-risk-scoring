@@ -180,3 +180,22 @@ What is deliberately not modelled (ADR 0009): label revision after the
 window, per-product maturity, and the account-level propagation of the
 label (a reported account's later transactions become positives at the
 account's report time, not their own).
+
+**Revision is the one of those three that the storage layer, not just the
+simulation, would have to change.** `AuditLog.record_outcomes` writes with
+`INSERT OR IGNORE`: the first label for a transaction wins and a redelivery
+is a no-op, which is exactly right for a feed replaying fixed historical
+labels, and exactly wrong for a real one. Chargebacks get reversed,
+investigations get overturned, friendly fraud gets reclassified — and a
+corrected outcome arrives looking identical to a duplicate, so it would be
+dropped in silence and every eventual metric computed afterwards would be
+computed from the superseded label.
+
+Fixing it is not an integration project: make `outcomes` append-only with a
+revision chain, and decide what the monitor reads. That decision is the
+interesting half, because "what is true now" and "what did we know when we
+retrained" stop being the same query — the first is latest-wins, the second
+is as-of, and a retraining cycle's honesty depends on the second. The
+endpoint's `source` field already carries which system said so (chargeback
+feed, investigation, analyst), so a multi-source production feed needs no
+schema change; a revisable one does.

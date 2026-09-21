@@ -19,5 +19,9 @@ services:
       # it is deserialized; an untagged URL needs FRAUD_CHAMPION_SHA256 instead.
       - key: FRAUD_CHAMPION_URL       # https://github.com/<owner>/<repo>/releases/download/champion-<sha12>
         sync: false
-      - key: UVICORN_WORKERS
-        value: "1"
+      # No worker-count variable, deliberately. The service must run as ONE process: the
+      # review budget and the rate limiter both live in that process's memory and its SQLite
+      # audit trail, so two workers would hand the same transaction different actions
+      # (docs/model_card.md, "The features are stateless; the service is not"). A knob that
+      # appears to control worker count would invite raising it; the Dockerfiles start a
+      # single worker and say why.

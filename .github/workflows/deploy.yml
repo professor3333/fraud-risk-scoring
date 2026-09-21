@@ -72,25 +72,34 @@ jobs:
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/champion-$CHAMPION_SHA"
           api="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
           # One key at a time. The bulk PUT /env-vars replaces the whole list and would
-          # delete every variable not restated, UVICORN_WORKERS included.
+          # delete every variable not restated.
+          curl -sf "$api" -H "Authorization: Bearer $RENDER_API_KEY" > before.json
           curl -sf -X PUT "$api/FRAUD_CHAMPION_URL" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H 'content-type: application/json' \
             -d "$(python3 -c 'import json,sys;print(json.dumps({"value": sys.argv[1]}))' "$url")" \
             >/dev/null
-          # Read it back: confirm the value landed and that nothing else was dropped.
-          curl -sf "$api" -H "Authorization: Bearer $RENDER_API_KEY" > vars.json
+          # Read it back: the value landed, and every other key came through untouched.
+          # Comparing the whole key set beats naming one variable as a canary — that only
+          # detects a wholesale replacement while that particular variable still exists.
+          curl -sf "$api" -H "Authorization: Bearer $RENDER_API_KEY" > after.json
           python3 - "$url" <<'PY'
           import json, sys
           want = sys.argv[1]
-          got = {e["envVar"]["key"]: e["envVar"]["value"] for e in json.load(open("vars.json"))}
-          if got.get("FRAUD_CHAMPION_URL") != want:
-              sys.exit(f"FRAUD_CHAMPION_URL is {got.get('FRAUD_CHAMPION_URL')!r}, wanted {want!r}")
-          if "UVICORN_WORKERS" not in got:
-              sys.exit("UVICORN_WORKERS is gone; the write replaced the whole list")
-          print(f"host now points at champion-{want.rsplit('-', 1)[1]}; {len(got)} vars intact")
+          def entries(path):
+              return {e["envVar"]["key"]: e["envVar"]["value"] for e in json.load(open(path))}
+          before, after = entries("before.json"), entries("after.json")
+          if after.get("FRAUD_CHAMPION_URL") != want:
+              sys.exit(f"FRAUD_CHAMPION_URL is {after.get('FRAUD_CHAMPION_URL')!r}, wanted {want!r}")
+          lost = sorted(set(before) - set(after))
+          if lost:
+              sys.exit(f"the write dropped {lost}: it replaced the whole list")
+          changed = [k for k, v in after.items() if k != "FRAUD_CHAMPION_URL" and before.get(k) != v]
+          if changed:
+              sys.exit(f"the write changed {sorted(changed)} as well")
+          print(f"host now points at champion-{want.rsplit('-', 1)[1]}; {len(after)} vars intact")
           PY
-          rm -f vars.json
+          rm -f before.json after.json
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}

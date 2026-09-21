@@ -13,6 +13,9 @@ primary_region = "sin"
   auto_stop_machines = "stop"     # scale to zero when idle (free-tier friendly)
   auto_start_machines = true
   min_machines_running = 0
+  # Keep the machine count at 1 (`fly scale count 1`). Two machines is the same problem
+  # as two workers: each would keep its own review budget and audit trail, so identical
+  # rows could be reviewed by one and approved by the other (docs/model_card.md).
 
   [http_service.concurrency]
     type = "requests"

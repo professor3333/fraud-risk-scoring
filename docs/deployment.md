@@ -243,6 +243,16 @@ Limits reset on restart and are **per process**: keep one worker and one instanc
 on this demo. Clients sharing an IP share a quota; this is modest abuse protection,
 not a distributed denial-of-service defense or a concurrency cap.
 
+One process is a **correctness** requirement, not only a rate-limiting one, and the
+deployment files say so where they start the service: the review budget is charged
+against this process's SQLite audit trail, so a second worker or a second instance
+would hand the same transaction a different action (`docs/model_card.md`). There is
+deliberately no worker-count setting to raise — `render.yaml` used to carry a
+`UVICORN_WORKERS` variable that nothing read, which suggested the opposite. Making
+this service scale horizontally means sharing that state first, and sharing it
+correctly means *reserving* budget transactionally rather than reading a count and
+then deciding; durable storage alone removes the amnesia but not that race.
+
 On Render (`RENDER=true`, supplied by the platform), the client key comes from
 `CF-Connecting-IP`, which Render documents as overwritten by its Cloudflare edge.
 See [Render's client-IP guidance](https://render.com/articles/host-pocketbase-on-render#making-pocketbase-see-the-real-client-ip).

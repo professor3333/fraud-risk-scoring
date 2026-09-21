@@ -200,7 +200,6 @@ def test_fetch_sends_the_admin_key_and_the_window(monkeypatch: pytest.MonkeyPatc
         return _Response()
 
     monkeypatch.setattr("fraud.monitor.remote.urlopen", fake_urlopen)
-    monkeypatch.setattr("fraud.monitor.remote.json.load", lambda r: json.loads(r.read()))
     report = fetch_report("https://demo/", "2026-09-20T07:00:00+00:00", None, "secret")
     assert report == {"status": "ok"}
     assert seen["url"].startswith("https://demo/audit/monitor?since=2026-09-20T07")
@@ -222,3 +221,19 @@ def test_a_refusal_from_the_service_is_a_readable_error(monkeypatch: pytest.Monk
     monkeypatch.setattr("fraud.monitor.remote.urlopen", fake_urlopen)
     with pytest.raises(RuntimeError, match="HTTP 403"):
         fetch_report("https://demo", None, None, None)
+
+
+def test_an_existing_label_is_not_recreated_or_recoloured() -> None:
+    """An operator who recoloured the label meant it; only a missing one is created."""
+    from scripts.alert import ensure_label
+
+    calls: list[Sequence[str]] = []
+
+    def runner(args: Sequence[str]) -> str:
+        calls.append(list(args))
+        return json.dumps([{"name": "monitoring"}]) if args[:2] == ["label", "list"] else ""
+
+    ensure_label("monitoring", "o/r", runner)
+    assert [c[:2] for c in calls] == [["label", "list"]]
+    ensure_label("other-label", "o/r", runner)
+    assert ["label", "create"] in [c[:2] for c in calls]

@@ -79,7 +79,7 @@ Retraining is still the operator's call — nothing promotes automatically.
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/audit/monitor`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 179 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Quality | 180 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
 | Monitoring | frozen reference per artifact, report over any window (`scripts/monitor.py`, local or `--from-url`), scheduled daily against the live service with GitHub-issue alerts (ADR 0011, `monitor.yml`, `scripts/alert.py`, `configs/alerting.yaml`, `docs/monitoring.md`) |
 | Security | digest-pinned champion, commit-pinned deploy, Dependabot (uv / actions / docker), weekly `pip-audit` + CodeQL (`security.yml`); scope and gaps in `docs/security.md` |

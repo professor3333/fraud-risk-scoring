@@ -55,15 +55,24 @@ def open_alert_issue(label: str, title: str, repo: str | None, runner: Runner) -
     return None
 
 
+def ensure_label(label: str, repo: str | None, runner: Runner) -> None:
+    """Create the alert label if the repository has none. Never `--force`: an operator who
+    recoloured or redescribed it meant it."""
+    repo_args = ["--repo", repo] if repo else []
+    listed = runner(["label", "list", "--json", "name", "--limit", "100", *repo_args])
+    if label not in {row["name"] for row in json.loads(listed or "[]")}:
+        runner(["label", "create", label, "--color", "B60205",
+                "--description", "Automated monitoring alert (docs/monitoring.md)",
+                *repo_args])  # fmt: skip
+
+
 def deliver(alert: Alert, label: str, repo: str | None, runner: Runner) -> str:
     """Create, comment on or close the alert issue. Returns what was done, for the log."""
     repo_args = ["--repo", repo] if repo else []
     number = open_alert_issue(label, alert.title, repo, runner)
     if alert.paging:
         if number is None:
-            runner(["label", "create", label, "--force", "--color", "B60205",
-                    "--description", "Automated monitoring alert (docs/monitoring.md)",
-                    *repo_args])  # fmt: skip
+            ensure_label(label, repo, runner)
             url = runner(["issue", "create", "--title", alert.title, "--body", alert.body,
                           "--label", label, *repo_args]).strip()  # fmt: skip
             return f"opened {url}"

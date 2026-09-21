@@ -298,7 +298,7 @@ fly.toml          Fly.io app definition — the optional paid alternative
 git clone https://github.com/professor3333/fraud-risk-scoring.git
 cd fraud-risk-scoring
 uv sync
-uv run pytest            # 179 fixture tests; no data/network required
+uv run pytest            # 180 fixture tests; no data/network required
 ```
 
 ## Usage
@@ -675,7 +675,7 @@ trail `models/audit/prediction_events.sqlite`), `mlflow.db` + `mlruns/`
 ## Testing
 
 ```bash
-uv run pytest              # 179 fixture tests, no data, no network, ~20 s
+uv run pytest              # 180 fixture tests, no data, no network, ~20 s
 uv run pytest -m slow      # 4 tests against the real files and the production artifact
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```

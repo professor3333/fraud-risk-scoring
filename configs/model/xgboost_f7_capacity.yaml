@@ -1,0 +1,22 @@
+# E025: the champion's capacity (E022) with the history features added — one
+# change against configs/model/xgboost_f5_capacity.yaml, the feature set.
+# Built to be evaluated on the W-product / established-card slice, not on the
+# validation window as a whole (ADR 0004 → Outcome; docs/error_analysis.md §3).
+experiment: fraud-xgboost
+run_name: xgb_f7_capacity
+features: configs/features/f7_history.yaml
+seed: 42
+threshold: 0.5
+model:
+  type: xgboost
+  params:
+    n_estimators: 1600
+    learning_rate: 0.05
+    max_depth: 12
+    min_child_weight: 1
+    subsample: 0.8
+    colsample_bytree: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 1.0
+    eval_metric: aucpr
+    n_jobs: 8

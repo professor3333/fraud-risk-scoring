@@ -582,3 +582,105 @@ derived columns are row-local and computed inside the pipeline
   moved 0.47 → 0.425 between cycles, which is why it is re-selected rather
   than frozen.
 
+
+## E025 — History features on the `W` / established-card slice (ADR 0004 → Outcome)
+
+*Hypothesis and design recorded 2026-09-21, before the runs.*
+
+- **Hypothesis:** E007 (−0.002) and E017 (−0.001) measured the entity-history
+  features on the whole validation window and found nothing. `docs/error_analysis.md`
+  §3 says why that could still hide a real effect: the deviation signal, if it
+  exists, lives in established-account takeover, which is about a third of the
+  quarter of fraud the model is most confident is safe — roughly 8 % of positives,
+  far too small to move an aggregate PR-AUC. `docs/subgroups.md` gives the segment
+  its size from the other side: on product `W` (82 % of rows, half the fraud,
+  no identity record) PR-AUC is 0.457 against 0.801 elsewhere. If deviation from a
+  card's own habit is recoverable at authorization, it should show up **on that
+  slice, at the champion's capacity**, even though it did not in the aggregate.
+- **Slice (decided by the owner, 2026-09-21):** validation rows (days 123–152)
+  with `ProductCD == "W"` **and `D1 >= 14`**. The 14-day bar is deliberate and
+  imperfect: `docs/error_analysis.md` cites its motivating false negatives at
+  `D1` 13–28 days, so this admits all but the lowest of them. A 30-day bar — the
+  natural "a month of history" unit — would have excluded the very rows that
+  prompted the experiment. The cost of 14 is that "established" is generous and
+  the slice reaches toward the population where the model is mediocre rather than
+  failing. Recorded here so the result is read against the slice that was chosen,
+  not one picked afterwards.
+- **Config:** `configs/model/xgboost_f7_capacity.yaml` — one change against
+  `configs/model/xgboost_f5_capacity.yaml` (the champion's recipe, E022): the
+  feature set becomes `f7_history`, adding the eight entity-history columns.
+  Same split (`configs/split.yaml`), same capacity, seeds 42 / 1 / 2 both sides.
+- **Expected:** ≈ 0, from two prior null results and the ablation's explanation
+  (the provider's `C*` / `D*` columns already summarise each card's past). The
+  decision rule is the repo's: **≥ +0.005 seed-paired on the slice to act**.
+  A gain materially above that would mean the aggregate nulls were dilution, and
+  would make a segment-targeted model worth an ADR. A null closes ADR 0004's
+  remaining question for this dataset rather than leaving it open a third time.
+- **What a null does *not* show:** that history features are useless in general.
+  The other mechanism in this slice — label propagation under ADR 0001 — is not
+  recoverable at authorization by any feature, so a null is consistent with
+  "the recoverable part is too small to measure here" as well as with
+  "there is nothing to recover". Both readings are reported.
+- **Result** (five full-data fits, seeds 42 / 1 / 2 both sides; baseline seed 42
+  reused from the restored artifact, verified metric-identical):
+
+  | slice | n | fraud | base PR-AUC (s42) | seed-paired Δ | per seed |
+  |---|---:|---:|---:|---:|---|
+  | all validation | 85,044 | 2,884 | 0.6367 | **+0.0066** | +0.0073 +0.0066 +0.0059 |
+  | product `W` | 69,700 | 1,420 | 0.4572 | **+0.0254** | +0.0279 +0.0249 +0.0236 |
+  | **`W` ∩ `D1 ≥ 14`** (the slice) | 40,349 | 651 | **0.7981** | **−0.0121** | −0.0101 −0.0103 −0.0157 |
+  | `W` ∩ `D1 < 14` | 28,556 | 750 | **0.2107** | **+0.0433** | +0.0451 +0.0383 +0.0466 |
+  | not `W` | 15,344 | 1,464 | 0.7943 | −0.0031 | −0.0030 −0.0036 −0.0027 |
+
+  Reconciliation: the baseline's product-`W` PR-AUC is 0.4572 against
+  `docs/subgroups.md`'s 0.457 (measured there on the calibrated champion; PR-AUC
+  is invariant under the monotone sigmoid). The history and non-history
+  validation frames were asserted to hold identical `TransactionID` sets.
+
+- **Interpretation — the hypothesis was wrong twice over, and the second way
+  matters.**
+
+  1. **The slice is not weak.** `W` ∩ `D1 ≥ 14` scores **0.798**, as well as the
+     identity-present segment (0.801). Product `W`'s 0.457 is not spread over the
+     product; it is concentrated entirely in cards first seen less than a
+     fortnight ago, where PR-AUC is **0.211**. Pooling a 0.798 population with a
+     0.211 one yields 0.457. `docs/error_analysis.md` §3 pointed at
+     established-card takeover as the recoverable failure; on this evidence
+     established cards on `W` are where the model is already strong, and the
+     failure is **new** cards. The error analysis reasoned from the
+     high-confidence false negatives, which are established by construction —
+     a stolen card with a long clean history produces a confident wrong answer,
+     while a new card produces an uncertain one that never enters that set.
+     Selecting on the model's confidence selected the wrong population.
+  2. **The features help, on the opposite slice, and only at capacity.** On
+     the chosen slice they *hurt* (−0.0121, every seed). On the complement they
+     are worth **+0.0433**, every seed, which is the largest feature effect
+     measured in this project. What they add is velocity on a card with almost
+     no history — `ent_prior_count`, `ent_seconds_since_prev`,
+     `ent_prior_count_1d` — exactly the burst behaviour the provider's `C*` /
+     `D*` columns evidently do not summarise for a card they have barely seen.
+     For an established card those columns already contain it, and eight extra
+     inputs on 651 positives cost what an unneeded feature costs.
+  3. **This revises E007 and E017 rather than contradicting them.** Both
+     measured the features at E016's capacity (depth 8, 800 trees) and found
+     −0.002 / −0.001 on the aggregate. At E022's capacity (depth 12, 1,600
+     trees) the same family is **+0.0066** on the same aggregate — over the
+     +0.005 rule. The null was real at the capacity it was measured at; the
+     interaction with capacity is what neither experiment could see, because
+     capacity came later (E022) and nothing re-ran the feature question after it.
+     "One change per experiment" kept each result honest and let this one hide
+     between two of them.
+
+- **What this does and does not license.** It does not promote anything: the
+  aggregate gain sits just over the decision rule against a seed sd of 0.002, it
+  has not been through ADR 0010's gates, the test window is untouched, and
+  shipping these features triggers ADR 0004's binding serving contract — the API
+  would need a history store and incremental-vs-batch parity, or the features are
+  dropped rather than approximated. That is a §4 decision with an infrastructure
+  bill attached. What it does license is retiring the claim, repeated in five
+  documents, that entity history is worthless on this dataset.
+- **Next questions this opens** (none run): does the gain survive the rolling
+  backtests of ADR 0008, where the E022 lead halves at a 60-day horizon? Is
+  `D1 < 14` the right boundary or an artefact of the bar chosen for the *other*
+  slice? And does a `W`-only or card-age-conditioned model beat one model with
+  these features in it?

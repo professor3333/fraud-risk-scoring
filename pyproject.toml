@@ -11,7 +11,7 @@ license-files = ["LICENSE"]
 # Runtime dependencies are what the service needs; training-only tools live in
 # the `train` group so the Docker image stays small.
 dependencies = [
-    "pandas>=2.2",
+    "pandas>=3.0.6",
     "scikit-learn>=1.5",
     "pyyaml>=6",
     "xgboost>=3.4.1",
@@ -24,12 +24,12 @@ dependencies = [
 train = [
     "pyarrow>=17",
     "matplotlib>=3.9",
-    "mlflow>=3.16.0",
+    "mlflow>=3.16.1",
 ]
 dev = [
     {include-group = "train"},
     "pytest>=8",
-    "ruff>=0.6",
+    "ruff>=0.16.8",
     "mypy>=1.11",
     "jupyter>=1.1",
     "pandas-stubs",

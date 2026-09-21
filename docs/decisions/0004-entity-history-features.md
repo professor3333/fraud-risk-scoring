@@ -1,6 +1,10 @@
 # ADR 0004 — Entity reconstruction and history features
 
-**Date:** 2026-09-14 · **Status:** accepted
+**Date:** 2026-09-14 · **Status:** accepted as the legitimate way to build
+these features — then **built, measured and rejected on evidence** (E007,
+E017). They are **not in the served model**, which is row-local. Read
+*Outcome* below before reading the rest as a description of what this system
+does.
 
 ## Context
 
@@ -84,3 +88,60 @@ dropped from the served model rather than approximated.
   test rows have long ones. That is the true production situation (a deployed
   model always sees more history than it was trained on) and is *not* a
   leak, but it is a shift worth watching in the ablation.
+
+## Outcome (added 2026-09-21)
+
+The decision above was about *legitimacy*: option 4 is the only construction
+of entity history that survives G2 and G3, and that judgement still stands.
+It says nothing about whether the features are worth having, and the
+consequences section's "expected to be the largest single step in the
+project" turned out to be wrong. Recorded here because this file is the one
+a reader reaches first, and until now it read as a description of the
+shipped system.
+
+**What was measured.** Two entity definitions, eight features, three runs:
+
+| experiment | entity | features | validation Δ | verdict |
+|---|---|---|---:|---|
+| E007 | `(card1, addr1, day − D1)` | the five above | −0.002 seed-paired | reject |
+| E017 | `card1 + addr1` (no `D1`) | + expanding std / max | −0.001 | reject |
+| F7 on the ladder | as E007 | five, on top of F0–F6 | −0.006 (462 cols) | not shipped |
+
+**Why.** The provider's `C*` columns are counts of entities linked to the
+card and `D*` are time deltas — the provider had already summarised each
+card's past at authorization time, presumably by this same route. Once the
+history is restricted to what a live system can compute (label-free
+aggregates over strictly earlier rows), there is nothing left to add.
+`docs/ablation.md` §2 reaches the same conclusion from the other direction:
+`C` and `card` rank high on both permutation and ablation, and they are
+irreplaceable. The Kaggle gains attributed to "uid" features came from
+aggregates over the whole dataset — future rows, and through label
+propagation the label itself — evaluated on a test set sharing those
+entities. None of that exists at authorization. This is the project's most
+important negative result.
+
+**What this means for the serving contract.** It is not in force, because
+the features are not served. Every model input is in the request, the
+score of a transaction depends on nothing but its own row, and the startup
+parity check covers exactly that (`docs/model_card.md`). The contract above
+stays written down as the bar any future history feature has to clear
+first — a feature store plus incremental-vs-batch parity, or the feature is
+dropped rather than approximated.
+
+**What stays in the repo.** `src/fraud/features/history.py`,
+`configs/features/v3_history.yaml`, and the G3 synthetic-frame test that
+proves a later row cannot change an earlier row's features. They are the
+reference implementation for a legitimate variant, not dead code awaiting
+deletion.
+
+**The one question this did not close.** The aggregate was flat; the slice
+may not be. `docs/error_analysis.md` §3 finds that roughly a third of
+high-confidence false negatives are fraud on established accounts, where
+deviation from the card's own habit is the only signal in principle
+available — and that this is about a third of a quarter of the fraud, small
+enough for an aggregate PR-AUC to hide. The follow-up that would settle it
+is these same features evaluated on the `W`-product, established-card slice
+alone. It has not been run. Note that the other mechanism in that slice —
+label propagation — is *not* recoverable at authorization under ADR 0001's
+label definition, so a null result there would close the question for good
+rather than leave it open a third time.

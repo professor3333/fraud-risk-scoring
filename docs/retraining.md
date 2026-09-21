@@ -110,3 +110,43 @@ uv run python scripts/retrain_cycle.py --dry-run                      # decide, 
 uv run python scripts/retrain_cycle.py --as-of-day 152 --label-maturity-days 0
 uv run python scripts/retrain_cycle.py --force --champion-dir /tmp/c  # somewhere harmless
 ```
+
+### Two cycles, end to end (2026-09-21)
+
+Run against a scratch champion directory and a scratch MLflow store, so the real
+registry and the served champion were untouched. `--label-maturity-days 0` — the
+offline simulation's assumption, and the only way this dataset yields two
+comparable cycles (see above).
+
+| | cycle 1 (bootstrap) | cycle 2 |
+|---|---|---|
+| trigger | `bootstrap` — no champion | `calendar` — 30 new training days since day 92 |
+| trained through | day 92 | day 122 |
+| evaluation month | days 93–122 (93,880 rows, 3,756 fraud) | days 123–152 (85,044 rows, 2,884 fraud) |
+| challenger PR-AUC | 0.6219 | **0.6367** |
+| champion PR-AUC on the same month | — | **0.5305** |
+| gates | 6/6 pass | 6/6 pass |
+| decision | PROMOTE (bootstrap) | **PROMOTE** (+0.1062, clears the 0.005 margin) |
+| bands re-derived | review 0.0837 / block 0.48 | review 0.06224176 / block 0.42 |
+| wall clock | 9 min 44 s | ~11 min |
+
+Three things this checks that a test cannot:
+
+- **The cycle reproduces the shipped model.** Cycle 2 trains through day 122 and
+  scores days 123–152 — the project's frozen split — and lands on PR-AUC
+  0.63670 against the champion's published 0.6367, with **bit-identical policy
+  bands** (`review: 0.06224176041919635`, `block: 0.42`). An independent path
+  through training, calibration and threshold selection arriving at the same
+  numbers is the strongest evidence available that this pipeline is the same
+  pipeline. The artifact's *digest* differs, as it must: it is a different fit
+  with out-of-fold calibration, not a copy.
+- **Staleness shows up at the size the offline lifecycle predicted.** A champion
+  one month stale scores 0.5305 where the fresh challenger scores 0.6367:
+  **+0.1062** for thirty days of data, next to the +0.125 the lifecycle measured
+  at neighbouring cut-offs, and +0.067 for every feature and tuning experiment
+  in the project combined.
+- **The policy patch is reviewable.** Against the real `configs/serving.yaml`,
+  cycle 2's output differs in exactly two lines — `model_version` and
+  `champion_sha256` — because it re-derived the same bands. Cycle 1's differs in
+  four. Every comment in the file survives, which is what makes the diff worth
+  reading rather than scrolling.

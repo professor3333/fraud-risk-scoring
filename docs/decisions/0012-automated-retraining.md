@@ -143,6 +143,13 @@ block threshold no one had reviewed, and every other check still passed.
   stated by the pipeline rather than by a paragraph. Demonstrating the machinery
   therefore needs either `--label-maturity-days 0` (the offline simulation's
   assumption) or fresh months the dataset does not have.
+- **It reproduces the shipped model.** Run at as-of day 152 —
+  the project's own split — the cycle lands on validation PR-AUC 0.63670 against
+  the champion's published 0.6367 and re-derives bit-identical policy bands,
+  while a champion one month stale scores 0.5305 on the same month
+  (`docs/retraining.md` → Two cycles, end to end). That the automated path and
+  the hand-run path agree to four decimals is the evidence that this is the same
+  pipeline and not a second one.
 - **Cost.** One cycle is three fits of the production recipe (1,600 trees,
   depth 12) — the challenger and two calibration folds — plus scoring both
   models and rebuilding the monitoring reference. Measured here: 9 min 44 s for

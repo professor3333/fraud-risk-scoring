@@ -1,12 +1,20 @@
-# Retraining: the offline lifecycle, and the scheduled cycle
+# Retraining: the offline lifecycle, the cycle, and the simulated loop
 
-Two things live here. **The lifecycle** (`scripts/retrain.py`) replays several
-calendar cut-offs offline to show every step works and to measure what
-staleness costs — that is the table below. **The scheduled cycle**
-(`scripts/retrain_cycle.py`, ADR 0012) runs *one* cut-off against the artifact
-that is actually serving, and is what `.github/workflows/retrain.yml` calls
-monthly: decide → retrain → gate → promote → publish → open the policy pull
-request. Merging that request deploys (`deploy-champion.yml`).
+Three things live here. **The lifecycle** (`scripts/retrain.py`) replays several
+calendar cut-offs offline to measure what staleness costs; that is the table
+below. **The cycle** (`scripts/retrain_cycle.py`, ADR 0012) runs *one* cut-off
+against the artifact that is serving: decide → retrain → gate → promote →
+publish → open the policy pull request. **The simulated loop**
+(`scripts/simulate_lifecycle.py`, ADR 0015) strings cycles together on a
+declared clock, from an empty workspace, through a local release store and a
+service started from each promoted pairing.
+
+**None of it is scheduled** (ADR 0015). The dataset ends at day 182, a runner
+has no label-feed clock, labels posted to `/outcomes` come without the features
+a model is fitted on, and under the 120-day maturity no month is newer than the
+champion. A monthly cron could only ever have waited, and it had no Kaggle
+credentials to try with. `.github/workflows/retrain.yml` is manual:
+`mode: simulate` (default) or `mode: cycle` with an explicit `as_of_day`.
 
 The one step that is not automated is reading that diff. It carries the block
 and review bands the new champion re-derived, and they decide what happens to a
@@ -61,7 +69,20 @@ Reading:
   promoting noise; on this data every cycle clears it by two orders of
   magnitude, which says monthly is, if anything, not frequent enough.
 
-## The scheduled cycle (ADR 0012)
+## The simulated loop (ADR 0015)
+
+```bash
+uv run python scripts/simulate_lifecycle.py        # ~18 min on the full data; any empty workspace
+```
+
+From a clean clone on 2026-09-29 (`reports/retrain/simulation.md`): day 92
+bootstraps and promotes `champion-611199307f76`; day 110 waits (18 of 30 new
+days); day 122 promotes `champion-ece2ed287853` (+0.0754 PR-AUC over the
+incumbent on days 93–122); day 183 refuses the reporting window. After each
+promotion the service was started from the published release and the patched
+config, so the digest pin, the band pairing and the parity check all ran.
+
+## The cycle (ADR 0012)
 
 ```
 label feed clock (+ the monitor's eventual PR-AUC, docs/monitoring.md)
@@ -93,12 +114,12 @@ reporting a comparison that would flatter it.
 | `min_new_train_days` | 30 | a month of matured labels the champion has not seen. Less is churn |
 | `monitor_pr_auc_drop` | 0.03 | eventual PR-AUC this far below its reference brings a cycle forward — but only when new training days exist, because refitting the same rows cannot answer drift |
 | `promotion_margin` | 0.005 | on top of every ADR 0010 gate. Those gates accept a candidate 0.005 *worse* than the champion, which is right for a person choosing a model and wrong for a job replacing one in service |
-| `label_maturity_days` | 120 | the host's rule (ADR 0009). The offline lifecycle above uses 0 to reproduce its published table; a scheduled cycle must not |
+| `label_maturity_days` | 120 | the host's rule (ADR 0009). The offline lifecycle above uses 0 to reproduce its published table; a real cycle must not |
 | `allow_reporting_window` | false | a cycle whose month reaches day 153 consumes held-out data. Turning this on is a consultation to log in ADR 0002 |
 
 **What this dataset lets the automation do is narrow, and the pipeline says so.**
 Under a 120-day maturity, 183 days of data leave no month the current champion
-(trained through day 122) was not itself fitted on: a scheduled cycle stops with
+(trained through day 122) was not itself fitted on: a cycle stops with
 "labels are mature only through day 63" or "the champion was trained through day
 122, inside the evaluation month". That is the delayed-label cost
 `docs/feedback.md` measured, stated by the code rather than by a paragraph.

@@ -233,11 +233,13 @@ columns carry 76 % of split gain but are almost fully substitutable
   the service builds the same report over its own trail (`GET /audit/monitor`)
   and a daily GitHub Action fetches it and raises one issue per alert episode
   (ADR 0011).
-- Automated retraining: a monthly cycle decides whether a month of matured
-  labels the champion has not seen exists, fits a challenger, scores it and
-  the champion on that month, applies the gates plus a margin, promotes,
-  publishes the artifact and opens the policy change as a pull request
-  (ADR 0012); merging it deploys and verifies the digest.
+- Automated retraining lifecycle, **demonstrated on a simulated clock**: a
+  cycle decides whether a month of matured labels the champion has not seen
+  exists, fits a challenger, scores it and the champion on that month, applies
+  the gates plus a margin, promotes, publishes the artifact and proposes the
+  policy change (ADR 0012). `scripts/simulate_lifecycle.py` runs it end to end
+  from an empty workspace. It is not scheduled: this dataset has no future
+  (ADR 0015).
 - Model promotion: candidate → acceptance gates (PR-AUC, recall at the
   review budget, ECE, Brier, block precision, cost per transaction, parity)
   → champion; the MLflow model registry is the ledger, `models/champion/`
@@ -290,7 +292,7 @@ src/fraud/
   features/       columns (spec), derive, time, rowwise (F1/F2/F4/F5), encoders, history
   pipeline/       build (preprocessing + model), calibrated
   train/          run (MLflow), tune (expanding-window CV), lifecycle (offline
-                  replay), trigger + cycle (one scheduled cycle), promotion,
+                  replay), trigger + cycle (one cycle, run by hand), promotion,
                   serving_config (the policy patch a promotion implies)
   evaluate/       metrics, curves, calibration, threshold, importance
   serve/          app, schemas, frames, parity (frozen-golden check), audit
@@ -300,7 +302,7 @@ src/fraud/
 tests/            fixtures/ (synthetic 400-row raw files + generator), test_*.py
 .github/          ci.yml, security.yml, deploy.yml (tag → Render), monitor.yml
                   (daily report on the live service → issue on alert),
-                  retrain.yml (monthly cycle → PR), deploy-champion.yml
+                  retrain.yml (manual: simulated lifecycle, or one cycle → PR), deploy-champion.yml
                   (merged policy change → the host serves it)
 Dockerfile        runtime-only image, non-root
 render.yaml       Render blueprint — the free public demo (the live deployment)
@@ -519,10 +521,13 @@ FRAUD_ADMIN_API_KEY=… uv run python scripts/monitor.py \
 uv run python scripts/alert.py reports/monitoring/<stamp>.json --source <url> --dry-run
 ```
 
-**Retraining** (`docs/retraining.md`, ADR 0012) — the monthly lifecycle is
-replayed offline by `scripts/retrain.py` (that is where the staleness numbers
-come from), and run for real, one cut-off at a time, by
-`scripts/retrain_cycle.py` + `.github/workflows/retrain.yml`:
+**Retraining** (`docs/retraining.md`, ADR 0012, ADR 0015) — the monthly
+lifecycle is replayed offline by `scripts/retrain.py` (that is where the
+staleness numbers come from). One cut-off at a time is run by
+`scripts/retrain_cycle.py`, and `scripts/simulate_lifecycle.py` strings those
+cut-offs together on a declared clock, publishing to a local release store and
+starting the service from each promoted pairing. Nothing runs on a schedule:
+the data has no future to retrain on.
 
 ```
 label feed clock (+ the monitor's eventual PR-AUC)
@@ -547,7 +552,7 @@ takes them from a reviewed commit rather than from a fetched manifest
 What this dataset lets the automation *do* is narrow, and the pipeline says so
 rather than pretending otherwise: under the host's 120-day label maturity, 183
 days of data leave no evaluation month the current champion was not itself
-trained on, so a scheduled cycle stops and explains which rule stopped it.
+trained on, so a real cycle stops and explains which rule stopped it (ADR 0015).
 
 **Promotion** (`docs/promotion.md`, ADR 0010) — the service loads
 `models/champion/`, which only `scripts/promote.py` writes: a candidate is

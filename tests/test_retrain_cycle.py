@@ -328,3 +328,42 @@ def test_a_failed_bootstrap_does_not_claim_a_champion_was_kept(
     assert _verdict(result, promoted=False) == "REJECT (no champion exists)"
     text = render(result, decide(TriggerState(152, None), POLICY), promoted=False)
     assert "REJECT (no champion exists)" in text and "KEEP THE CHAMPION" not in text
+
+
+def test_the_simulated_lifecycle_runs_end_to_end_from_nothing(
+    light_model_config: Path, tmp_path: Path
+) -> None:
+    """ADR 0015's acceptance, on the fixture: from an empty workspace, one command goes
+    trigger -> train -> gate -> promote -> publish -> policy diff -> a service started
+    from that release and that config, then skips for the two valid reasons."""
+    import subprocess
+    import sys
+
+    promotion = yaml.safe_load((ROOT / "configs" / "promotion.yaml").read_text())
+    promotion["gates"] = {"pr_auc": {"higher_is_better": True, "min": 0.0}}  # wiring, not skill
+    promotion["block_min_precision"] = 0.3
+    (tmp_path / "promotion.yaml").write_text(yaml.safe_dump(promotion))
+    ws, report = tmp_path / "ws", tmp_path / "simulation.md"
+    subprocess.run(
+        [
+            sys.executable, str(ROOT / "scripts" / "simulate_lifecycle.py"),
+            "--raw-dir", str(ROOT / "tests" / "fixtures" / "raw"),
+            "--cache-dir", str(tmp_path / "cache"),
+            "--model-config", str(light_model_config),
+            "--promotion", str(tmp_path / "promotion.yaml"),
+            "--workspace", str(ws), "--report", str(report),
+        ],
+        check=True, cwd=ROOT, capture_output=True,
+    )  # fmt: skip
+    text = report.read_text()
+    rows = [ln for ln in text.splitlines() if ln.startswith("| ") and ln[2:5].strip().isdigit()]
+    triggers = [r.split("|")[2].strip(" `") for r in rows]
+    assert triggers == ["bootstrap", "too-little-new-data", "calendar", "reporting-window"]
+    assert "PROMOTED" in rows[0] and "waited" in rows[1] and "waited" in rows[3]
+    releases = list((ws / "releases").iterdir())
+    assert len(releases) >= 1 and releases[0].name.startswith("champion-")
+    sha = releases[0].name.removeprefix("champion-")
+    assert f"@{sha}" in rows[0]  # the service started from the release it published
+    diff = (ws / "policy" / "day92.diff").read_text()
+    assert f"+champion_sha256: {sha}" in diff and "+  block:" in diff
+    assert (ws / "mlruns").exists()  # MLflow artifacts stayed in the workspace

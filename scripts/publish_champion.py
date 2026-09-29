@@ -12,6 +12,12 @@ the pickle, and compares against a golden fetched from the same store.
 
     uv run python scripts/publish_champion.py
     uv run python scripts/publish_champion.py --dry-run
+    uv run python scripts/publish_champion.py --champion-dir W/champion --to-dir W/releases
+
+``--to-dir`` publishes to a local directory laid out like the releases
+(``<dir>/champion-<sha12>/<file>``) instead of GitHub; the simulated lifecycle uses
+it (scripts/simulate_lifecycle.py). The same checks run either way, and an existing
+release is never overwritten.
 
 Needs ``gh auth login`` once. Prints the FRAUD_CHAMPION_URL to set on the host.
 """
@@ -20,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,17 +49,36 @@ FILES = (
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--champion-dir", type=Path, default=CHAMPION_DIR)
+    parser.add_argument(
+        "--to-dir", type=Path, default=None,
+        help="publish to this local release store instead of a GitHub release",
+    )  # fmt: skip
     args = parser.parse_args()
+    champion_dir: Path = args.champion_dir
 
-    manifest = read_manifest(CHAMPION_DIR / "model.joblib")
+    manifest = read_manifest(champion_dir / "model.joblib")
     if manifest is None:
         sys.exit("models/champion has no manifest; run scripts/promote.py first")
-    parity = verify(joblib.load(CHAMPION_DIR / "model.joblib"), CHAMPION_DIR / "model.joblib")
-    missing = [f for f in FILES if not (CHAMPION_DIR / f).exists()]
+    parity = verify(joblib.load(champion_dir / "model.joblib"), champion_dir / "model.joblib")
+    missing = [f for f in FILES if not (champion_dir / f).exists()]
     if missing:
         sys.exit(f"champion directory is missing {missing}")
     sha = parity.artifact_sha256[:12]
     print(f"champion {manifest['run_name']} sha {sha}: parity ok")
+    if args.to_dir is not None:
+        release = args.to_dir / f"champion-{sha}"
+        if release.exists():
+            print(f"release {release} already exists; not re-publishing")
+        elif not args.dry_run:
+            staging = args.to_dir / f".champion-{sha}.partial"
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True)
+            for f in FILES:
+                shutil.copyfile(champion_dir / f, staging / f)
+            staging.rename(release)  # whole or absent, like an immutable release
+        print(json.dumps({"FRAUD_CHAMPION_URL": release.resolve().as_uri(), "files": list(FILES)}))
+        return
 
     repo = subprocess.run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
@@ -74,7 +100,7 @@ def main() -> None:
         )
     else:
         cmd = [
-            "gh", "release", "create", tag, *[str(CHAMPION_DIR / f) for f in FILES],
+            "gh", "release", "create", tag, *[str(champion_dir / f) for f in FILES],
             "--prerelease", "--title", f"champion {manifest['model_version']}",
             "--notes", f"Served weights: {manifest['run_name']} ({manifest['model_version']}). "
             "Assets of this release are what the hosted service fetches at startup "

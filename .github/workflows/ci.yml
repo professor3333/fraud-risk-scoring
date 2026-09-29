@@ -38,8 +38,15 @@ jobs:
         run: docker build -t fraud-risk-scoring:hosted -f deploy/hosted/Dockerfile .
       - name: Container smoke test (/health must pass the startup parity check)
         run: |
-          docker run -d --rm --name frs -p 8000:8000 fraud-risk-scoring:ci
+          docker run -d --rm --name frs -p 8000:8000 -e FRAUD_ADMIN_API_KEY=ci-admin \
+            fraud-risk-scoring:ci
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8000/health && break; sleep 2; done
           curl -sf http://127.0.0.1:8000/health | grep -q '"parity_rows":10'
           curl -sf http://127.0.0.1:8000/model-info | grep -q '"primary_metric":"pr_auc"'
+          # The scheduled monitor's path, inside the runtime image (no train group, so no
+          # Matplotlib): score the sample, then build the report over that audit trail.
+          curl -sf -F file=@src/fraud/serve/static/sample_transactions.csv \
+            http://127.0.0.1:8000/predict/csv > /dev/null
+          curl -sf -H "X-API-Key: ci-admin" http://127.0.0.1:8000/audit/monitor \
+            | grep -q '"predictions":{"rows":200'
           docker stop frs

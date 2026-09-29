@@ -130,7 +130,23 @@ the report is built **where the data is** and the scheduler fetches it:
   → GET /audit/monitor?since=…&until=…        (admin key; the service runs build_report)
   → reports/monitoring/live.{json,md}          uploaded as a run artifact, kept 90 days
   → scripts/alert.py live.json                 opens / comments on / closes one issue
+  ✗ no report (down, cold past the timeout, key refused)
+  → scripts/alert.py --unreachable <stderr>    pages under the same issue; run fails
 ```
+
+A report that cannot be fetched is itself an alert. Without that rule the
+monitor was quietest exactly when the service was least observable: from
+2026-09-22 to 09-28 every run got `403 admin endpoints are disabled` because
+the service had no admin key, and each one skipped the alert step, since there
+was no report to judge. Now the fetch's error output becomes the issue body,
+under the same title as any other alert, so the first run that obtains a
+healthy report closes the episode as a recovery.
+
+The report is built inside the service's runtime image, which leaves out the
+`train` dependency group. The metric modules it imports therefore load
+Matplotlib only when a figure is drawn (`fraud.evaluate.plotting`). A test
+imports the service and monitor with Matplotlib blocked, and CI's container
+smoke test fetches an authenticated `/audit/monitor` from the built image.
 
 The endpoint is the same `fraud.monitor.report.build_report` as the offline
 script — one code path, and a test asserts the service's report and an offline
@@ -175,6 +191,11 @@ a retired demo is not an incident:
 | GitHub → repository variables | `RENDER_URL` | the service's base URL (already set for `deploy.yml`) |
 | GitHub → repository secrets | `FRAUD_ADMIN_API_KEY` | a random string |
 | Render → environment | `FRAUD_ADMIN_API_KEY` | the **same** string; this also enables `/outcomes` and `/audit/*` on the live service |
+
+Both sides must hold the key. A secret in GitHub with none on the host is the
+misconfiguration that produced the September 403s: `/health` then says
+`admin: disabled`, and the job now reports that as an alert instead of failing
+silently.
 
 Run it by hand from the Actions tab (`workflow_dispatch`) with a window and a
 dry-run box before trusting the schedule.

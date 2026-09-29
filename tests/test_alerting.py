@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from fraud.monitor.alerts import AlertConfig, decide, load_alert_config
+from fraud.monitor.alerts import AlertConfig, decide, load_alert_config, unreachable
 from fraud.monitor.remote import fetch_report, window_bounds
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -268,3 +268,46 @@ def test_an_existing_label_is_not_recreated_or_recoloured() -> None:
     assert [c[:2] for c in calls] == [["label", "list"]]
     ensure_label("other-label", "o/r", runner)
     assert ["label", "create"] in [c[:2] for c in calls]
+
+
+def test_an_unobtainable_report_pages_and_says_why() -> None:
+    """The September 2026 failure: every run got a 403, so no report and no alert."""
+    log = (
+        "Traceback (most recent call last):\n  ...\n"
+        "RuntimeError: GET https://demo/audit/monitor failed: HTTP 403: "
+        "admin endpoints are disabled: set FRAUD_ADMIN_API_KEY\n"
+    )
+    alert = unreachable(log, CONFIG, "https://demo", "https://run")
+    assert alert.paging and alert.severity == "alert"
+    assert alert.title == CONFIG.title  # the same episode as any other alert
+    assert "admin endpoints are disabled" in alert.summary
+    assert alert.flags[0].startswith("report unavailable")
+    assert "https://demo" in alert.body and "https://run" in alert.body
+    assert "FRAUD_ADMIN_API_KEY" in alert.body  # the triage names the likely fix
+
+
+def test_an_empty_error_log_still_pages() -> None:
+    alert = unreachable("", CONFIG)
+    assert alert.paging and "no error output" in alert.summary
+
+
+def test_an_outage_then_a_healthy_report_is_one_episode() -> None:
+    from scripts.alert import deliver
+
+    issues: list[dict[str, Any]] = []
+
+    def runner(args: Sequence[str]) -> str:
+        if args[:2] == ["issue", "list"]:
+            return json.dumps(issues)
+        if args[:2] == ["issue", "create"]:
+            issues.append({"number": 4, "title": args[args.index("--title") + 1]})
+            return "https://github.com/o/r/issues/4\n"
+        if args[:2] == ["issue", "close"]:
+            issues.clear()
+        return ""
+
+    down = unreachable("TimeoutError: timed out", CONFIG)
+    assert deliver(down, CONFIG.label, "o/r", runner).startswith("opened")
+    assert deliver(down, CONFIG.label, "o/r", runner) == "commented on issue #4"
+    back = decide(_report("ok", [], rows=5_000), CONFIG)
+    assert deliver(back, CONFIG.label, "o/r", runner) == "closed issue #4"

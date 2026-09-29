@@ -81,8 +81,9 @@ champion-<sha> GitHub release (models/champion/ as assets) ──► fetch_champ
   host re-enables both for whoever holds it — and is what the scheduled
   monitoring job needs (ADR 0011): give Render `FRAUD_ADMIN_API_KEY` and
   GitHub the same value as the `FRAUD_ADMIN_API_KEY` secret, and
-  `monitor.yml` starts reporting daily on the live service. Until then the
-  job runs and reports that there is nothing to monitor. On 0.1 CPU uploads
+  `monitor.yml` starts reporting daily on the live service. With neither
+  set the job exits having done nothing; with only the GitHub secret set, the
+  service refuses it (403) and the job opens a "report unavailable" alert. On 0.1 CPU uploads
   much beyond the 200-row sample run into the time budget.
 
 ## One-time setup (needs the account owner, once; free — done 2026-09-17: https://fraud-risk-scoring-m1fp.onrender.com)

@@ -82,11 +82,15 @@ jobs:
           WINDOW_HOURS: ${{ inputs.window_hours }}
 
       - name: Fetch the report from the service
+        id: fetch
         if: steps.config.outputs.ready == 'true'
         run: |
           set -euo pipefail
+          # stderr is kept so a failed fetch can say why in the alert below
           uv run python scripts/monitor.py \
-            --from-url "$RENDER_URL" --window-hours "$HOURS" --name live
+            --from-url "$RENDER_URL" --window-hours "$HOURS" --name live \
+            2> fetch_error.log || { cat fetch_error.log >&2; exit 1; }
+          cat fetch_error.log >&2
         env:
           RENDER_URL: ${{ vars.RENDER_URL }}
           FRAUD_ADMIN_API_KEY: ${{ secrets.FRAUD_ADMIN_API_KEY }}
@@ -105,6 +109,23 @@ jobs:
         run: |
           set -euo pipefail
           uv run python scripts/alert.py reports/monitoring/live.json \
+            --source "$RENDER_URL" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" ${DRY_RUN:+--dry-run}
+        env:
+          RENDER_URL: ${{ vars.RENDER_URL }}
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+
+      # No report is itself the alert: an outage, a cold start past the timeout, or an
+      # admin key the service does not share all end here, and none of them may pass
+      # for a quiet day. Same issue as any other alert; the next healthy run closes it.
+      # The job still fails, so the run is red as well as the issue open.
+      - name: Alert that no report could be fetched
+        if: failure() && steps.fetch.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          uv run python scripts/alert.py --unreachable fetch_error.log \
             --source "$RENDER_URL" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" ${DRY_RUN:+--dry-run}

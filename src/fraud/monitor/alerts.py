@@ -189,3 +189,57 @@ def decide(
         flags=flags,
     )
     return Alert(**{**alert.__dict__, "body": render_body(report, alert, source, run_url)})
+
+
+#: Leading text of the flag an unobtainable report raises; kept stable for issue search.
+UNREACHABLE_FLAG = "report unavailable"
+REASON_LIMIT = 4_000  # the tail of the fetch error is what says why
+
+
+def unreachable(
+    reason: str,
+    config: AlertConfig,
+    source: str | None = None,
+    run_url: str | None = None,
+) -> Alert:
+    """The verdict when no report could be obtained at all.
+
+    `decide` needs a report, and a report is exactly what an outage, a cold start past
+    the timeout, or a monitor key the service does not share cannot produce. Treating
+    that as silence would make the monitor quietest when the service is least healthy,
+    so it pages whatever `alert_on` says, under the same issue title as any other alert:
+    the next run that does get a report closes the episode as a recovery.
+    """
+    where = f" from {source}" if source else ""
+    lines = [line for line in reason.strip().splitlines() if line.strip()]
+    last = lines[-1] if lines else "no error output"
+    summary = f"ALERT: no monitoring report could be fetched{where}: {last}"
+    detail = "\n".join(lines)[-REASON_LIMIT:]
+    body = "\n".join(
+        [
+            summary,
+            "",
+            "Nothing was measured: this is an alert about the monitor's view of the "
+            "service, not about the traffic. Drift, label and error-rate checks did not run.",
+            "",
+            "```",
+            detail,
+            "```",
+            "",
+            f"Source: `{source}`" if source else "Source: unknown",
+            *([f"Workflow run: {run_url}"] if run_url else []),
+            "",
+            "Triage: `docs/monitoring.md` → Scheduled monitoring. A 403 saying admin "
+            "endpoints are disabled means the service has no `FRAUD_ADMIN_API_KEY`; a 401 "
+            "means it has a different one from the repository secret; a timeout or "
+            "connection error means the service is down or still starting.",
+        ]
+    )
+    return Alert(
+        severity="alert",
+        paging=True,
+        title=config.title,
+        summary=summary,
+        body=body,
+        flags=(f"{UNREACHABLE_FLAG}: {last}",),
+    )

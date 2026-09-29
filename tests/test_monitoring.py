@@ -3,6 +3,8 @@ and the delayed-label feedback loop (outcomes, cohorts, the early signal)."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -260,3 +262,33 @@ def test_psi_does_not_depend_on_key_insertion_order() -> None:
     ref = {"a": 0.5, "b": 0.3, "c": 0.15, "<other>": 0.05}
     now = {"c": 0.4, "<other>": 0.05, "a": 0.35, "b": 0.2}
     assert psi(ref, now) == psi(dict(reversed(ref.items())), dict(reversed(now.items())))
+
+
+def test_service_and_monitor_import_without_matplotlib() -> None:
+    """The runtime image installs no `train` group, so no Matplotlib (Dockerfiles).
+
+    `/audit/monitor` builds its report from `compute_metrics` and `calibration_metrics`;
+    when those modules imported Matplotlib at load, the scheduled monitor failed inside
+    the deployed service while every test here, with Matplotlib installed, passed.
+    """
+    program = """
+import importlib, pkgutil, sys
+
+class NoMatplotlib:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] == "matplotlib":
+            raise ModuleNotFoundError(f"No module named {name!r}")
+
+sys.meta_path.insert(0, NoMatplotlib())
+import fraud.monitor, fraud.serve
+for package in (fraud.serve, fraud.monitor):
+    for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+        importlib.import_module(module.name)
+from fraud.evaluate.calibration import calibration_metrics
+from fraud.evaluate.metrics import compute_metrics
+compute_metrics([0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8], 0.5)
+calibration_metrics([0, 1, 0, 1], [0.1, 0.9, 0.2, 0.8])
+assert "matplotlib" not in sys.modules
+"""
+    done = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr

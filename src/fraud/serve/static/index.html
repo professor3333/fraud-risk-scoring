@@ -89,14 +89,17 @@ document.getElementById("send").onclick = async () => {
     body: JSON.stringify(isBatch ? {transactions: body} : body)});
   const j = await r.json();
   out.textContent = JSON.stringify(j, null, 2);
-  table.hidden = true; tbody.innerHTML = "";
+  table.hidden = true; tbody.replaceChildren();
   if (!r.ok) { dec.textContent = "rejected (" + r.status + ")"; dec.className = "decision"; return; }
   if (isBatch) {
     dec.textContent = j.n + " scored · " + j.counts.block + " block · " + j.counts.review + " review · " + j.counts.approve + " approve";
     dec.className = "decision";
     for (const x of j.ranked) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${x.rank}</td><td>${x.transaction_id}</td><td align="right">${x.fraud_probability.toFixed(4)}</td><td>${x.risk_level}</td><td class="${colour(x.action)}">${x.action}</td>`;
+      for (const [text, cls, right] of [[x.rank], [x.transaction_id], [x.fraud_probability.toFixed(4), "", true], [x.risk_level], [x.action, colour(x.action)]]) {
+        const td = document.createElement("td"); td.textContent = String(text);
+        if (cls) td.className = cls; if (right) td.align = "right"; tr.appendChild(td);
+      }
       tbody.appendChild(tr);
     }
     table.hidden = false;

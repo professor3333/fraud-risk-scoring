@@ -1270,6 +1270,228 @@ def test_a_fetched_manifest_cannot_set_the_policy_bands(
         server.shutdown()
 
 
+class _ChampionStore:
+    """A local artifact store serving champion bundles at .../champion-<sha12>/<file>."""
+
+    def __init__(self, root: Path) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        self.root = root
+        self.fail: set[str] = set()  # file names answered with HTTP 500
+        self.requests: list[str] = []
+        store = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                store.requests.append(self.path)
+                tag, name = self.path.strip("/").split("/")[-2:]
+                target = store.root / tag / name
+                if name in store.fail or not target.exists():
+                    self.send_response(500 if name in store.fail else 404)
+                    self.end_headers()
+                    return
+                body = target.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def publish(self, served: dict[str, Any], bands: dict[str, float], salt: bytes = b"") -> str:
+        """Publish the fixture model as a champion bundle; returns its release URL.
+
+        ``salt`` appended to the pickle gives a second artifact with its own digest that
+        still loads (joblib ignores trailing bytes) and still reproduces its golden.
+        """
+        import hashlib
+        import json
+        import shutil
+
+        src = Path(served["config"]).parents[1] / "models"
+        artifact = (src / "m.joblib").read_bytes() + salt
+        sha = hashlib.sha256(artifact).hexdigest()
+        bundle = self.root / f"champion-{sha[:12]}"
+        bundle.mkdir(parents=True, exist_ok=True)
+        (bundle / "model.joblib").write_bytes(artifact)
+        shutil.copyfile(src / "m_frozen_sample.json", bundle / "model_frozen_sample.json")
+        golden = json.loads((src / "m_frozen_expected.json").read_text())
+        golden["artifact_sha256"] = sha  # same predictions; the golden names its artifact
+        (bundle / "model_frozen_expected.json").write_text(json.dumps(golden))
+        (bundle / "model_manifest.json").write_text(
+            json.dumps(
+                {
+                    "run_name": "fixture", "model_version": f"fixture{salt.decode()}",
+                    "artifact_sha256": sha, "bands": bands, "model_info": {},
+                }
+            )
+        )  # fmt: skip
+        return f"http://127.0.0.1:{self.server.server_port}/releases/download/{bundle.name}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+
+
+REVIEWED_BANDS = {"review": 0.062, "block": 0.42}
+
+
+def _remote_service(tmp_path: Path, bands: dict[str, float] = REVIEWED_BANDS) -> Path:
+    root = tmp_path / "svc"
+    (root / "configs").mkdir(parents=True, exist_ok=True)
+    cfg = root / "configs" / "serving.yaml"
+    cfg.write_text(
+        "model_path: models/champion/model.joblib\naudit_db: null\n"
+        f"model_version: unused\nbands: {{review: {bands['review']}, block: {bands['block']}}}\n"
+    )
+    return cfg
+
+
+def test_a_refused_bundle_stays_refused_on_every_later_start(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduced: manifest bands 0.8/0.99 against reviewed 0.062/0.42 were refused on
+    the first start and accepted on the next, from the cache, because the checks ran
+    only when this process had downloaded something."""
+    from fraud.serve.app import load_state
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        url = store.publish(served, {"review": 0.8, "block": 0.99})
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", url)
+        cfg = _remote_service(tmp_path)
+        for attempt in ("first start", "cached restart", "retry"):
+            with pytest.raises(RuntimeError, match="do not match"):
+                load_state(cfg)
+            assert (cfg.parents[1] / "models" / "champion" / "model.joblib").exists(), attempt
+    finally:
+        store.close()
+
+
+def test_a_changed_pin_never_reuses_stale_cached_weights(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fraud.serve.app import load_state
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        old = store.publish(served, REVIEWED_BANDS)
+        new = store.publish(served, REVIEWED_BANDS, salt=b"-v2")
+        cfg = _remote_service(tmp_path)
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", old)
+        first = load_state(cfg)
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", new)
+        second = load_state(cfg)
+        assert first.artifact_sha256 != second.artifact_sha256
+        assert new.endswith(second.artifact_sha256[:12])  # the new pin, not the cache
+        assert second.model_version.startswith("fixture-v2@")
+        n = len(store.requests)
+        again = load_state(cfg)  # a verified cache is reused without a download
+        assert again.artifact_sha256 == second.artifact_sha256 and len(store.requests) == n
+    finally:
+        store.close()
+
+
+def test_a_failed_download_leaves_the_previous_bundle_whole(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fraud.serve.app import load_state
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        old = store.publish(served, REVIEWED_BANDS)
+        new = store.publish(served, REVIEWED_BANDS, salt=b"-v2")
+        cfg = _remote_service(tmp_path)
+        champion = cfg.parents[1] / "models" / "champion"
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", old)
+        served_before = load_state(cfg).artifact_sha256
+        before = {p.name: p.read_bytes() for p in champion.iterdir()}
+
+        store.fail = {"model_manifest.json"}  # the new release is half-available
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", new)
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            load_state(cfg)
+        assert {p.name: p.read_bytes() for p in champion.iterdir()} == before  # untouched
+
+        store.fail = set()  # the retry gets the whole new bundle
+        assert load_state(cfg).artifact_sha256 != served_before
+    finally:
+        store.close()
+
+
+def test_an_install_cut_short_is_fetched_again(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files are moved in one by one with the source marker written last: a start that
+    finds new weights but no marker treats the bundle as incomplete, not as verified."""
+    from fraud.serve.app import CHAMPION_SOURCE, load_state
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        cfg = _remote_service(tmp_path)
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", store.publish(served, REVIEWED_BANDS))
+        load_state(cfg)
+        champion = cfg.parents[1] / "models" / "champion"
+        (champion / CHAMPION_SOURCE).unlink()  # as if the process died before the marker
+        n = len(store.requests)
+        load_state(cfg)
+        assert len(store.requests) > n and (champion / CHAMPION_SOURCE).exists()
+    finally:
+        store.close()
+
+
+def test_a_tampered_cache_is_replaced_without_being_deserialized(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cached bytes are checked against the pin before joblib.load on every start:
+    a pickle swapped in on disk is re-fetched, never executed."""
+    import pickle
+
+    from fraud.serve.app import load_state
+
+    canary = tmp_path / "pwned"
+
+    class Payload:
+        def __reduce__(self) -> Any:
+            return (Path.write_text, (canary, "code execution"))
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        url = store.publish(served, REVIEWED_BANDS)
+        cfg = _remote_service(tmp_path)
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", url)
+        honest = load_state(cfg).artifact_sha256
+        cached = cfg.parents[1] / "models" / "champion" / "model.joblib"
+        cached.write_bytes(pickle.dumps(Payload()))
+        assert load_state(cfg).artifact_sha256 == honest
+        assert not canary.exists(), "the tampered cache was deserialized"
+    finally:
+        store.close()
+
+
+def test_a_fetched_bundle_is_not_served_as_a_local_one(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without FRAUD_CHAMPION_URL the manifest's bands are trusted, as part of the build.
+    A bundle that came from the network must not inherit that by the env var going away."""
+    from fraud.serve.app import load_state
+
+    store = _ChampionStore(tmp_path / "store")
+    try:
+        cfg = _remote_service(tmp_path)
+        monkeypatch.setenv("FRAUD_CHAMPION_URL", store.publish(served, REVIEWED_BANDS))
+        load_state(cfg)
+        monkeypatch.delenv("FRAUD_CHAMPION_URL")
+        with pytest.raises(RuntimeError, match="fetched from an artifact store"):
+            load_state(cfg)
+    finally:
+        store.close()
+
+
 def test_model_info_reports_the_served_artifact_digest(served: dict[str, Any]) -> None:
     """The deployment contract: a release asserts that the artifact the service has
     loaded is the champion it was cut for (scripts/deploy_check.py). Consistency between

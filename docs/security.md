@@ -12,7 +12,7 @@ here is supply-chain rather than application logic.
 
 | link | what protects it |
 |---|---|
-| `model.joblib` (a pickle: loading it executes it) | its sha256 is checked against the `champion-<sha12>` in `FRAUD_CHAMPION_URL` **before** it is written or deserialized; an unpinned remote fetch is refused (`fraud.serve.app.expected_champion_digest`, `docs/deployment.md`) |
+| `model.joblib` (a pickle: loading it executes it) | its sha256 is checked against the `champion-<sha12>` in `FRAUD_CHAMPION_URL` **before** it is written or deserialized, and again on the cached bytes on **every** start, before `joblib.load`; a cache that is incomplete or no longer matches the pin is replaced whole, from a staging directory that is moved into place only once verified; an unpinned remote fetch is refused (`fraud.serve.app.fetch_champion`, `expected_champion_digest`, `docs/deployment.md`) |
 | which champion is live | `release.py` refuses to tag an unpublished champion; `deploy.yml` fails the release unless live `/health` reports the champion the tag was cut for (`docs/promotion.md`) |
 | which code is live | the deploy hook is pinned with `?ref=<the tag's commit>`, and the workflow fails unless `/health` reports that commit back |
 | the block/review thresholds | `bands` are policy (ADR 0006) and are never taken from a fetched manifest, which is not digest-pinned. They come from `configs/serving.yaml`, which ships in the image from a reviewed commit, and a champion whose manifest disagrees with it fails startup rather than serving a policy nobody approved |
@@ -20,6 +20,14 @@ here is supply-chain rather than application logic.
 | GitHub Actions | pinned to releases — never a floating branch — and updated by Dependabot |
 | base images | Dependabot watches both Dockerfiles |
 | the host's `FRAUD_CHAMPION_URL` | set by `deploy.yml` from the champion in the tag annotation, then read back and checked, so the value that carries the digest pin is written by the pipeline rather than by hand. `RENDER_API_KEY` is an **account-wide** Render credential held as a repository secret; it is the broadest secret in CI and is the reason the write is limited to one key and verified |
+
+Trust follows configuration, never the state of the disk. Until 2026-09-29 the
+pin and band checks ran only on the start that downloaded the bundle: a bundle
+refused on its first start was accepted on the next, from the cache, with the
+manifest's bands. Now `FRAUD_CHAMPION_URL` alone decides the mode, and a bundle
+the service fetched carries `champion_source.json`, so if the variable is
+later removed it refuses to start rather than serve network-fetched weights
+with local-build trust.
 
 The manifest and the frozen golden cannot attest the artifact's provenance:
 they are fetched from the same store as the artifact, so anything able to
@@ -78,7 +86,7 @@ Three checks, each closing a different hole (ADR 0010, ADR 0012):
 | check | where | what it stops |
 |---|---|---|
 | the digest in the release tag (`champion-<sha12>`) or `FRAUD_CHAMPION_SHA256` | before `joblib.load` | a substituted `model.joblib`; it is a pickle, so this must happen before the bytes are opened, and the parity check cannot do it — parity runs after execution |
-| `champion_sha256` in `configs/serving.yaml` | after the fetch, at startup | a host pointed at a *genuine but unreviewed* champion. The host chooses the artifact, the repository supplies the policy bands, and the service refuses a pairing no commit approved |
+| `champion_sha256` in `configs/serving.yaml` | at startup, every start with `FRAUD_CHAMPION_URL` set, cached or freshly fetched | a host pointed at a *genuine but unreviewed* champion. The host chooses the artifact, the repository supplies the policy bands, and the service refuses a pairing no commit approved |
 | the frozen golden | at startup, every start | an artifact that no longer reproduces the probabilities it was promoted on |
 
 The retraining workflow (ADR 0012) fits model weights on a GitHub-hosted

@@ -152,53 +152,106 @@ def expected_champion_digest(base_url: str, pin: str | None) -> str:
     return found.group(1).lower()
 
 
+#: Written into a bundle the service fetched, never into one built with the image, so a
+#: fetched champion cannot later be served under the trust given to a local one.
+CHAMPION_SOURCE = "champion_source.json"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _cached_bundle_is(directory: Path, expected_digest: str) -> bool:
+    """Whether ``directory`` already holds the complete, pinned champion bundle.
+
+    The source marker is written last when a bundle is installed, so its absence means
+    an install never finished; its pin must be this start's pin; and the artifact's
+    bytes must still hash to it.
+    """
+    required = [n for n in CHAMPION_FILES if n != "model_monitor_reference.json"]
+    marker = directory / CHAMPION_SOURCE
+    if not marker.exists() or not all((directory / n).exists() for n in required):
+        return False
+    if json.loads(marker.read_text()).get("pinned_sha256") != expected_digest:
+        return False
+    digest = _sha256(directory / "model.joblib")
+    return hmac.compare_digest(digest[: len(expected_digest)], expected_digest)
+
+
 def fetch_champion(
     model_path: Path, base_url: str, token: str | None, expected_digest: str
 ) -> list[str]:
-    """Populate the champion directory from an artifact store at startup.
+    """Make ``model_path``'s directory hold the pinned champion bundle; list what was fetched.
 
     For hosts that build from the repository (Render, Koyeb — the image carries
     no weights): FRAUD_CHAMPION_URL names a base URL under which the champion
     files are served — a GitHub release's ``…/releases/download/<tag>`` (public,
     no token; scripts/publish_champion.py) or any store that takes a bearer
-    token in FRAUD_CHAMPION_TOKEN. The files land next to ``model_path`` and the
-    startup parity check then treats them exactly like a local champion.
-    Optional files (the monitoring reference) are skipped when the store lacks
-    them; everything else must exist.
+    token in FRAUD_CHAMPION_TOKEN. Optional files (the monitoring reference) are
+    skipped when the store lacks them; everything else must exist.
 
-    ``model.joblib`` is checked against ``expected_digest`` in memory and is written
-    only if it matches, so a substituted artifact is never handed to ``joblib.load``.
-    The parity check cannot do this job: it runs after the pickle has been executed.
+    Runs on **every** start, not only the first. A cached bundle is kept only if it is
+    complete and its ``model.joblib`` has the pinned digest, checked on the bytes before
+    anything deserializes them; otherwise it is replaced whole. So a restart cannot
+    reuse weights from before FRAUD_CHAMPION_URL or FRAUD_CHAMPION_SHA256 changed, and a
+    failed download cannot leave a mix of old and new files behind: the bundle is
+    downloaded into a staging directory, ``model.joblib`` is checked in memory against
+    ``expected_digest`` before it is written, and only a complete, verified bundle is
+    installed. Installing moves the files in one by one — the directory itself cannot be
+    renamed, since on a container's overlay filesystem a directory from an image layer
+    answers EXDEV — with the source marker removed first and written last, so an install
+    cut short is seen as incomplete by the next start and fetched again. Returns ``[]``
+    when the cache already was the pinned bundle.
     """
+    import shutil
+    import tempfile
     import urllib.error
     import urllib.request
 
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    directory = model_path.parent
+    if model_path.name != "model.joblib":
+        raise ValueError(f"a fetched champion is served as model.joblib, not {model_path.name}")
+    if _cached_bundle_is(directory, expected_digest):
+        return []
+    directory.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    fetched: list[str] = []
-    for name in CHAMPION_FILES:
-        target = model_path.parent / name
-        if target.exists():
-            continue
-        req = urllib.request.Request(f"{base_url.rstrip('/')}/{name}", headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                body: bytes = resp.read()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404 and name == "model_monitor_reference.json":
-                continue
-            raise RuntimeError(f"could not fetch {name} from {base_url}: HTTP {exc.code}") from exc
-        if name == "model.joblib":
-            digest = hashlib.sha256(body).hexdigest()
-            if not hmac.compare_digest(digest[: len(expected_digest)], expected_digest):
+    staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=directory))  # same filesystem
+    try:
+        fetched: list[str] = []
+        for name in CHAMPION_FILES:
+            req = urllib.request.Request(f"{base_url.rstrip('/')}/{name}", headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    body: bytes = resp.read()
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404 and name == "model_monitor_reference.json":
+                    continue
                 raise RuntimeError(
-                    f"refusing to load model.joblib from {base_url}: sha256 {digest[:12]} "
-                    f"is not the pinned {expected_digest[:12]}. The artifact was not "
-                    "written to disk and was not deserialized."
-                )
-        target.write_bytes(body)
-        fetched.append(name)
-    return fetched
+                    f"could not fetch {name} from {base_url}: HTTP {exc.code}"
+                ) from exc
+            if name == "model.joblib":
+                digest = hashlib.sha256(body).hexdigest()
+                if not hmac.compare_digest(digest[: len(expected_digest)], expected_digest):
+                    raise RuntimeError(
+                        f"refusing to load model.joblib from {base_url}: sha256 {digest[:12]} "
+                        f"is not the pinned {expected_digest[:12]}. The artifact was not "
+                        "written to disk and was not deserialized."
+                    )
+            (staging / name).write_bytes(body)
+            fetched.append(name)
+        # Install: marker out first, files in, marker in last.
+        (directory / CHAMPION_SOURCE).unlink(missing_ok=True)
+        for name in CHAMPION_FILES:
+            if (staging / name).exists():
+                os.replace(staging / name, directory / name)
+            else:
+                (directory / name).unlink(missing_ok=True)  # an optional file the new lacks
+        marker = staging / CHAMPION_SOURCE
+        marker.write_text(json.dumps({"url": base_url, "pinned_sha256": expected_digest}))
+        os.replace(marker, directory / CHAMPION_SOURCE)
+        return fetched
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
@@ -206,31 +259,49 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
     root = config_path.resolve().parents[1]
     model_path = root / raw["model_path"]
     champion_url = os.environ.get("FRAUD_CHAMPION_URL")
-    from_network = False
-    if not model_path.exists() and champion_url:
+    # Where trust comes from is configuration, never whether files happen to be on disk
+    # or whether this particular start downloaded them. With a champion URL the artifact
+    # is the host's choice, pinned from outside the store, and every start re-verifies
+    # it; without one the champion directory is part of the reviewed build.
+    remote = bool(champion_url)
+    expected_digest: str | None = None
+    if champion_url:
         expected_digest = expected_champion_digest(
             champion_url, os.environ.get("FRAUD_CHAMPION_SHA256")
         )
         fetched = fetch_champion(
             model_path, champion_url, os.environ.get("FRAUD_CHAMPION_TOKEN"), expected_digest
         )
-        from_network = True
         request_log.info(
             json.dumps(
-                {"event": "champion_fetched", "files": fetched, "pinned": expected_digest[:12]}
+                {
+                    "event": "champion_fetched" if fetched else "champion_cache_verified",
+                    "files": fetched,
+                    "pinned": expected_digest[:12],
+                }
             )
         )
-    model = joblib.load(model_path)
-    artifact_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    elif (model_path.parent / CHAMPION_SOURCE).exists():
+        raise RuntimeError(
+            f"{model_path.parent} holds a champion fetched from an artifact store "
+            f"({CHAMPION_SOURCE}), and FRAUD_CHAMPION_URL is not set. A fetched bundle is "
+            "only trusted against its pin; set FRAUD_CHAMPION_URL again, or remove the "
+            "directory to serve a locally built champion."
+        )
+    # Every check that can be made on bytes is made before joblib.load executes them.
+    artifact_sha256 = _sha256(model_path)
     digest = artifact_sha256[:12]
+    if expected_digest is not None and not artifact_sha256.startswith(expected_digest):
+        raise RuntimeError(  # fetch_champion guarantees this; checked again at the load
+            f"{model_path.name} is sha256 {digest}, not the pinned {expected_digest[:12]}"
+        )
     # `champion_sha256`, when the config names one, is the artifact these bands were
-    # reviewed for (ADR 0012). It is checked on the *fetched* champion only: that is the
-    # case where the host decides which artifact to load (FRAUD_CHAMPION_URL) while the
-    # bands come from this file, so without it a host pointed at a newer champion would
-    # serve a block threshold nobody approved and pass every other check. A champion
-    # directory built into the image is already part of a reviewed build, and CI's
-    # fixture artifact has no reviewed policy to contradict.
-    pinned = raw.get("champion_sha256") if from_network else None
+    # reviewed for (ADR 0012). It is checked whenever the host decides which artifact
+    # to load (FRAUD_CHAMPION_URL) while the bands come from this file — on every start,
+    # cached or not — so a host pointed at a newer champion cannot serve a block
+    # threshold nobody approved. A champion directory built into the image is already
+    # part of a reviewed build, and CI's fixture artifact has no reviewed policy.
+    pinned = raw.get("champion_sha256") if remote else None
     if pinned and not artifact_sha256.startswith(str(pinned).strip().lower()):
         raise RuntimeError(
             f"{model_path.name} is sha256 {digest}, not the {pinned} that "
@@ -249,7 +320,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
             )
         raw["model_version"] = manifest["model_version"]
         raw["model_info"] = {**raw.get("model_info", {}), **manifest["model_info"]}
-        if from_network:
+        if remote:
             # Bands decide block and review, so they are policy (ADR 0006), and a manifest
             # fetched from the store is not digest-pinned the way model.joblib is: one that
             # kept artifact_sha256 correct could set thresholds and pass every other check.
@@ -265,6 +336,7 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
                 )
         else:
             raw["bands"] = manifest["bands"]
+    model = joblib.load(model_path)
     bands = Bands(**raw["bands"])
     if not 0.0 <= bands.review <= bands.block <= 1.0:
         raise ValueError(f"bands must satisfy 0 <= review <= block <= 1, got {bands}")

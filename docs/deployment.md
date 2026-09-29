@@ -222,8 +222,9 @@ the existing champion verification still apply.
 |---|---|---|
 | scoring key | `FRAUD_API_KEY` (an environment variable on the host; unset on the free demo) | when set, `/predict*` and `/explain` require a matching `X-API-Key` (constant-time compare) → 401 before the body is read; `/health`, `/model-info` and the dashboard stay open, and `/health` reports `auth: api_key`. The dashboard shows a key field when the server asks for one and keeps it in the browser only. Unset = open, for the demo and local use. |
 | admin key | `FRAUD_ADMIN_API_KEY` (unset on the free demo) | `POST /outcomes` and `GET /audit/*` are operational endpoints — one writes the delayed-label store, the others read scored rows (`/audit/recent`) and build the monitoring report over them (`/audit/monitor`, ADR 0011). They answer only to this key, never to the scoring key, and while it is unset they return 403 (`/health` reports `admin: disabled`). Fail-closed: a host with no configuration exposes nothing beyond scoring. `deploy_check.py` asserts an anonymous `/audit/recent` is refused on every deployment. |
-| upload cap | `serving.yaml` `max_upload_bytes` (25 MB) | declared length checked, then the stream abandoned the moment it exceeds the cap → 413; the row limit stops the parser one row past 5,000 → 422 |
-| time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. It bounds the client's wait; a scoring call already running in the thread pool finishes on its own (`/health` stays responsive, as the check below shows). |
+| body caps | `serving.yaml` `max_upload_bytes` (25 MB, CSV file) and `max_json_bytes` (16 MB, any JSON POST) | enforced at the ASGI receive layer (`BodyLimit`), under the key check and before FastAPI parses anything: a declared length over the cap → 413 without reading; otherwise the bytes are counted as they arrive and the request stops at the first chunk past the cap → 413. The row limit stops the CSV parser one row past 5,000 → 422 |
+| time budget | `serving.yaml` `request_timeout_s` (60 s) | a guarded call past the budget → 504. CSV and JSON batches are scored in a bounded worker pool, off the event loop, and answer 504 at the deadline themselves; the abandoned thread finishes its computation but records nothing (`check_deadline` runs before inference and again before the decisions are written), so **a 504 decided nothing** and spent no review budget. `/health` stays responsive throughout. |
+| bulk concurrency | `serving.yaml` `max_concurrent_bulk` (2) | CSV and JSON batches scored at once; as many again may queue; beyond that → 503 with `Retry-After: 5`, so a burst is turned away at once instead of each request waiting out its time budget in line |
 | request IDs | `X-Request-ID` honoured or generated | echoed on every response, stored on every audit row and request record, present in every log line |
 | structured logs | logger `fraud.serve.requests` | one JSON line per guarded call — `ts, request_id, method, path, status, latency_ms, rows, client` — success, 401, 422, 429 and 504 alike; Fly ships stdout to `flyctl logs` |
 | metrics endpoint | none | there is no `/metrics`, no collector and no dashboard. The signals one would scrape (latency p50 / p95 / max, error rate, throughput per endpoint) are in the `requests` table and the monitoring report instead; the reasons that stack is not wired are in `docs/monitoring.md` → *Why there is no metrics collector, dashboard or tracing stack* |
@@ -294,6 +295,12 @@ The earlier throughput results below predate application rate limiting.
 Checked against a live server with a 0.5 s budget: a 4.7 MB upload without
 a key → 401 in 0.9 ms (nothing read); with the key → 504; `/health` 200
 in 1.6 ms afterwards.
+
+Checked 2026-09-29 against local uvicorn: a 30 MB multipart upload with its
+length declared → 413 in 2 ms with nothing sent; the same 30 MB as a chunked
+JSON body (no length) → 413 once the cap was crossed. In the tests, a batch whose
+scoring takes 1.5 s under a 0.3 s budget answers 504 in under 1 s, `/health`
+answers in under 0.25 s while it runs, and the audit trail is empty afterwards.
 
 ## Sizing evidence
 

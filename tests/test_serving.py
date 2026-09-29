@@ -838,6 +838,161 @@ def test_request_time_budget_returns_504(served: dict[str, Any], tmp_path: Path)
         assert c.get("/health").status_code == 200  # unguarded paths are not bounded
 
 
+def _config(served: dict[str, Any], tmp_path: Path, extra: str) -> Path:
+    cfg = tmp_path / "serving.yaml"
+    text = (
+        Path(served["config"])
+        .read_text()
+        .replace(
+            "model_path: models/m.joblib",
+            f"model_path: {Path(served['config']).parents[1] / 'models' / 'm.joblib'}",
+        )
+    )
+    cfg.write_text(text + extra)
+    return cfg
+
+
+@pytest.mark.parametrize("endpoint", ["/predict/csv", "/predict/batch"])
+def test_a_slow_upload_neither_stalls_the_service_nor_outlives_its_budget(
+    served: dict[str, Any], tmp_path: Path, endpoint: str
+) -> None:
+    """CSV work used to run on the event loop: a 50 ms budget answered after ~590 ms and
+    /health waited ~540 ms behind it. Now the loop stays free, the 504 arrives at the
+    deadline, and the abandoned work records nothing when it finishes."""
+    import threading
+
+    cfg = _config(
+        served, tmp_path, f"audit_db: {tmp_path / 'audit.sqlite'}\nrequest_timeout_s: 0.3\n"
+    )
+    rows: pd.DataFrame = served["rows"].head(20)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+    with TestClient(create_app(cfg)) as c:
+        state = c.app.state.serving  # type: ignore[attr-defined]
+        model = state.model
+        real = model.predict_proba
+
+        def slow(frame: pd.DataFrame) -> Any:
+            time.sleep(1.5)
+            return real(frame)
+
+        model.predict_proba = slow
+        outcome: dict[str, Any] = {}
+
+        batch = {"transactions": [_payload(r) for _, r in rows.iterrows()]}
+
+        def upload() -> None:
+            t = time.perf_counter()
+            if endpoint == "/predict/csv":
+                r = c.post(endpoint, files={"file": ("q.csv", csv, "text/csv")})
+            else:
+                r = c.post(endpoint, json=batch)
+            outcome.update(status=r.status_code, seconds=time.perf_counter() - t)
+
+        worker = threading.Thread(target=upload)
+        worker.start()
+        time.sleep(0.1)
+        t = time.perf_counter()
+        assert c.get("/health").status_code == 200
+        health_seconds = time.perf_counter() - t
+        worker.join()
+        time.sleep(1.8)  # let the abandoned thread finish, and try to record
+        model.predict_proba = real
+
+        assert outcome["status"] == 504
+        assert outcome["seconds"] < 1.0, outcome  # not the 1.5 s of work behind it
+        assert health_seconds < 0.25, health_seconds
+        assert state.audit.count() == 0  # a 504 decided nothing
+
+
+def _stream_body(
+    app: Any, path: str, ctype: bytes, first: bytes, chunk: bytes, n_chunks: int
+) -> tuple[int, int]:
+    """POST a body chunk by chunk straight into the ASGI app; how many chunks it pulled."""
+    import anyio
+
+    pulled = 0
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        nonlocal pulled
+        pulled += 1
+        body = first if pulled == 1 else chunk
+        return {"type": "http.request", "body": body, "more_body": pulled < n_chunks}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": "POST", "scheme": "http", "path": path, "raw_path": path.encode(),
+        "root_path": "", "query_string": b"", "headers": [(b"content-type", ctype)],
+        "client": ("127.0.0.1", 1), "server": ("testserver", 80),
+    }  # fmt: skip
+    anyio.run(app, scope, receive, send)
+    return pulled, next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+def test_an_oversized_body_is_refused_while_it_streams(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """The cap holds before any parser sees the body: read_upload ran only after FastAPI
+    had already received and spooled the whole multipart file. Driven at the ASGI layer
+    so the number of chunks actually pulled from the client can be counted."""
+    cfg = _config(
+        served, tmp_path, "audit_db: null\nmax_upload_bytes: 8000\nmax_json_bytes: 8000\n"
+    )
+    chunk, n_chunks = b"x" * 1024, 500  # a 500 kB body, sent without a Content-Length
+    with TestClient(create_app(cfg)) as c:
+        part = (
+            b'--zz\r\nContent-Disposition: form-data; name="file"; filename="q.csv"\r\n'
+            b"Content-Type: text/csv\r\n\r\n"
+        )  # a well-formed start, so the parser is still reading the file when the cap hits
+        for path, ctype, first in (
+            ("/predict/batch", b"application/json", b"["),
+            ("/predict/csv", b"multipart/form-data; boundary=zz", part),
+        ):
+            pulled, status = _stream_body(c.app, path, ctype, first, chunk, n_chunks)
+            limit_chunks = (8000 + (64 * 1024 if path.endswith("csv") else 0)) // 1024
+            assert status == 413, (path, status)
+            assert pulled <= limit_chunks + 2, (path, pulled)  # stopped at the cap, not 500
+
+        # an honest Content-Length over the cap is refused without reading at all
+        r = c.post(
+            "/predict/batch",
+            content=b"{" + b" " * 9000 + b"}",
+            headers={"content-type": "application/json"},
+        )
+        assert r.status_code == 413 and "8000" in r.text
+
+
+def test_bulk_work_beyond_the_queue_is_turned_away(served: dict[str, Any], tmp_path: Path) -> None:
+    """Admission control: with every slot busy and the queue full, a new CSV or batch gets
+    a 503 with Retry-After at once instead of waiting out its whole time budget."""
+    cfg = _config(served, tmp_path, "audit_db: null\nmax_concurrent_bulk: 1\n")
+    rows: pd.DataFrame = served["rows"].head(3)
+    csv = rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+    batch = {"transactions": [_payload(r) for _, r in rows.iterrows()]}
+
+    class Full:  # one scoring running, one already queued behind it
+        total_tokens = 1
+
+        def statistics(self) -> Any:
+            return type("Stats", (), {"tasks_waiting": 1})()
+
+    with TestClient(create_app(cfg)) as c:
+        state = c.app.state.serving  # type: ignore[attr-defined]
+        real = state.bulk_slots
+        object.__setattr__(state, "bulk_slots", Full())  # the state is frozen for the app
+        try:
+            r = c.post("/predict/csv", files={"file": ("q.csv", csv, "text/csv")})
+            assert r.status_code == 503 and r.headers["Retry-After"] == "5"
+            assert c.post("/predict/batch", json=batch).status_code == 503
+        finally:
+            object.__setattr__(state, "bulk_slots", real)
+        assert c.post("/predict/csv", files={"file": ("q.csv", csv, "text/csv")}).status_code == 200
+        assert c.post("/predict/batch", json=batch).status_code == 200
+
+
 def test_every_guarded_call_logs_one_json_line(
     client: TestClient, served: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:

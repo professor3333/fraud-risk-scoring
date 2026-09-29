@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from fraud.data import schema
-from fraud.serve.schemas import IDENTITY_FIELDS
+from fraud.serve.schemas import IDENTITY_FIELDS, MAX_INT, MAX_TEXT, REQUIRED
 
 INPUT_COLUMNS: tuple[str, ...] = (
     tuple(c for c in schema.TRANSACTION_COLS if c != schema.TARGET_COL) + IDENTITY_FIELDS
@@ -75,41 +76,92 @@ def payloads_to_frame(payloads: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(columns)
 
 
+class TableError(ValueError):
+    """An upload that breaks the input contract, with every offending cell located.
+
+    ``errors`` has FastAPI's validation shape, so a CSV and a JSON batch are refused
+    the same way: ``{"loc": ["file", row, column], "msg": ..., "type": ...}``, with
+    ``row`` the 1-based data row (the header is not counted).
+    """
+
+    MAX_REPORTED = 50
+
+    def __init__(self, errors: list[dict[str, Any]], total: int) -> None:
+        self.errors = errors
+        self.total = total
+        more = f" (first {len(errors)} shown)" if total > len(errors) else ""
+        super().__init__(f"{total} invalid value(s){more}: {errors[0]['msg']}")
+
+
+_INTEGER = r"^\s*\d+(\.0*)?\s*$"  # 12, 12.0 — never 1.9, -1, 1e3 or a blank
+
+
 def table_to_frame(table: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """A whole uploaded table (e.g. a CSV read as strings) -> the frame the pipeline expects.
 
-    Vectorised twin of :func:`request_to_frame`: same columns, same dtypes, same
-    ``has_identity`` rule. Unknown columns are ignored and reported back; a
-    missing required column or an unparsable number raises ``ValueError``.
+    Vectorised twin of :func:`request_to_frame`, under the same contract as the JSON
+    request model (`fraud.serve.schemas`): ids and times are exact non-negative integers
+    within int64, numbers are finite, the amount is positive, required fields are not
+    blank, text is at most ``MAX_TEXT`` characters, ids are unique, and a blank cell is a
+    missing value. Unknown columns are ignored and reported back. A missing required
+    column raises ``ValueError``; bad cells raise :class:`TableError` naming each one.
     """
-    required = (schema.ID_COL, schema.TIME_COL, "TransactionAmt", "ProductCD", "card1")
-    missing = [c for c in required if c not in table.columns]
+    missing = [c for c in REQUIRED if c not in table.columns]
     if missing:
         raise ValueError(f"missing required column(s): {missing}")
     ignored = sorted(c for c in table.columns if c not in INPUT_COLUMNS)
+    errors: list[dict[str, Any]] = []
+    total = 0
+
+    def flag(bad: np.ndarray, col: str, msg: str, kind: str) -> None:
+        nonlocal total
+        rows = np.flatnonzero(bad)
+        total += len(rows)
+        for r in rows[: max(TableError.MAX_REPORTED - len(errors), 0)]:
+            errors.append({"loc": ["file", int(r) + 1, col], "msg": msg, "type": kind})
+
     columns: dict[str, pd.Series] = {}
     for col in INPUT_COLUMNS:
         raw = table[col] if col in table.columns else pd.Series([None] * len(table))
         raw = raw.where(raw.notna() & (raw.astype("str").str.strip() != ""), other=None)
+        blank = raw.isna().to_numpy()
+        if col in REQUIRED:
+            flag(blank, col, "Field required", "missing")
         if col in _STR_COLS:
+            too_long = (raw.astype("str").str.len() > MAX_TEXT).to_numpy() & ~blank
+            flag(
+                too_long,
+                col,
+                f"String should have at most {MAX_TEXT} characters",
+                "string_too_long",
+            )
             columns[col] = pd.Series(raw.to_numpy(), dtype="str")
             continue
-        try:
-            numeric = pd.to_numeric(raw, errors="raise")
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"column {col!r} has a non-numeric value: {exc}") from exc
         if col in (schema.ID_COL, schema.TIME_COL):
-            if numeric.isna().any():
-                raise ValueError(f"column {col!r} has empty values")
-            columns[col] = pd.Series(numeric.to_numpy(), dtype="float64").astype("int64")
-        else:
-            columns[col] = pd.Series(numeric.to_numpy(), dtype="float64")
+            text = raw.astype("str")
+            exact = text.str.match(_INTEGER).to_numpy() & ~blank
+            flag(~exact & ~blank, col, "Input should be a non-negative whole number", "int_parsing")
+            digits = text.where(exact, "0").str.strip().str.split(".").str[0].str.lstrip("0")
+            digits = digits.where(digits != "", "0")
+            big = digits.str.len().to_numpy() > len(str(MAX_INT))
+            big |= ~big & (digits.str.zfill(len(str(MAX_INT))) > str(MAX_INT)).to_numpy()
+            flag(big, col, f"Input should be less than or equal to {MAX_INT}", "less_than_equal")
+            columns[col] = digits.where(~big, "0").astype("int64")
+            continue
+        numeric = pd.to_numeric(raw, errors="coerce").astype("float64")
+        values = numeric.to_numpy()
+        flag(np.isnan(values) & ~blank, col, "Input should be a valid number", "float_parsing")
+        flag(np.isinf(values), col, "Input should be a finite number", "finite_number")
+        if col == "TransactionAmt":
+            flag(values <= 0, col, "Input should be greater than 0", "greater_than")
+        columns[col] = numeric
+    ids = columns[schema.ID_COL]
+    flag(ids.duplicated(keep=False).to_numpy(), schema.ID_COL,
+         f"{schema.ID_COL} must be unique within an upload", "value_error")  # fmt: skip
+    if total:
+        raise TableError(errors, total)
     frame = pd.DataFrame(columns)
     frame[schema.HAS_IDENTITY_COL] = frame[list(IDENTITY_FIELDS)].notna().any(axis=1)
-    if (frame["TransactionAmt"] <= 0).any():
-        raise ValueError("TransactionAmt must be positive")
-    if not frame[schema.ID_COL].is_unique:
-        raise ValueError(f"{schema.ID_COL} must be unique within an upload")
     return frame, ignored
 
 

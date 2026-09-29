@@ -322,7 +322,14 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
                 f"({manifest['artifact_sha256'][:12]}); promote again or restore the champion"
             )
         raw["model_version"] = manifest["model_version"]
-        raw["model_info"] = {**raw.get("model_info", {}), **manifest["model_info"]}
+        # The config's model facts were written for one artifact, the one `champion_sha256`
+        # names. They fill gaps in the manifest only for that artifact: for any other, a
+        # fact the manifest does not state is unknown, not the predecessor's. A retrained
+        # champion otherwise reported its predecessor's test PR-AUC as its own.
+        config_pin = str(raw.get("champion_sha256") or "").strip().lower()
+        own_facts = bool(config_pin) and artifact_sha256.startswith(config_pin)
+        inherited = raw.get("model_info", {}) if own_facts else {}
+        raw["model_info"] = {**inherited, **manifest["model_info"]}
         if remote:
             # Bands decide block and review, so they are policy (ADR 0006), and a manifest
             # fetched from the store is not digest-pinned the way model.joblib is: one that

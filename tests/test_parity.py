@@ -194,3 +194,38 @@ def test_production_artifact_parity(full_raw_dir: Path) -> None:
             assert body["fraud_probability"] == pytest.approx(
                 expected[str(int(row[schema.ID_COL]))], abs=1e-9
             )
+
+
+def test_degenerate_parity_inputs_are_refused_not_passed(
+    frozen_fixture: dict, tmp_path: Path
+) -> None:
+    """Reproduced: a model predicting NaN everywhere passed, because NaN > tolerance is
+    False. An empty sample or a golden for other transactions passed the same way."""
+    import shutil
+
+    artifact = tmp_path / "m.joblib"
+    shutil.copyfile(frozen_fixture["artifact"], artifact)
+    for src, dst in zip(
+        frozen_paths(frozen_fixture["artifact"]), frozen_paths(artifact), strict=True
+    ):
+        shutil.copyfile(src, dst)
+    model = joblib.load(artifact)
+
+    class NaNModel:
+        def predict_proba(self, frame: pd.DataFrame) -> np.ndarray:
+            return np.full((len(frame), 2), np.nan)
+
+    with pytest.raises(RuntimeError, match="non-finite"):
+        verify(NaNModel(), artifact)
+
+    sample_path, expected_path = frozen_paths(artifact)
+    golden = json.loads(expected_path.read_text())
+    sample_path.write_text("[]")
+    with pytest.raises(RuntimeError, match="empty"):
+        verify(model, artifact)
+
+    shutil.copyfile(frozen_paths(frozen_fixture["artifact"])[0], sample_path)
+    golden["probabilities"] = dict(list(golden["probabilities"].items())[1:])  # one missing
+    expected_path.write_text(json.dumps(golden))
+    with pytest.raises(RuntimeError, match="same transactions"):
+        verify(model, artifact)

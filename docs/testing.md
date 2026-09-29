@@ -85,3 +85,4 @@ The full IEEE model is never trained in CI; every step runs on the fixture
 in under two minutes. The Docker build uses a fixture-trained stand-in
 artifact (`scripts/make_fixture_artifact.py`) so the Dockerfile and the
 startup parity check are exercised without the competition data.
+| degenerate numbers fail closed: a NaN metric fails its gate, a NaN / empty / mismatched parity sample is refused, an empty upper threshold does not end the block scan (and no qualifying threshold is an explicit error); the Parquet cache is keyed on its raw files' digests; a champion's model facts are its own | `test_promotion::test_a_metric_that_could_not_be_computed_fails_its_gate`, `test_parity::test_degenerate_parity_inputs_are_refused_not_passed`, `test_model::test_an_empty_upper_threshold_does_not_end_the_block_scan`, `test_data::test_the_parquet_cache_follows_its_raw_files`, `test_serving::test_a_new_champion_does_not_inherit_its_predecessors_test_metric` |

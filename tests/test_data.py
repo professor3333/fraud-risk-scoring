@@ -134,3 +134,30 @@ def test_row_count_check_uses_published_counts(tx: pd.DataFrame) -> None:
     assert EXPECTED_ROWS == {"train_transaction.csv": 590_540, "train_identity.csv": 144_233}
     with pytest.raises(SchemaError, match="expected 590,540"):
         check_row_count(tx, "train_transaction.csv")
+
+
+def test_the_parquet_cache_follows_its_raw_files(fixture_raw_dir: Path, tmp_path: Path) -> None:
+    """Reproduced: changing a fixture amount from 6 to 9876.54 still loaded 6, because
+    the cache was trusted for existing. It is now keyed on the raw files' digests."""
+    import shutil
+
+    from fraud.data.load import CACHE_FILE, TRANSACTION_FILE, load_train
+
+    raw = tmp_path / "raw"
+    shutil.copytree(fixture_raw_dir, raw)
+    cache = tmp_path / "cache"
+    first = load_train(raw, cache_dir=cache)
+    tid = int(first[schema.ID_COL].iloc[0])
+
+    tx = pd.read_csv(raw / TRANSACTION_FILE, dtype="str", keep_default_na=False)
+    tx.loc[tx[schema.ID_COL] == str(tid), "TransactionAmt"] = "9876.54"
+    tx.to_csv(raw / TRANSACTION_FILE, index=False)
+
+    second = load_train(raw, cache_dir=cache)
+    amount = second.loc[second[schema.ID_COL] == tid, "TransactionAmt"].item()
+    assert amount == 9876.54
+    # an unchanged source reuses the cache, and a cache without its identity is rebuilt
+    assert load_train(raw, cache_dir=cache).equals(second)
+    (cache / f"{CACHE_FILE}.meta.json").unlink()
+    assert load_train(raw, cache_dir=cache).equals(second)
+    assert (cache / f"{CACHE_FILE}.meta.json").exists()

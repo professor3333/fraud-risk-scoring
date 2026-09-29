@@ -6,6 +6,8 @@ identity onto transactions. Nothing here is fit; nothing is dropped or imputed.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -34,6 +36,25 @@ __all__ = [
 ]
 
 CACHE_FILE = "train.parquet"
+#: Bump when what load_train produces from the same CSVs changes (dtypes, the join,
+#: added columns): a cache built by an older version is then rebuilt, not trusted.
+CACHE_VERSION = 1
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 22), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def cache_identity(raw_dir: Path) -> dict[str, object]:
+    """What a cache must have been built from to stand in for these raw files."""
+    return {
+        "cache_version": CACHE_VERSION,
+        "sources": {n: _file_sha256(raw_dir / n) for n in (TRANSACTION_FILE, IDENTITY_FILE)},
+    }
 
 
 def _read_csv(path: Path, str_cols: frozenset[str]) -> pd.DataFrame:
@@ -72,14 +93,21 @@ def join_transaction_identity(tx: pd.DataFrame, idn: pd.DataFrame) -> pd.DataFra
 def load_train(raw_dir: Path, cache_dir: Path | None = None) -> pd.DataFrame:
     """Return the joined, validated training frame, using a Parquet cache if given.
 
-    The cache is a pure convenience: it holds exactly what the CSV path produces.
+    The cache is a pure convenience: it holds exactly what the CSV path produces from
+    the same files. So it is used only when its sidecar records the sha256 of both raw
+    files and the current ``CACHE_VERSION``; anything else rebuilds it. Existence alone
+    used to be enough, and an edited CSV kept loading its old values from the cache.
+    Hashing the ~700 MB of raw CSVs costs about 0.6 s, a quarter of the Parquet read.
     """
+    identity = cache_identity(raw_dir) if cache_dir is not None else None
     if cache_dir is not None:
-        cache = cache_dir / CACHE_FILE
-        if cache.exists():
+        cache, meta = cache_dir / CACHE_FILE, cache_dir / f"{CACHE_FILE}.meta.json"
+        if cache.exists() and meta.exists() and json.loads(meta.read_text()) == identity:
             return pd.read_parquet(cache)
     df = join_transaction_identity(load_transactions(raw_dir), load_identity(raw_dir))
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(cache_dir / CACHE_FILE, index=False)
+        meta.unlink(missing_ok=True)  # never a new cache under an old identity
+        df.to_parquet(cache, index=False)
+        meta.write_text(json.dumps(identity, indent=2))
     return df

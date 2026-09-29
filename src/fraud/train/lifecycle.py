@@ -27,7 +27,7 @@ import yaml
 
 from fraud.data import schema
 from fraud.evaluate.metrics import compute_metrics
-from fraud.evaluate.policy import block_threshold, operating_points
+from fraud.evaluate.policy import NoBlockThresholdError, block_threshold, operating_points
 from fraud.features.columns import FeatureSpec, load_feature_spec
 from fraud.pipeline.build import build_pipeline
 from fraud.pipeline.calibrated import CalibratedModel
@@ -118,7 +118,10 @@ def select_block_threshold(
     p = model.predict_proba(month)[:, 1]
     n_days = int(_day(month).nunique())
     points = operating_points(month[target], p, n_days, np.round(np.arange(0.01, 0.99, 0.005), 6))
-    return block_threshold(points, min_precision)
+    try:
+        return block_threshold(points, min_precision)
+    except NoBlockThresholdError:
+        return 1.0  # nothing is precise enough to block on: block nothing
 
 
 def eventual_on_served_month(

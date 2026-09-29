@@ -179,7 +179,7 @@ def run_cycle(
 def cycle_info(result: CycleResult, retrain: RetrainConfig, experiment: str) -> dict[str, Any]:
     """The manifest's `model_info` for a retrained champion.
 
-    `test_pr_auc` is deliberately absent: a model retrained through the end of the
+    `test_pr_auc` is deliberately null: a model retrained through the end of the
     matured data has no untouched test window left to report one on, and carrying the
     previous champion's number forward would attribute it to an artifact that never
     earned it (`/model-info` reports null).
@@ -194,4 +194,5 @@ def cycle_info(result: CycleResult, retrain: RetrainConfig, experiment: str) -> 
         "training_window_days": [1, result.train_end],
         "validation_window_days": [result.month[0], result.month[1]],
         "retrained_as_of_day": result.as_of_day,
+        "test_pr_auc": None,  # explicit: an absent key used to inherit the old champion's
     }

@@ -95,11 +95,26 @@ def verify(model: Any, artifact: Path, tolerance: float = TOLERANCE) -> ParityRe
             f"made for ({expected['artifact_sha256'][:12]}); re-freeze or restore the artifact"
         )
     sample = payloads_to_frame(json.loads(sample_path.read_text()))
+    ids = [str(int(i)) for i in sample[schema.ID_COL].to_numpy()]
+    golden: dict[str, float] = expected["probabilities"]
+    # Every comparison below fails open on a degenerate input: an empty sample has no
+    # difference to exceed, and `NaN > tolerance` is false. So they are refused first.
+    if not ids:
+        raise RuntimeError(f"the frozen sample for {artifact.name} is empty")
+    if len(set(ids)) != len(ids) or set(ids) != set(golden):
+        raise RuntimeError(
+            f"the frozen sample and golden for {artifact.name} do not cover the same "
+            "transactions; re-freeze the artifact"
+        )
     got = np.asarray(model.predict_proba(sample)[:, 1], dtype=float)
-    want = np.array(
-        [expected["probabilities"][str(int(i))] for i in sample[schema.ID_COL].to_numpy()]
-    )
-    max_diff = float(np.max(np.abs(got - want))) if len(got) else 0.0
+    want = np.array([golden[i] for i in ids], dtype=float)
+    if got.shape != want.shape:
+        raise RuntimeError(
+            f"parity failure on {artifact.name}: {got.shape} scores for {want.shape}"
+        )
+    if not (np.isfinite(got).all() and np.isfinite(want).all()):
+        raise RuntimeError(f"parity failure on {artifact.name}: non-finite probabilities")
+    max_diff = float(np.max(np.abs(got - want)))
     if max_diff > tolerance:
         worst = int(np.argmax(np.abs(got - want)))
         raise RuntimeError(

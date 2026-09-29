@@ -1726,3 +1726,47 @@ def test_monitor_endpoint_is_admin_only(served: dict[str, Any], tmp_path: Path) 
     (tmp_path / "keyed").mkdir()
     with _fresh_client(served, tmp_path / "keyed", admin_key="adm1n") as c:
         assert c.get("/audit/monitor", headers={"X-API-Key": "wrong"}).status_code == 401
+
+
+def test_a_new_champion_does_not_inherit_its_predecessors_test_metric(
+    served: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduced: a retrained champion's manifest omits test_pr_auc (it has no untouched
+    window left), and the service merged the config's value, the previous champion's,
+    underneath it. The config's facts now belong to the artifact champion_sha256 names."""
+    import hashlib
+    import shutil
+
+    src = Path(served["config"]).parents[1] / "models"
+    champion = tmp_path / "svc" / "models" / "champion"
+    champion.mkdir(parents=True)
+    shutil.copyfile(src / "m.joblib", champion / "model.joblib")
+    shutil.copyfile(src / "m_frozen_sample.json", champion / "model_frozen_sample.json")
+    shutil.copyfile(src / "m_frozen_expected.json", champion / "model_frozen_expected.json")
+    sha = hashlib.sha256((champion / "model.joblib").read_bytes()).hexdigest()
+    (champion / "model_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_name": "retrained", "model_version": "retrained", "artifact_sha256": sha,
+                "bands": REVIEWED_BANDS,
+                "model_info": {"experiment": "retrain", "validation_pr_auc": 0.6},
+            }
+        )
+    )  # fmt: skip
+    (tmp_path / "svc" / "configs").mkdir()
+    cfg = tmp_path / "svc" / "configs" / "serving.yaml"
+    monkeypatch.delenv("FRAUD_CHAMPION_URL", raising=False)
+
+    def served_test_metric(pin: str) -> Any:
+        cfg.write_text(
+            "model_path: models/champion/model.joblib\naudit_db: null\nmodel_version: old\n"
+            f"champion_sha256: {pin}\nbands: {{review: 0.062, block: 0.42}}\n"
+            "model_info: {experiment: E022, test_pr_auc: 0.561, feature_set: f5}\n"
+        )
+        with TestClient(create_app(cfg)) as c:
+            info = c.get("/model-info").json()
+        assert info["experiment"] == "retrain" and info["validation_pr_auc"] == 0.6
+        return info["test_pr_auc"], info["feature_set"]
+
+    assert served_test_metric("0badc0de0bad") == (None, "")  # the predecessor's facts
+    assert served_test_metric(sha[:12]) == (0.561, "f5")  # this artifact's own facts

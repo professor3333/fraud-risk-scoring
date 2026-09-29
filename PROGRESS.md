@@ -58,14 +58,15 @@ policy whose block-precision target does not hold in every subgroup. MIT
 scheduled** (2026-09-21, ADR 0011): the service builds its own report over its
 audit trail (`GET /audit/monitor`), a daily GitHub Action fetches it and opens
 one labelled issue per alert episode, closing it on the first healthy run.
-**Retraining is scheduled** (2026-09-21, ADR 0012): a monthly cycle decides
-whether a month of matured labels the champion has not seen exists, fits a
-challenger, scores it and the champion on that month, applies ADR 0010's gates
-plus a margin, promotes, publishes the artifact and opens the policy change
-(bands + `champion_sha256`) as a pull request; merging it deploys through
-`deploy-champion.yml`, which verifies the live digest. Reading that diff is the
-only manual step, and it is the one that decides what happens to a customer's
-transaction.
+**Retraining is a simulated lifecycle, not a schedule** (ADR 0012, amended by
+ADR 0015 on 2026-09-29): the cycle decides whether a month of matured labels the
+champion has not seen exists, fits a challenger, scores it and the champion on
+that month, applies ADR 0010's gates plus a margin, promotes, publishes the
+artifact and proposes the policy change (bands + `champion_sha256`).
+`scripts/simulate_lifecycle.py` runs that whole path on a declared clock from an
+empty workspace. The monthly cron was removed: the dataset has no future, a
+runner has no label-feed clock, and under the 120-day maturity no month is newer
+than the champion, so it could only ever have waited.
 
 ## Completion evidence
 

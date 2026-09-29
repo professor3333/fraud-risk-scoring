@@ -1,5 +1,16 @@
-# Scheduled retraining: decide → retrain → gate → promote → publish → open the policy PR.
-# ADR 0012, docs/retraining.md.
+# Retraining, run by hand: decide → retrain → gate → promote → publish → open the policy PR.
+# ADR 0012, ADR 0015, docs/retraining.md.
+#
+# NOT scheduled (ADR 0015). The dataset ends at day 182, a runner has no label feed to
+# read a clock from, and under the 120-day label maturity no month is newer than the
+# champion: a monthly cron could only ever decide "wait". Two modes instead:
+#
+#   simulate (default)  scripts/simulate_lifecycle.py on a declared clock in a scratch
+#                       workspace: bootstrap, promote, publish to a local release store,
+#                       the policy diff, a service started from them, and two valid
+#                       skips. Uploads the workspace. Touches no release, config or PR.
+#   cycle               the single cycle below, on an explicit as_of_day, against the
+#                       champion configs/serving.yaml names. May publish and open a PR.
 #
 #   label feed clock (+ the live monitor's report, when the demo is configured)
 #     → scripts/retrain_cycle.py: is there a month of matured labels the champion
@@ -19,12 +30,16 @@
 name: retrain
 
 on:
-  schedule:
-    - cron: "40 3 1 * *"  # 03:40 UTC on the 1st: monthly, the step the cycle policy uses
   workflow_dispatch:
     inputs:
+      mode:
+        description: "simulate: the whole lifecycle in a scratch workspace; cycle: one real cycle"
+        required: true
+        type: choice
+        options: [simulate, cycle]
+        default: simulate
       as_of_day:
-        description: "Calendar day of the cycle (default: the label feed's clock)"
+        description: "cycle mode: calendar day of the cycle (required; a runner has no feed clock)"
         required: false
         type: string
       label_maturity_days:
@@ -79,10 +94,39 @@ jobs:
         if: steps.config.outputs.ready == 'true'
         run: uv sync --frozen
 
+      - name: Simulate the lifecycle
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'simulate'
+        run: |
+          set -euo pipefail
+          uv run python scripts/download_data.py
+          uv run python scripts/simulate_lifecycle.py --workspace "$RUNNER_TEMP/lifecycle"
+          cat reports/retrain/simulation.md >> "$GITHUB_STEP_SUMMARY"
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+      - name: Keep the simulation
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'simulate'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-simulation
+          path: |
+            reports/retrain/simulation.md
+            ${{ runner.temp }}/lifecycle/policy/
+            ${{ runner.temp }}/lifecycle/steps/
+            ${{ runner.temp }}/lifecycle/releases/
+          retention-days: 90
+
+      - name: A real cycle needs its clock
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle' && inputs.as_of_day == ''
+        run: |
+          echo "cycle mode needs as_of_day: a runner has no label feed to read a clock from" >&2
+          exit 1
+
       - name: Fetch the champion this repository has reviewed
         # The incumbent must be the artifact the served policy belongs to, not "the newest
         # release": configs/serving.yaml names it, and the cycle compares against that one.
-        if: steps.config.outputs.ready == 'true'
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle'
         run: |
           set -euo pipefail
           sha=$(uv run python -c "import yaml;print(yaml.safe_load(open('configs/serving.yaml')).get('champion_sha256',''))")
@@ -97,7 +141,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Fetch the training data
-        if: steps.config.outputs.ready == 'true'
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle'
         run: uv run python scripts/download_data.py
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
@@ -107,7 +151,7 @@ jobs:
         # Best effort: eventual PR-AUC below its reference can bring a cycle forward
         # (docs/monitoring.md). A demo that is asleep, unconfigured or idle just means
         # the trigger decides on the calendar alone.
-        if: steps.config.outputs.ready == 'true' && vars.RENDER_URL != ''
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle' && vars.RENDER_URL != ''
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -118,7 +162,7 @@ jobs:
 
       - name: Run the cycle
         id: cycle
-        if: steps.config.outputs.ready == 'true'
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle'
         run: |
           set -euo pipefail
           # Built with if/then, not `[ ... ] && ...`: under `set -e` a false test in the
@@ -142,7 +186,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
 
       - name: Keep the cycle's reports
-        if: steps.config.outputs.ready == 'true'
+        if: steps.config.outputs.ready == 'true' && inputs.mode == 'cycle'
         uses: actions/upload-artifact@v4
         with:
           name: retrain-cycle

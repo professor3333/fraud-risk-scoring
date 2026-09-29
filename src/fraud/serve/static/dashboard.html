@@ -224,18 +224,36 @@ function visible() {
   return out;
 }
 
+// Every value from the uploaded CSV or the API goes in as text or as a numeric style,
+// never through innerHTML: a cell holding markup must show as that markup, not run.
+function el(tag, props = {}, ...children) {
+  const n = document.createElement(tag);
+  if (props.className) n.className = props.className;
+  if (props.title != null) n.title = String(props.title);
+  if (props.style) Object.assign(n.style, props.style);
+  for (const c of children) n.append(c instanceof Node ? c : document.createTextNode(String(c ?? "")));
+  return n;
+}
+const RISK_BADGES = new Set(["high", "medium", "low"]);
+
 function render() {
-  const tbody = $("table").querySelector("tbody"); tbody.innerHTML = "";
+  const tbody = $("table").querySelector("tbody"); tbody.replaceChildren();
   const out = visible();
   $("shown").textContent = `${out.length.toLocaleString()} of ${rows.length.toLocaleString()} shown`;
-  if (!out.length) { tbody.innerHTML = '<tr><td colspan="9" class="empty">Nothing matches the filter.</td></tr>'; return; }
+  if (!out.length) {
+    const td = el("td", {className: "empty"}, "Nothing matches the filter."); td.colSpan = 9;
+    tbody.append(el("tr", {}, td)); return;
+  }
   const frag = document.createDocumentFragment();
   for (const r of out) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="num">${r.rank}</td><td>${r.transaction_id}</td>
-      <td class="num">${fmt(r.fraud_probability)}<span class="bar"><i style="width:${Math.min(100, r.fraud_probability * 100)}%"></i></span></td>
-      <td><span class="badge ${r.risk_level}">${r.risk_level === "medium" ? "review" : r.risk_level}</span></td>
-      <td>${r.action}</td><td class="num">${r.amount.toFixed(2)}</td><td>${r.product}</td><td>${r.card_type ?? "—"}</td><td>${r.has_identity ? "yes" : "no"}</td>`;
+    const width = Math.min(100, Math.max(0, Number(r.fraud_probability) * 100));
+    const badge = el("span", {className: "badge"}, r.risk_level === "medium" ? "review" : r.risk_level);
+    if (RISK_BADGES.has(r.risk_level)) badge.classList.add(r.risk_level);
+    const tr = el("tr", {},
+      el("td", {className: "num"}, r.rank), el("td", {}, r.transaction_id),
+      el("td", {className: "num"}, fmt(r.fraud_probability), el("span", {className: "bar"}, el("i", {style: {width: `${width}%`}}))),
+      el("td", {}, badge), el("td", {}, r.action), el("td", {className: "num"}, r.amount.toFixed(2)),
+      el("td", {}, r.product), el("td", {}, r.card_type ?? "—"), el("td", {}, r.has_identity ? "yes" : "no"));
     tr.onclick = () => inspect(r);
     frag.appendChild(tr);
   }
@@ -253,37 +271,50 @@ $("filter").onchange = render; $("search").oninput = render;
 function inspect(r) {
   $("i-title").textContent = `Transaction ${r.transaction_id} — ${r.action.toUpperCase()} (${r.risk_level} risk)`;
   $("i-meta").textContent = `fraud probability ${fmt(r.fraud_probability)} · rank ${r.rank} of ${rows.length} · amount ${r.amount.toFixed(2)} · product ${r.product}`;
-  const kv = $("i-kv"); kv.innerHTML = "";
   const keys = Object.keys(r.details).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
-  for (const k of keys) { const d = document.createElement("div"); d.innerHTML = `<b>${k}</b><span>${r.details[k]}</span>`; kv.appendChild(d); }
+  $("i-kv").replaceChildren(...keys.map(k => el("div", {}, el("b", {}, k), el("span", {}, r.details[k]))));
   $("inspect").classList.add("open");
   explain(r);
 }
 
 async function explain(r) {
-  const why = $("i-why"); why.innerHTML = `<h3>Why this score</h3><small>computing…</small>`;
+  const why = $("i-why");
+  why.replaceChildren(el("h3", {}, "Why this score"), el("small", {}, "computing…"));
   const body = {}; for (const [k, v] of Object.entries(r.details)) if (k !== "has_identity") body[k] = v;
   try {
     const res = await fetch("/explain?top_k=8", {method: "POST", headers: {"content-type": "application/json", ...keyHeader()}, body: JSON.stringify(body)});
     if (!res.ok) throw new Error(await res.text());
     const e = await res.json();
     const scale = Math.max(...e.signals.map(s => Math.abs(s.contribution)), 1e-6);
-    const rows = e.signals.map(s => {
+    const signalRows = e.signals.map(s => {
       const w = Math.min(50, 50 * Math.abs(s.contribution) / scale), up = s.contribution > 0;
-      const i = `<i class="${up ? "up" : "down"}" style="left:${up ? 50 : 50 - w}%;width:${w}%"></i>`;
-      return `<div class="row"><b>${s.feature}</b><span class="val" title="${s.value}">${s.value}</span><span><span class="cbar">${i}</span><span class="num">${up ? "+" : ""}${s.contribution.toFixed(2)} ${up ? "↑ risk" : "↓ risk"}</span></span></div>`;
-    }).join("");
+      const bar = el("i", {className: up ? "up" : "down", style: {left: `${up ? 50 : 50 - w}%`, width: `${w}%`}});
+      return el("div", {className: "row"}, el("b", {}, s.feature), el("span", {className: "val", title: s.value}, s.value),
+        el("span", {}, el("span", {className: "cbar"}, bar), el("span", {className: "num"}, `${up ? "+" : ""}${s.contribution.toFixed(2)} ${up ? "↑ risk" : "↓ risk"}`)));
+    });
     const fam = Object.entries(e.families).slice(0, 5).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v.toFixed(2)}`).join(" · ");
-    why.innerHTML = `<h3>Why this score</h3>${rows}
-      <small>log-odds: baseline ${e.bias.toFixed(2)} + shown ${(e.raw_margin - e.bias - e.other_contribution).toFixed(2)} + ${e.signals.length ? "other" : "all"} ${e.other_contribution.toFixed(2)} = ${e.raw_margin.toFixed(2)} → raw ${fmt(e.raw_probability)} → calibrated <b>${fmt(e.fraud_probability)}</b>. By family: ${fam}.
-      This is why the transaction ranks where it does; under the label definition it is not proof this purchase was fraudulent.</small>`;
-  } catch (err) { why.innerHTML = `<h3>Why this score</h3><small class="error">${err.message}</small>`; }
+    const note = el("small", {},
+      `log-odds: baseline ${e.bias.toFixed(2)} + shown ${(e.raw_margin - e.bias - e.other_contribution).toFixed(2)} + ${e.signals.length ? "other" : "all"} ${e.other_contribution.toFixed(2)} = ${e.raw_margin.toFixed(2)} → raw ${fmt(e.raw_probability)} → calibrated `,
+      el("b", {}, fmt(e.fraud_probability)),
+      `. By family: ${fam}. This is why the transaction ranks where it does; under the label definition it is not proof this purchase was fraudulent.`);
+    why.replaceChildren(el("h3", {}, "Why this score"), ...signalRows, note);
+  } catch (err) { why.replaceChildren(el("h3", {}, "Why this score"), el("small", {className: "error"}, err.message)); }
+}
+
+// RFC 4180 quoting, plus a leading apostrophe on text that a spreadsheet would read as a
+// formula (=, +, -, @, tab, CR). Numbers are written as numbers, so negatives stay numeric.
+function csvCell(v) {
+  if (v == null) return "";
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) || s !== s.trim() ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 $("download").onclick = () => {
   const out = visible();
   const header = ["rank", "transaction_id", "fraud_probability", "risk_level", "action", "amount", "product", "card_type", "has_identity"];
-  const csv = [header.join(","), ...out.map(r => header.map(h => r[h] ?? "").join(","))].join("\n");
+  const csv = [header.join(","), ...out.map(r => header.map(h => csvCell(r[h])).join(","))].join("\r\n");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"})); a.download = "ranked_transactions.csv"; a.click();
 };
 </script>

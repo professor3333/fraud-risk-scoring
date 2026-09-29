@@ -8,6 +8,7 @@ All selection happens on the validation window.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,114 @@ def apply_daily_rank_policy(
     return action, float(reviewed.min()) if len(reviewed) else None
 
 
+def released_capacity(budget_per_day: int, transaction_dt: ArrayLike) -> dict[int, int]:
+    """Reviews each transaction day has released by its latest transaction among these rows.
+
+    The serving rule (docs/review_policy.md): the budget is released through the day,
+    ``ceil(budget * fraction of the day elapsed)``, so a morning request cannot take the
+    evening's queue. A whole-day upload gets the full budget.
+    """
+    dt = np.asarray(transaction_dt, dtype=np.int64)
+    days = dt // SECONDS_PER_DAY
+    out: dict[int, int] = {}
+    for day in np.unique(days):
+        latest = int(dt[days == day].max())
+        elapsed = (latest - int(day) * SECONDS_PER_DAY + 1) / SECONDS_PER_DAY
+        out[int(day)] = int(math.ceil(max(int(budget_per_day), 0) * elapsed))
+    return out
+
+
+def replay_served_policy(
+    y_score: ArrayLike,
+    transaction_dt: ArrayLike,
+    block_threshold: float,
+    budget_per_day: int,
+    request_seconds: int | None = None,
+) -> np.ndarray:
+    """The actions the service would return if these rows arrived as requests.
+
+    The one implementation of the served rank policy used offline: promotion, the
+    monitoring reference and the replay report all call it, and serving calls the same
+    two pieces (`released_capacity`, `apply_daily_rank_policy`) per request with its
+    audit trail in place of the ``spent`` dictionary kept here.
+
+    ``request_seconds=None`` sends each transaction day as one request, as a daily
+    upload does: then it is exactly "block by threshold, review the day's top N".
+    A number sends consecutive windows of that many seconds, in time order, as an
+    online queue would: each request is ranked only against itself and the capacity
+    the day has released so far, so a late high score can find the day's slots taken
+    by earlier, lower ones. The gap between the two is what arrival order costs.
+    """
+    s = np.asarray(y_score, dtype=float)
+    dt = np.asarray(transaction_dt, dtype=np.int64)
+    if s.shape != dt.shape:
+        raise ValueError(f"scores {s.shape} and times {dt.shape} differ")
+    days = dt // SECONDS_PER_DAY
+    window = days if request_seconds is None else dt // int(request_seconds)
+    action = np.empty(len(s), dtype=object)
+    spent: dict[int, int] = {}
+    for w in np.unique(window):  # ascending: requests arrive in time order
+        rows = np.flatnonzero(window == w)
+        released = released_capacity(budget_per_day, dt[rows])
+        capacity = {d: max(r - spent.get(d, 0), 0) for d, r in released.items()}
+        got, _ = apply_daily_rank_policy(s[rows], days[rows], block_threshold, capacity)
+        action[rows] = got
+        for d in np.unique(days[rows]):
+            spent[int(d)] = spent.get(int(d), 0) + int((got[days[rows] == d] == "review").sum())
+    return action
+
+
+def policy_outcome(
+    y_true: ArrayLike,
+    action: ArrayLike,
+    amount: ArrayLike,
+    n_days: int,
+    costs: CostModel,
+    review: ReviewCost,
+    review_catch_rate: float = 1.0,
+) -> dict[str, float]:
+    """What a set of actions costs and catches, however they were decided.
+
+    ``review_catch_rate`` is the share of reviewed fraud an analyst actually stops; the
+    rest is approved in the end and costs a missed fraud. 1.0 is the assumption the
+    cost model was built on (configs/policy.yaml); lower values are its sensitivity.
+    """
+    y = np.asarray(y_true, dtype=bool)
+    a = np.asarray(amount, dtype=float)
+    act = np.asarray(action)
+    c = float(review_catch_rate)
+    if not 0.0 <= c <= 1.0:
+        raise ValueError(f"review_catch_rate must be in [0, 1], got {c}")
+    n_pos = int(y.sum())
+    blk, rev, app = act == "block", act == "review", act == "approve"
+    # costs: block = decline costs on legit; review = handling (+ delay on legit), and a
+    # reviewed fraud is caught with probability c; approve = missed fraud
+    cost = (
+        costs.false_positive.of(a[blk & ~y]).sum()
+        + (review.fixed + review.legit_amount_coef * a[rev & ~y]).sum()
+        + review.fixed * (rev & y).sum()
+        + (1 - c) * costs.false_negative.of(a[rev & y]).sum()
+        + costs.false_negative.of(a[app & y]).sum()
+    )
+    caught = (blk & y).sum() + c * (rev & y).sum()
+    return {
+        "blocked_per_day": blk.sum() / n_days,
+        "block_precision": (blk & y).sum() / blk.sum() if blk.sum() else 0.0,
+        "reviewed_per_day": rev.sum() / n_days,
+        "review_precision": (rev & y).sum() / rev.sum() if rev.sum() else 0.0,
+        "fraud_blocked_per_day": (blk & y).sum() / n_days,
+        "fraud_reviewed_per_day": (rev & y).sum() / n_days,
+        "fraud_approved_per_day": (app & y).sum() / n_days,
+        "recall_block": (blk & y).sum() / n_pos if n_pos else 0.0,
+        "recall_block_plus_review": caught / n_pos if n_pos else 0.0,
+        "legit_declined_per_day": (blk & ~y).sum() / n_days,
+        "fraud_amount_caught_share": float((a[blk & y].sum() + c * a[rev & y].sum()) / a[y].sum())
+        if y.any()
+        else 0.0,
+        "total_cost": float(cost),
+    }
+
+
 def evaluate_policy(
     y_true: ArrayLike,
     y_score: ArrayLike,
@@ -241,35 +350,13 @@ def evaluate_policy(
     costs: CostModel,
     review: ReviewCost,
 ) -> dict[str, float]:
-    y = np.asarray(y_true, dtype=bool)
-    a = np.asarray(amount, dtype=float)
-    action = apply_policy(y_score, policy)
+    """The fixed-band policy (``policy="threshold"``) priced by :func:`policy_outcome`."""
     n_days = len(np.unique(np.asarray(day)))
-    n_pos = int(y.sum())
-    blk, rev, app = action == "block", action == "review", action == "approve"
-    # costs: block = decline costs on legit; review = handling (+ delay on legit), fraud caught;
-    # approve = missed fraud
-    cost = (
-        costs.false_positive.of(a[blk & ~y]).sum()
-        + (review.fixed + review.legit_amount_coef * a[rev & ~y]).sum()
-        + review.fixed * (rev & y).sum()
-        + costs.false_negative.of(a[app & y]).sum()
-    )
     return {
         "block_threshold": policy.block_threshold,
         "review_threshold": policy.review_threshold,
         "budget_per_day": float(policy.budget_per_day),
-        "blocked_per_day": blk.sum() / n_days,
-        "block_precision": (blk & y).sum() / blk.sum() if blk.sum() else 0.0,
-        "reviewed_per_day": rev.sum() / n_days,
-        "review_precision": (rev & y).sum() / rev.sum() if rev.sum() else 0.0,
-        "fraud_blocked_per_day": (blk & y).sum() / n_days,
-        "fraud_reviewed_per_day": (rev & y).sum() / n_days,
-        "fraud_approved_per_day": (app & y).sum() / n_days,
-        "recall_block": (blk & y).sum() / n_pos,
-        "recall_block_plus_review": ((blk | rev) & y).sum() / n_pos,
-        "legit_declined_per_day": (blk & ~y).sum() / n_days,
-        "total_cost": float(cost),
+        **policy_outcome(y_true, apply_policy(y_score, policy), amount, n_days, costs, review),
     }
 
 

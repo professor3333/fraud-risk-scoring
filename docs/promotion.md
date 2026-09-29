@@ -10,9 +10,10 @@ models/<run>_calibrated.joblib + frozen golden            candidate
         │
         ▼  scripts/promote.py --run-name <run>
 metrics on validation under the candidate's own policy   (block at the 80 % precision bar,
-        │                                                 review band sized to 200/day)
+        │                                                 then the served rank policy replayed
+        │                                                 with each day one request, ADR 0014)
         ▼
-gates vs the champion's manifest (configs/promotion.yaml) + parity
+gates vs the champion, re-measured on the same rows (configs/promotion.yaml) + parity
         │
         ├─ registry: fraud-risk-scorer version N, tags = verdict + every gate   (always)
         │
@@ -42,7 +43,7 @@ not a rule an unattended job should promote on.
 | `ece` | ≤ 0.01 | probabilities are used, not only ranks (ADR 0007) |
 | `brier` | ≤ champion + 0.0005 | calibration must not regress |
 | `block_precision` | ≥ 0.75 | the block band is defined by the 0.80 bar; 0.75 allows grid rounding |
-| `cost_per_transaction` | ≤ champion + 0.02 | ADR 0006 costs plus the review cost, per transaction |
+| `cost_per_transaction` | ≤ champion + 0.02 | ADR 0006 costs plus the review cost, per transaction, of the **served** policy (`replay_served_policy`, each day one request; ADR 0014). The hourly-request replay is reported beside it as `stream_*`, not gated |
 | parity | golden reproduced exactly | G8 |
 
 Absolute bounds always apply. The champion comparison applies when there is

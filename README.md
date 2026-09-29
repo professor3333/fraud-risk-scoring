@@ -267,7 +267,7 @@ configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   policy.yaml, serving.yaml, feedback.yaml, promotion.yaml,
                   alerting.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0013), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0014), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,

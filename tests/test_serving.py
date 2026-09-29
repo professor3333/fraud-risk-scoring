@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -1770,3 +1771,36 @@ def test_a_new_champion_does_not_inherit_its_predecessors_test_metric(
 
     assert served_test_metric("0badc0de0bad") == (None, "")  # the predecessor's facts
     assert served_test_metric(sha[:12]) == (0.561, "f5")  # this artifact's own facts
+
+
+@pytest.mark.parametrize("request_seconds", [None, 3600])
+def test_the_offline_replay_is_what_the_service_decides(
+    served: dict[str, Any], tmp_path: Path, request_seconds: int | None
+) -> None:
+    """Item 9: promotion, the monitoring reference and the replay report price
+    `replay_served_policy`. Sent to the service as the same requests, in the same order,
+    the same rows must get the same actions, or those numbers describe another policy."""
+    from fraud.evaluate.policy import replay_served_policy
+    from fraud.serve.frames import payloads_to_frame
+
+    payloads = [_payload(row) for _, row in served["rows"].iterrows()]
+    payloads.sort(key=lambda p: p[schema.TIME_COL])
+    budget = 2
+    with _fresh_client(served, tmp_path) as client:
+        state = client.app.state.serving  # type: ignore[attr-defined]
+        frame = payloads_to_frame(payloads)
+        p = state.model.predict_proba(frame)[:, 1]
+        dt = frame[schema.TIME_COL].to_numpy()
+        expected = replay_served_policy(p, dt, state.bands.block, budget, request_seconds)
+
+        key = dt // (86_400 if request_seconds is None else request_seconds)
+        served_actions: dict[int, str] = {}
+        for window in np.unique(key):
+            batch = [q for q, k in zip(payloads, key, strict=True) if k == window]
+            body = client.post(
+                "/predict/batch", json={"transactions": batch, "review_budget": budget}
+            ).json()
+            served_actions.update({r["transaction_id"]: r["action"] for r in body["ranked"]})
+    got = [served_actions[q[schema.ID_COL]] for q in payloads]
+    assert got == expected.tolist()
+    assert "review" in got and "approve" in got  # the budget actually binds

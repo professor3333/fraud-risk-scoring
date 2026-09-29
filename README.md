@@ -267,7 +267,7 @@ configs/          split.yaml, dev.yaml, features/*.yaml, model/*.yaml,
                   policy.yaml, serving.yaml, feedback.yaml, promotion.yaml,
                   alerting.yaml
 data/             git-ignored; data/README.md explains the download
-docs/             eda.md, decisions/ (ADR 0001–0012), EXPERIMENT_LOG.md (4-column
+docs/             eda.md, decisions/ (ADR 0001–0013), EXPERIMENT_LOG.md (4-column
                   ledger), experiments.md (long form), leakage_audit.md,
                   threshold.md, review_policy.md, ablation.md, feature_sets.md,
                   error_analysis.md, xgboost_progression.md, testing.md,
@@ -417,9 +417,11 @@ distribution drifts (a fixed threshold reviewed 141 on a validation day and
 222 on a test day; the rank policy reviews exactly the budget on both).
 The budget is **per transaction day**, released through the day and
 shared by every request that scores that day: the audit trail remembers
-what is already under review, a re-scored transaction is re-decided rather
-than counted twice, and the response reports the capacity this request had
-left (`policy.review_capacity`, `policy.budget_accounting`). One
+what is already under review, a reviewed transaction stays in review when it
+is scored again (never counted twice, never silently cancelled), concurrent
+requests reserve capacity atomically (ADR 0013), and the response reports the
+capacity this request had left (`policy.review_capacity`,
+`policy.budget_accounting`). One
 validation day as ten batches reviews exactly 200 in total, spread across
 them.
 

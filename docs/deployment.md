@@ -260,6 +260,10 @@ deliberately no worker-count setting to raise — `render.yaml` used to carry a
 this service scale horizontally means sharing that state first, and sharing it
 correctly means *reserving* budget transactionally rather than reading a count and
 then deciding; durable storage alone removes the amnesia but not that race.
+Within one database that reservation exists (ADR 0013): the read, the decision and
+the record are one `BEGIN IMMEDIATE` transaction, so concurrent requests in this
+process, which FastAPI's thread pool does produce, queue for the budget instead of
+racing for it.
 
 The shortlist, if that day comes, and they are not interchangeable: a Postgres
 transaction (`SELECT … FOR UPDATE`) makes the reservation atomic at the cost of a

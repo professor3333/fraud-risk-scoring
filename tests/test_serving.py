@@ -447,15 +447,11 @@ def test_review_budget_is_shared_across_requests_of_the_same_day(
         released = _released(second, 3)[day]
         _, cap3 = reviews(client, second, 3)
         assert cap3 == max(released - n1, 0)
-        # the single-prediction endpoint (threshold policy) re-decides its row and the
-        # day's standing reviews — latest decision per transaction — are what is charged
-        client.post("/predict", json=todays[0])
-        standing = 0
+        # a single /predict of every reviewed row cancels none of them (ADR 0013)
         for p in first:
-            latest = client.get(f"/audit/recent?transaction_id={p['TransactionID']}").json()[0]
-            standing += latest["action"] == "review"
+            client.post("/predict", json=p)
         _, cap4 = reviews(client, second, 3)
-        assert cap4 == max(released - standing, 0)
+        assert cap4 == max(released - n1, 0)
     (tmp_path / "noaudit").mkdir(exist_ok=True)
     with _fresh_client(served, tmp_path / "noaudit", audit=False) as client:
         body = client.post(
@@ -466,6 +462,118 @@ def test_review_budget_is_shared_across_requests_of_the_same_day(
             "/predict/batch", json={"transactions": second, "review_budget": 1}
         ).json()
         assert body["policy"]["review_capacity"] == 1  # no memory of the first batch
+
+
+def _same_day_pair(client: TestClient, served: dict[str, Any]) -> list[dict[str, Any]]:
+    """Two transactions of one day, both below the block threshold, lowest score first."""
+    block = client.get("/model-info").json()["bands"]["block"]
+    by_day: dict[int, list[tuple[float, dict[str, Any]]]] = {}
+    for _, row in served["rows"].iterrows():
+        p = _payload(row)
+        score = client.post("/predict", json=p).json()["fraud_probability"]
+        if score < block:
+            by_day.setdefault(_day(p), []).append((score, p))
+    pair = next(sorted(v, key=lambda x: x[0])[:2] for v in by_day.values() if len(v) >= 2)
+    return [p for _, p in pair]
+
+
+def _standing_reviews(client: TestClient) -> set[int]:
+    events = client.get("/audit/recent?limit=1000").json()
+    return {e["transaction_id"] for e in events if e["action"] == "review"}
+
+
+def test_concurrent_batches_cannot_overspend_the_review_budget(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """Budget 1, two batches of the same day at once: one review, not two (ADR 0013).
+
+    The read of the day's spend is slowed so both requests are inside the window
+    between reading the spend and recording the decision. Before the reservation
+    both read zero and both took the last slot.
+    """
+    import threading
+
+    with _fresh_client(served, tmp_path) as client:
+        low, high = _same_day_pair(client, served)
+        audit = client.app.state.serving.audit  # type: ignore[attr-defined]
+        read = audit.reviewed_transactions
+
+        def slow_read(day: int) -> set[int]:
+            seen = read(day)
+            time.sleep(0.3)
+            return seen
+
+        audit.reviewed_transactions = slow_read
+        results: list[dict[str, Any]] = []
+
+        def send(p: dict[str, Any]) -> None:
+            body = {"transactions": [p], "review_budget": 1}
+            results.append(client.post("/predict/batch", json=body).json())
+
+        threads = [threading.Thread(target=send, args=(p,)) for p in (low, high)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        audit.reviewed_transactions = read
+
+        assert len(results) == 2
+        assert sum(r["counts"]["review"] for r in results) == 1
+        assert len(_standing_reviews(client)) == 1
+
+
+def test_a_review_is_kept_by_later_scoring_of_its_transaction(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """Rescoring never cancels a case: not a single /predict, not a batch with a
+    higher-scored newcomer, not a retry (ADR 0013)."""
+    with _fresh_client(served, tmp_path) as client:
+        low, high = _same_day_pair(client, served)
+
+        def batch(rows: list[dict[str, Any]]) -> dict[int, str]:
+            body = client.post(
+                "/predict/batch", json={"transactions": rows, "review_budget": 1}
+            ).json()
+            return {r["transaction_id"]: r["action"] for r in body["ranked"]}
+
+        assert batch([low]) == {low["TransactionID"]: "review"}
+        # the single-score path records its own payment-path action, and frees nothing
+        client.post("/predict", json=low)
+        assert batch([high]) == {high["TransactionID"]: "approve"}
+        # together, the newcomer outranks it, and the standing review still holds the slot
+        assert batch([low, high]) == {
+            low["TransactionID"]: "review",
+            high["TransactionID"]: "approve",
+        }
+        # a retry is the same decision, and the day still holds one review
+        assert batch([low, high]) == {
+            low["TransactionID"]: "review",
+            high["TransactionID"]: "approve",
+        }
+        assert _standing_reviews(client) == {low["TransactionID"]}
+
+
+def test_a_failed_decision_records_nothing(served: dict[str, Any], tmp_path: Path) -> None:
+    """The reservation is all or nothing: a failure after deciding leaves no review behind."""
+    import fraud.serve.app as serving_app
+
+    with _fresh_client(served, tmp_path) as client:
+        low, _ = _same_day_pair(client, served)
+        before = client.app.state.serving.audit.count()  # type: ignore[attr-defined]
+        original = serving_app.record_events
+
+        def failing(*args: Any, **kwargs: Any) -> None:
+            original(*args, **kwargs)
+            raise RuntimeError("disk full")
+
+        serving_app.record_events = failing  # type: ignore[assignment]
+        try:
+            with pytest.raises(RuntimeError):
+                client.post("/predict/batch", json={"transactions": [low], "review_budget": 1})
+        finally:
+            serving_app.record_events = original  # type: ignore[assignment]
+        assert client.app.state.serving.audit.count() == before  # type: ignore[attr-defined]
+        assert not _standing_reviews(client)
 
 
 def test_csv_upload_honours_review_budget(served: dict[str, Any], tmp_path: Path) -> None:

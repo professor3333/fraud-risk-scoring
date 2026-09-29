@@ -189,26 +189,32 @@ def apply_daily_rank_policy(
     day: ArrayLike,
     block_threshold: float,
     capacity_by_day: dict[int, int],
+    held: ArrayLike | None = None,
 ) -> tuple[np.ndarray, float | None]:
     """The rank policy applied within each transaction day, each with its own capacity.
 
     Serving form of :func:`apply_rank_policy`: a request may span days and a day
     may have spent part of its budget on earlier requests, so the capacity is
-    supplied per day. Returns the action per row and the lowest reviewed score.
+    supplied per day. ``held`` marks rows already in review from an earlier
+    request (ADR 0013): they stay in review unless they now clear the block
+    threshold, they take their day's capacity first, and the remaining rows are
+    ranked into what is left. Returns the action per row and the lowest reviewed score.
     """
     s = np.asarray(y_score, dtype=float)
     d = np.asarray(day)
+    h = np.zeros(len(s), dtype=bool) if held is None else np.asarray(held, dtype=bool)
+    if h.shape != s.shape:
+        raise ValueError(f"held has shape {h.shape}, scores {s.shape}")
     action = np.where(s >= block_threshold, "block", "approve").astype(object)
-    cutoff: float | None = None
+    keep = h & (s < block_threshold)
+    action[keep] = "review"
     for value in np.unique(d):
-        rows = np.flatnonzero(d == value)
-        day_actions, day_cutoff = apply_rank_policy(
-            s[rows], block_threshold, capacity_by_day.get(int(value), 0)
-        )
+        rows = np.flatnonzero((d == value) & ~h)
+        left = capacity_by_day.get(int(value), 0) - int((keep & (d == value)).sum())
+        day_actions, _ = apply_rank_policy(s[rows], block_threshold, max(left, 0))
         action[rows] = day_actions
-        if day_cutoff is not None:
-            cutoff = day_cutoff if cutoff is None else min(cutoff, day_cutoff)
-    return action, cutoff
+    reviewed = s[action == "review"]
+    return action, float(reviewed.min()) if len(reviewed) else None
 
 
 def evaluate_policy(

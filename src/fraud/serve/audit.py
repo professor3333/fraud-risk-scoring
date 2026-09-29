@@ -11,6 +11,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -148,7 +150,9 @@ class AuditLog:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        # Reentrant: a review reservation holds it across the reads and writes it groups.
+        self._lock = threading.RLock()
+        self._reserving = False
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
@@ -158,6 +162,36 @@ class AuditLog:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
         self._conn.commit()
 
+    def _commit(self) -> None:
+        """Commit, unless a reservation is open: then its writes land together or not at all."""
+        if not self._reserving:
+            self._conn.commit()
+
+    @contextmanager
+    def reserving(self) -> Iterator[None]:
+        """One atomic read-capacity → decide → record section (ADR 0013).
+
+        The rank policy reads what a day has already sent to review, decides this
+        request's actions from what is left, and records them. Done as three separate
+        statements, two requests can both read the same spend and both take the last
+        slot. Inside this block the lock is held throughout, so threads in this process
+        queue, and `BEGIN IMMEDIATE` takes SQLite's write lock up front, so another
+        process on the same file queues too. Everything written inside commits on exit,
+        or rolls back if the block raises. Keep inference outside: this is a queue.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._reserving = True
+            try:
+                yield
+            except BaseException:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
+            finally:
+                self._reserving = False
+
     def record(self, events: list[PredictionEvent]) -> int:
         if not events:
             return 0
@@ -166,7 +200,7 @@ class AuditLog:
         sql = f"INSERT INTO prediction_events ({', '.join(COLUMNS)}) VALUES ({placeholders})"
         with self._lock:
             self._conn.executemany(sql, rows)
-            self._conn.commit()
+            self._commit()
         return len(rows)
 
     def record_request(
@@ -180,7 +214,7 @@ class AuditLog:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (request_id, endpoint, started_at, status_code, latency_ms, n_rows),
             )
-            self._conn.commit()
+            self._commit()
 
     def record_inputs(self, rows: list[dict[str, Any]]) -> int:
         if not rows:
@@ -189,7 +223,7 @@ class AuditLog:
         sql = f"INSERT INTO input_features ({', '.join(INPUT_COLUMNS)}) VALUES ({placeholders})"
         with self._lock:
             self._conn.executemany(sql, [tuple(r[c] for c in INPUT_COLUMNS) for r in rows])
-            self._conn.commit()
+            self._commit()
         return len(rows)
 
     def record_outcomes(self, rows: list[dict[str, Any]]) -> int:
@@ -203,7 +237,7 @@ class AuditLog:
         with self._lock:
             before = self._conn.total_changes
             self._conn.executemany(sql, [tuple(r[c] for c in OUTCOME_COLUMNS) for r in rows])
-            self._conn.commit()
+            self._commit()
             return self._conn.total_changes - before
 
     def record_feed_run(self, as_of_dt: int, n_new: int, source: str) -> int:
@@ -214,7 +248,7 @@ class AuditLog:
                 "VALUES (?, ?, ?, ?, ?)",
                 (int(as_of_dt), utc_now(), int(n_new), total, source),
             )
-            self._conn.commit()
+            self._commit()
         return total
 
     def feed_clock(self) -> int | None:
@@ -224,18 +258,18 @@ class AuditLog:
         return None if row[0] is None else int(row[0])
 
     def reviewed_transactions(self, day: int) -> set[int]:
-        """Transactions of one TransactionDT day whose latest decision is 'review'.
+        """Transactions of one TransactionDT day that have ever been sent to review.
 
-        Latest, because a re-scored transaction is a re-decision, not another
-        review; the rank policy charges the day's budget with these.
+        Ever, not latest (ADR 0013): a review is analyst work reserved for the day, and
+        no later scoring of the same transaction gives it back. Distinct transactions,
+        so re-sending one is not a second review. The rank policy charges the day's
+        budget with these, and keeps them in review when they are scored again.
         """
         lo, hi = day * 86_400, (day + 1) * 86_400
         with self._lock:
             rows = self._conn.execute(
-                "SELECT e.transaction_id FROM prediction_events e JOIN ("
-                "  SELECT transaction_id, MAX(id) AS id FROM prediction_events"
-                "  WHERE transaction_dt >= ? AND transaction_dt < ? GROUP BY transaction_id"
-                ") last ON last.id = e.id WHERE e.action = 'review'",
+                "SELECT DISTINCT transaction_id FROM prediction_events"
+                " WHERE transaction_dt >= ? AND transaction_dt < ? AND action = 'review'",
                 (lo, hi),
             ).fetchall()
         return {int(r[0]) for r in rows}

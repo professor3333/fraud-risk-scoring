@@ -155,12 +155,16 @@ apply_daily_rank_policy`):
   elapsed)` reviews exist. A whole-day upload gets the full budget; a
   batch of the first hour gets a twelfth of it, so the morning cannot take
   the evening's queue;
-- what is released is charged with the transactions of that day whose
-  **latest** decision in the audit trail is `review` — excluding the ones
-  in the current request, whose new decision replaces the old one. So ten
-  batches of one day share one budget, re-uploading a file to try another
-  capacity works (the dashboard does this), and a `/predict` call that
-  sends a row to review under the threshold policy charges the day too;
+- what is released is charged with every transaction of that day that has
+  **ever** been sent to review (ADR 0013). A reviewed transaction that comes
+  back in a later request stays in review and takes that request's capacity
+  first; fresh rows are ranked into what is left. So ten batches of one day
+  share one budget, a retry returns the same decisions, a single `/predict`
+  never frees a slot, and no rescoring silently cancels a case. Raising the
+  budget and re-uploading adds reviews; lowering it takes none back;
+- reading the spend, deciding and recording happen in one database
+  transaction, so concurrent requests queue instead of both taking the
+  last slot (ADR 0013);
 - the response reports `policy.review_capacity` (what this request could
   still review, summed over the days it spans) and
   `policy.budget_accounting`: `audit_trail`, or `per_request` when auditing

@@ -104,7 +104,11 @@ def test_candidate_metrics_and_materialised_champion_is_what_the_service_serves(
         load_policy_config(CONFIGS / "policy.yaml"), cfg,
     )  # fmt: skip
     assert 0 <= metrics["pr_auc"] <= 1 and 0 <= metrics["recall_at_5_per_day"] <= 1
-    assert 0 < metrics["review_threshold"] <= metrics["block_threshold"] < 1
+    # <= 1: the fixture's highest score is legitimate, so no threshold is precise enough to
+    # block on and the candidate blocks nothing (1.0), reporting block precision 0
+    assert 0 < metrics["review_threshold"] <= metrics["block_threshold"] <= 1
+    if metrics["block_threshold"] == 1.0:
+        assert metrics["block_precision"] == 0.0
     assert metrics["cost_per_transaction"] >= 0 and metrics["positives"] > 0
     gates = run_gates(metrics, None, cfg.gates)
     assert all_pass(gates)
@@ -163,3 +167,17 @@ def test_registry_records_every_candidate_and_moves_the_alias(
 
     tags = MlflowClient().get_model_version("test-scorer", v2).tags
     assert tags["verdict"] == "rejected" and "pr_auc" in tags["gates"]
+
+
+def test_a_metric_that_could_not_be_computed_fails_its_gate() -> None:
+    """Reproduced: NaN PR-AUC passed a minimum gate, because NaN < min is False."""
+    from fraud.train.promotion import run_gates
+
+    gates = (Gate("pr_auc", True, min=0.5), Gate("brier", False, tolerance_vs_champion=0.001))
+    nan = float("nan")
+    results = run_gates({"pr_auc": nan, "brier": 0.02}, {"pr_auc": 0.6, "brier": nan}, gates)
+    assert [r.passed for r in results] == [False, False]
+    assert results[0].reason == "not a finite number"
+    assert results[1].reason == "champion value is not finite"
+    ok = run_gates({"pr_auc": 0.6, "brier": 0.02}, {"pr_auc": 0.6, "brier": 0.0205}, gates)
+    assert all(r.passed for r in ok)

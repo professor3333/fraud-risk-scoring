@@ -83,18 +83,33 @@ def operating_points(
     return pd.DataFrame(rows)
 
 
-def block_threshold(points: pd.DataFrame, min_precision: float) -> float:
+class NoBlockThresholdError(ValueError):
+    """No threshold with enough flagged rows reaches the block precision bar."""
+
+
+def block_threshold(points: pd.DataFrame, min_precision: float, min_flagged: int = 1) -> float:
     """Lowest threshold whose precision (and every higher threshold's) meets ``min_precision``.
 
     Scanning from the top keeps the rule monotone: once precision dips below the
-    bar, nothing lower is allowed to block.
+    bar, nothing lower is allowed to block. Thresholds flagging fewer than
+    ``min_flagged`` rows are skipped: a threshold above every score flags nothing,
+    and its 0/0 precision (reported as 0) is no evidence either way. It used to end
+    the scan at once, so scores [0.8, 0.1] with labels [1, 0] chose 0.9 over 0.5.
+    Raises :class:`NoBlockThresholdError` when no supported threshold meets the bar,
+    rather than falling back to the top of the grid as though one had.
     """
     ordered = points.sort_values("threshold", ascending=False)
-    chosen = float(ordered["threshold"].iloc[0])
+    ordered = ordered[ordered["n_flagged"] >= min_flagged]
+    chosen: float | None = None
     for t, p in zip(ordered["threshold"], ordered["precision"], strict=True):
         if p < min_precision:
             break
         chosen = float(t)
+    if chosen is None:
+        raise NoBlockThresholdError(
+            f"no threshold flagging at least {min_flagged} row(s) reaches block precision "
+            f"{min_precision}"
+        )
     return chosen
 
 

@@ -406,7 +406,7 @@ def test_monthly_lifecycle_runs_on_fixture(df: pd.DataFrame, tmp_path: Path) -> 
     assert table["serving_pr_auc"].between(0, 1).all()
     for t in (120, 150):
         d = json.loads((tmp_path / "retrain" / f"cutoff_{t}" / "decision.json").read_text())
-        assert d["cutoff"] == t and 0 < d["block_threshold"] < 1
+        assert d["cutoff"] == t and 0 < d["block_threshold"] <= 1  # 1.0 = nothing qualifies
         art = Path(table.loc[table.cutoff == t, "artifact"].item())
         assert art.exists()
         assert art.with_name(art.stem + "_frozen_expected.json").exists()
@@ -465,3 +465,23 @@ def test_held_reviews_keep_their_place_and_take_capacity_first() -> None:
     assert actions.tolist() == ["review", "approve"]
     with pytest.raises(ValueError):
         apply_daily_rank_policy(scores, days, 0.9, {0: 1}, [True])
+
+
+def test_an_empty_upper_threshold_does_not_end_the_block_scan() -> None:
+    """Reproduced: scores [0.8, 0.1], labels [1, 0], thresholds [0.1, 0.5, 0.9] chose 0.9,
+    because 0.9 flags nothing and its 0/0 precision (0) stopped the scan before 0.5."""
+    from fraud.evaluate.policy import NoBlockThresholdError, block_threshold, operating_points
+
+    pts = operating_points(
+        np.array([1, 0]), np.array([0.8, 0.1]), n_days=1, thresholds=np.array([0.1, 0.5, 0.9])
+    )
+    assert block_threshold(pts, 0.8) == 0.5
+    # support is a parameter: requiring two flagged rows leaves only 0.1, which fails the bar
+    with pytest.raises(NoBlockThresholdError):
+        block_threshold(pts, 0.8, min_flagged=2)
+    # the highest supported threshold is imprecise: nothing below may block, and that is said
+    pts = operating_points(
+        np.array([0, 1]), np.array([0.8, 0.6]), n_days=1, thresholds=np.array([0.5, 0.7])
+    )
+    with pytest.raises(NoBlockThresholdError):
+        block_threshold(pts, 0.8)

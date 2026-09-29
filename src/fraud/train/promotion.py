@@ -12,6 +12,7 @@ the service reads for its version, facts and policy bands.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from fraud.data import schema
 from fraud.evaluate.calibration import calibration_metrics
 from fraud.evaluate.metrics import compute_metrics, top_k_per_day
 from fraud.evaluate.policy import (
+    NoBlockThresholdError,
     Policy,
     PolicyConfig,
     block_threshold,
@@ -112,7 +114,13 @@ def candidate_metrics(
     n_days = len(np.unique(day))
     k = cfg.review_budget_per_day
     points = operating_points(y, p, n_days, tcfg.thresholds)
-    block_t = block_threshold(points, cfg.block_min_precision)
+    try:
+        block_t = block_threshold(points, cfg.block_min_precision)
+        found = True
+    except NoBlockThresholdError:
+        # No supported threshold is precise enough to block on: this candidate blocks
+        # nothing, and reports block precision 0 so the gate refuses it by name.
+        block_t, found = 1.0, False
     review_t = size_review_band(p, day, block_t, k)
     policy = evaluate_policy(
         y, p, amount, day, Policy(block_t, review_t, k), tcfg.costs, pcfg.review
@@ -129,7 +137,7 @@ def candidate_metrics(
         f"precision_at_{k}_per_day": top[f"precision_at_{k}_per_day"],
         "block_threshold": block_t,
         "review_threshold": review_t,
-        "block_precision": policy["block_precision"],
+        "block_precision": policy["block_precision"] if found else 0.0,
         "recall_block": policy["recall_block"],
         "recall_block_plus_review": policy["recall_block_plus_review"],
         "cost_per_transaction": policy["total_cost"] / len(y),
@@ -158,6 +166,16 @@ def run_gates(
     for g in gates:
         value = candidate[g.metric]
         ref = None if champion is None else champion.get(g.metric)
+        # NaN compares false with everything, so `NaN < min` passed a minimum gate. A
+        # metric that could not be computed is a failed gate, never a passed one.
+        if not math.isfinite(value):
+            results.append(GateResult(g.metric, float(value), ref, False, "not a finite number"))
+            continue
+        if ref is not None and not math.isfinite(ref) and g.tolerance_vs_champion is not None:
+            results.append(
+                GateResult(g.metric, float(value), ref, False, "champion value is not finite")
+            )
+            continue
         reasons: list[str] = []
         ok = True
         if g.min is not None and value < g.min:

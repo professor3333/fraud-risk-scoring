@@ -7,6 +7,10 @@ The scheduled job runs `scripts/monitor.py` and then this. What it does:
     quiet  + an open alert   -> comment "recovered" and close it
     quiet  + no open alert   -> print the summary and stop
 
+With `--unreachable ERROR_LOG` in place of a report, the run could not obtain one at
+all (service down, cold past the timeout, admin key refused). That pages too, under
+the same issue, so an outage is not mistaken for a quiet day.
+
 So a week of drift is one issue with seven comments, and the issue closing is
 itself the signal that the service came back. Delivery is `gh`, because the
 repository already authenticates with it and a webhook would be one more
@@ -27,7 +31,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from fraud.monitor.alerts import Alert, decide, load_alert_config
+from fraud.monitor.alerts import Alert, decide, load_alert_config, unreachable
 
 ROOT = Path(__file__).resolve().parents[1]
 Runner = Callable[[Sequence[str]], str]
@@ -87,7 +91,16 @@ def deliver(alert: Alert, label: str, repo: str | None, runner: Runner) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path, help="the JSON report scripts/monitor.py wrote")
+    parser.add_argument(
+        "report", type=Path, nargs="?", help="the JSON report scripts/monitor.py wrote"
+    )
+    parser.add_argument(
+        "--unreachable",
+        type=Path,
+        default=None,
+        metavar="ERROR_LOG",
+        help="no report could be fetched; alert with this file's error output instead",
+    )
     parser.add_argument("--config", type=Path, default=ROOT / "configs" / "alerting.yaml")
     parser.add_argument("--source", default=None, help="the service the report came from")
     parser.add_argument("--run-url", default=None, help="the workflow run, linked in the body")
@@ -95,9 +108,16 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="decide and print; touch no issue")
     args = parser.parse_args()
 
+    if (args.report is None) == (args.unreachable is None):
+        parser.error("give exactly one of: a report, or --unreachable ERROR_LOG")
+
     config = load_alert_config(args.config)
-    report = json.loads(args.report.read_text())
-    alert = decide(report, config, args.source, args.run_url)
+    if args.unreachable is not None:
+        reason = args.unreachable.read_text() if args.unreachable.exists() else ""
+        alert = unreachable(reason, config, args.source, args.run_url)
+    else:
+        report = json.loads(args.report.read_text())
+        alert = decide(report, config, args.source, args.run_url)
 
     print(f"severity={alert.severity} paging={alert.paging}")
     print(alert.summary)

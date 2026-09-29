@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import matplotlib
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 from sklearn.metrics import brier_score_loss
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+from fraud.evaluate.plotting import pyplot
 
 
 def reliability_table(y_true: ArrayLike, y_score: ArrayLike, n_bins: int = 15) -> pd.DataFrame:
@@ -58,7 +56,7 @@ def calibration_metrics(
 
 def plot_reliability(tables: dict[str, pd.DataFrame], title: str) -> Any:
     colors = ["#2a78d6", "#eb6834", "#1baf7a"]
-    fig, ax = plt.subplots(figsize=(4.5, 4.2))
+    fig, ax = pyplot().subplots(figsize=(4.5, 4.2))
     ax.plot([0, 1], [0, 1], color="#52514e", lw=1, ls="--", label="perfect")
     for (name, t), c in zip(tables.items(), colors, strict=False):
         ax.plot(t["score_mean"], t["observed_rate"], marker="o", ms=4, lw=1.5, color=c, label=name)

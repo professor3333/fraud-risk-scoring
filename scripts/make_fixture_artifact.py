@@ -9,13 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import joblib
+import yaml
 
 from fraud.data.load import load_train
 from fraud.data.split import load_split_config, split
 from fraud.features.columns import load_feature_spec
+from fraud.monitor.reference import build_reference, save_reference
 from fraud.pipeline.build import build_pipeline
 from fraud.pipeline.calibrated import CalibratedModel
-from fraud.serve.parity import choose_sample, freeze
+from fraud.serve.parity import artifact_digest, choose_sample, freeze
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "models" / "champion" / "model.joblib"  # no manifest: serving.yaml's fallbacks apply
@@ -39,7 +41,19 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, OUT)
     freeze(model, OUT, choose_sample(parts["test"], n_per_group=5))
-    print(f"wrote fixture-trained stand-in artifact to {OUT} (+ frozen sample)")
+    # The monitoring reference too, so the container smoke test can build a real
+    # /audit/monitor report inside the runtime image rather than stop at a 404.
+    serving = yaml.safe_load((ROOT / "configs" / "serving.yaml").read_text())
+    reference = build_reference(
+        model,
+        parts["train"],
+        held,
+        float(serving["bands"]["block"]),
+        int(serving.get("default_review_budget", 200)),
+        artifact_digest(OUT),
+    )
+    save_reference(reference, OUT)
+    print(f"wrote fixture-trained stand-in artifact to {OUT} (+ frozen sample, monitor reference)")
 
 
 if __name__ == "__main__":

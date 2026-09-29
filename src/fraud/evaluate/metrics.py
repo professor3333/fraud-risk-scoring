@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import matplotlib
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -16,8 +15,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+from fraud.evaluate.plotting import pyplot
 
 
 def compute_metrics(y_true: ArrayLike, y_score: ArrayLike, threshold: float) -> dict[str, float]:
@@ -84,7 +82,7 @@ def plot_pr_curve(y_true: ArrayLike, y_score: ArrayLike, title: str) -> Any:
     y = np.asarray(y_true, dtype=int)
     s = np.asarray(y_score, dtype=float)
     p, r, _ = precision_recall_curve(y, s)
-    fig, ax = plt.subplots(figsize=(4.5, 4))
+    fig, ax = pyplot().subplots(figsize=(4.5, 4))
     ax.plot(r, p, color="#2a78d6", lw=2)
     ax.axhline(y.mean(), color="#eb6834", lw=1, ls="--", label=f"prior = {y.mean():.3f}")
     ax.set_xlabel("recall")
@@ -101,7 +99,7 @@ def plot_roc_curve(y_true: ArrayLike, y_score: ArrayLike, title: str) -> Any:
     y = np.asarray(y_true, dtype=int)
     s = np.asarray(y_score, dtype=float)
     fpr, tpr, _ = roc_curve(y, s)
-    fig, ax = plt.subplots(figsize=(4.5, 4))
+    fig, ax = pyplot().subplots(figsize=(4.5, 4))
     ax.plot(fpr, tpr, color="#2a78d6", lw=2)
     ax.plot([0, 1], [0, 1], color="#52514e", lw=1, ls="--", label="chance")
     ax.set_xlabel("false positive rate")

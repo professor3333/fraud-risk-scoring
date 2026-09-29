@@ -485,3 +485,51 @@ def test_an_empty_upper_threshold_does_not_end_the_block_scan() -> None:
     )
     with pytest.raises(NoBlockThresholdError):
         block_threshold(pts, 0.8)
+
+
+def test_arrival_order_is_what_an_online_queue_costs() -> None:
+    """One slot a day: a whole-day request reviews the day's top score; hourly requests
+    give the slot to the first score that arrives, even if a higher one follows."""
+    from fraud.evaluate.policy import replay_served_policy
+
+    s = np.array([0.10, 0.80])
+    dt = np.array([100, 80_000])  # the low score in the first hour, the high one late
+    assert replay_served_policy(s, dt, 0.9, 1).tolist() == ["approve", "review"]
+    assert replay_served_policy(s, dt, 0.9, 1, request_seconds=3600).tolist() == [
+        "review",
+        "approve",
+    ]
+    # the release rule: at 00:01 a day has released ceil(24 * 60 / 86400) = 1 of 24
+    two_early = replay_served_policy(np.array([0.5, 0.4]), np.array([30, 60]), 0.9, 24, 3600)
+    assert two_early.tolist() == ["review", "approve"]
+
+
+def test_days_do_not_share_one_pooled_budget() -> None:
+    """The monitoring reference used to rank the whole window against budget x days, so a
+    busy day took a quiet day's slots. The replay gives each day its own."""
+    from fraud.evaluate.policy import replay_served_policy
+
+    s = np.array([0.8, 0.7, 0.6, 0.1])
+    dt = np.array([86_000, 86_100, 86_200, 86_400 + 86_000])  # three on day 0, one on day 1
+    assert replay_served_policy(s, dt, 0.9, 1).tolist() == [
+        "review",
+        "approve",
+        "approve",
+        "review",
+    ]
+
+
+def test_the_review_catch_rate_moves_cost_and_recall() -> None:
+    from fraud.evaluate.policy import ReviewCost, policy_outcome
+    from fraud.evaluate.threshold import load_threshold_config
+
+    costs = load_threshold_config(
+        Path(__file__).resolve().parents[1] / "configs" / "threshold.yaml"
+    ).costs
+    y = np.array([1, 1, 0, 0])
+    act = np.array(["block", "review", "review", "approve"])
+    amt = np.full(4, 100.0)
+    full = policy_outcome(y, act, amt, 1, costs, ReviewCost(3.0, 0.02))
+    half = policy_outcome(y, act, amt, 1, costs, ReviewCost(3.0, 0.02), review_catch_rate=0.5)
+    assert full["recall_block_plus_review"] == 1.0 and half["recall_block_plus_review"] == 0.75
+    assert half["total_cost"] > full["total_cost"]

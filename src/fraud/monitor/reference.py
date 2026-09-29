@@ -18,7 +18,7 @@ import pandas as pd
 from fraud.data import schema
 from fraud.evaluate.calibration import calibration_metrics
 from fraud.evaluate.metrics import compute_metrics
-from fraud.evaluate.policy import apply_rank_policy
+from fraud.evaluate.policy import replay_served_policy
 from fraud.monitor.drift import (
     binned_shares,
     categorical_shares,
@@ -69,8 +69,12 @@ def build_reference(
 
     p = np.asarray(model.predict_proba(validation)[:, 1], dtype=float)
     y = validation[schema.TARGET_COL].to_numpy()
-    days = int((validation[schema.TIME_COL] // 86_400).nunique())
-    actions, _ = apply_rank_policy(p, block_threshold, review_budget_per_day * days)
+    # The served policy, each day one request (policy.replay_served_policy). This used
+    # to rank the whole window against one pooled budget x days, so a busy day could
+    # take a quiet day's reviews and the reference shares were not ones serving produces.
+    actions = replay_served_policy(
+        p, validation[schema.TIME_COL].to_numpy(), block_threshold, review_budget_per_day
+    )
     ref["scores"] = {
         "edges": [float(e) for e in SCORE_EDGES],
         "bins": binned_shares(pd.Series(p), SCORE_EDGES),

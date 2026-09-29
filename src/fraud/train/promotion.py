@@ -28,11 +28,11 @@ from fraud.evaluate.calibration import calibration_metrics
 from fraud.evaluate.metrics import compute_metrics, top_k_per_day
 from fraud.evaluate.policy import (
     NoBlockThresholdError,
-    Policy,
     PolicyConfig,
     block_threshold,
-    evaluate_policy,
     operating_points,
+    policy_outcome,
+    replay_served_policy,
     size_review_band,
 )
 from fraud.evaluate.threshold import ThresholdConfig
@@ -64,6 +64,9 @@ class PromotionConfig:
     review_budget_per_day: int
     block_min_precision: float
     gates: tuple[Gate, ...]
+    # The online-queue replay reported beside the daily one (policy.replay_served_policy):
+    # requests of this many seconds, in time order. Reported, not gated.
+    stream_request_seconds: int = 3600
 
 
 def load_promotion_config(path: Path) -> PromotionConfig:
@@ -88,6 +91,7 @@ def load_promotion_config(path: Path) -> PromotionConfig:
         review_budget_per_day=int(raw["review_budget_per_day"]),
         block_min_precision=float(raw["block_min_precision"]),
         gates=gates,
+        stream_request_seconds=int(raw.get("stream_request_seconds", 3600)),
     )
 
 
@@ -103,9 +107,15 @@ def candidate_metrics(
 ) -> dict[str, float]:
     """Every number a gate may refer to, from the validation window only.
 
-    The block threshold is re-selected at the precision bar and the review band
-    sized to the budget, so the cost and recall figures are those of the policy
-    this candidate would actually serve under, not the champion's thresholds.
+    Two kinds, kept apart. *Ranking* metrics (pr_auc, roc_auc, recall/precision at k
+    per day, calibration) describe the scores and assume nothing about serving. *Policy*
+    metrics (block_precision, recall_block, recall_block_plus_review, cost) are the
+    outcome of the policy the service actually applies: the block threshold re-selected
+    at the precision bar, then `replay_served_policy` with the day as one request (the
+    daily upload the product is built around). The same replay with hourly requests is
+    reported as ``stream_*``: what an online queue would lose to arrival order. The
+    fixed ``review_threshold`` is still sized, because the threshold policy and the
+    risk band use it, but it no longer prices anything.
     """
     y = validation[schema.TARGET_COL].to_numpy(dtype=int)
     p = np.asarray(model.predict_proba(validation)[:, 1], dtype=float)
@@ -122,9 +132,11 @@ def candidate_metrics(
         # nothing, and reports block precision 0 so the gate refuses it by name.
         block_t, found = 1.0, False
     review_t = size_review_band(p, day, block_t, k)
-    policy = evaluate_policy(
-        y, p, amount, day, Policy(block_t, review_t, k), tcfg.costs, pcfg.review
-    )
+    dt = validation[schema.TIME_COL].to_numpy()
+    daily = replay_served_policy(p, dt, block_t, k)
+    stream = replay_served_policy(p, dt, block_t, k, cfg.stream_request_seconds)
+    policy = policy_outcome(y, daily, amount, n_days, tcfg.costs, pcfg.review)
+    online = policy_outcome(y, stream, amount, n_days, tcfg.costs, pcfg.review)
     ranking = compute_metrics(y, p, block_t)
     cal = calibration_metrics(y, p)
     top = top_k_per_day(y, p, day, k)
@@ -141,6 +153,9 @@ def candidate_metrics(
         "recall_block": policy["recall_block"],
         "recall_block_plus_review": policy["recall_block_plus_review"],
         "cost_per_transaction": policy["total_cost"] / len(y),
+        "fraud_amount_caught_share": policy["fraud_amount_caught_share"],
+        "stream_recall_block_plus_review": online["recall_block_plus_review"],
+        "stream_cost_per_transaction": online["total_cost"] / len(y),
         "n_validation": float(len(y)),
         "positives": float(y.sum()),
     }

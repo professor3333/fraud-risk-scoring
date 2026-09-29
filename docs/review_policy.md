@@ -194,3 +194,27 @@ The service returns **one** command per transaction (`action`) with its
 API (v0.4.1) because a response carrying both `decision: decline` and
 `action: review` gave the payment system two competing instructions. The
 0.08 threshold remains the evaluation operating point in the reports.
+
+## What is priced is what is served (ADR 0014)
+
+Promotion used to price a fixed review threshold, and the monitoring reference
+a budget pooled over the whole window. Neither is what the service runs. Both
+now call `fraud.evaluate.policy.replay_served_policy`, which is built from the
+same release rule and per-request ranking serving uses; a test sends the same
+rows to the service as the same requests and gets identical actions.
+
+The served policy depends on how requests arrive, so it is replayed two ways
+(`scripts/replay_policy.py` → `reports/policy/replay.md`; champion
+`7af85ec92813`, validation, 200 reviews/day):
+
+| requests | review precision | recall (block + review) | cost / transaction |
+|---|---|---|---|
+| each day at once (daily upload; gated) | 0.149 | 0.779 | 1.832 |
+| hourly, in time order | 0.134 | 0.747 | 2.022 |
+| every 15 minutes, in time order | 0.120 | 0.717 | 2.340 |
+
+This is a daily ranking tool. Used as an online queue, the same model and
+budget catch 3–6 points less fraud, because an early low score keeps a slot
+a later high score needed. The reviewed-fraud-is-caught assumption is priced
+too: at a 70 % analyst catch rate the daily policy's cost rises 38 %.
+

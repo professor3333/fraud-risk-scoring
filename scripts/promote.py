@@ -90,7 +90,17 @@ def main() -> None:
         load_policy_config(args.policy), cfg,
     )  # fmt: skip
     current = read_manifest(champion_dir / CHAMPION_ARTIFACT)
-    champion_metrics = None if current is None else current["metrics"]
+    # The champion is measured again, on the same rows and by the same code, rather than
+    # compared through the numbers its manifest stored: those were computed by whatever
+    # definition was current when it was promoted, and a gate must compare like with like.
+    champion_metrics = None
+    if current is not None:
+        incumbent = joblib.load(champion_dir / CHAMPION_ARTIFACT)
+        verify(incumbent, champion_dir / CHAMPION_ARTIFACT)
+        champion_metrics = candidate_metrics(
+            incumbent, parts["validation"], load_threshold_config(args.threshold),
+            load_policy_config(args.policy), cfg,
+        )  # fmt: skip
     gates = run_gates(metrics, champion_metrics, cfg.gates)
     passed = all_pass(gates)
     for g in gates:

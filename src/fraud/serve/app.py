@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from fraud.data import schema
 from fraud.evaluate.explain import explain
-from fraud.evaluate.policy import apply_daily_rank_policy
+from fraud.evaluate.policy import apply_daily_rank_policy, released_capacity
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
 from fraud.serve.frames import (
@@ -463,13 +463,10 @@ def review_capacity(
     requests. Call it inside `reserving()`, with the decisions recorded before it exits.
     """
     ids = {int(t) for t in transaction_ids}
-    days = transaction_dt // SECONDS_PER_DAY
     capacity: dict[int, int] = {}
     held: set[int] = set()
-    for day in np.unique(days):
-        latest = int(transaction_dt[days == day].max())
-        elapsed = (latest - int(day) * SECONDS_PER_DAY + 1) / SECONDS_PER_DAY
-        released = int(math.ceil(budget * elapsed))
+    # the same release rule the offline replay uses (policy.replay_served_policy)
+    for day, released in released_capacity(budget, transaction_dt).items():
         spent = 0
         if state.audit is not None:
             standing = state.audit.reviewed_transactions(int(day))

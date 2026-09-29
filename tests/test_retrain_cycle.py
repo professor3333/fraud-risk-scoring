@@ -270,7 +270,10 @@ def test_a_fetched_champion_must_be_the_one_the_bands_were_reviewed_for(
         return ["model.joblib"]
 
     monkeypatch.setattr(serve_app, "fetch_champion", fake_fetch)
-    monkeypatch.setattr(serve_app, "expected_champion_digest", lambda url, pin: "0badc0de")
+    import hashlib
+
+    real = hashlib.sha256(source.read_bytes()).hexdigest()[:12]  # the store serves it honestly
+    monkeypatch.setattr(serve_app, "expected_champion_digest", lambda url, pin: real)
     monkeypatch.setenv("FRAUD_CHAMPION_URL", "https://example.invalid/champion-0badc0de")
     with pytest.raises(RuntimeError, match="not the 0badc0de"):
         serve_app.load_state(cfg)

@@ -55,6 +55,13 @@ rate_limits:
 # Largest CSV upload accepted by /predict/csv, in bytes (5,000 rows of the raw schema is
 # ~6 MB); the row limit (5,000) is checked while parsing, not after.
 max_upload_bytes: 26214400
+# Largest JSON body on any POST (/predict/batch at 1,000 fully populated rows is ~9 MB).
+# Both caps are enforced while the body streams in, before anything parses it.
+max_json_bytes: 16777216
+# CSV uploads and JSON batches scored at once, in worker threads off the event loop; as
+# many again may wait for a slot, and past that the service answers 503 + Retry-After.
+# Two on the 0.1-CPU demo: more would only share the same CPU and all miss the budget.
+max_concurrent_bulk: 2
 # Default analyst review capacity per batch / upload for the rank-based policy
 # (docs/review_policy.md: block by threshold, review the top N remaining, approve the rest).
 default_review_budget: 200

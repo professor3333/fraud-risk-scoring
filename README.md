@@ -452,8 +452,10 @@ experiments chose. `risk_level: "high"` means at or above the block threshold;
 review selection belongs to the queue (`docs/review_policy.md`).
 
 **Analyst dashboard** (`/`): set the analyst review capacity, upload a CSV
-of transactions with the IEEE-CIS column names (up to 5,000 rows and 25 MB
-— both enforced before the body is parsed or held; extra columns such as a
+of transactions with the IEEE-CIS column names (up to 5,000 rows and 25 MB;
+the byte cap stops reading the request mid-stream, before the multipart
+parser has the file, and the row cap stops the CSV parser one row past
+5,000; extra columns such as a
 label are ignored and reported). The server scores it in
 one pass through the same input path the parity check uses
 (`POST /predict/csv`) and applies the rank policy; the page shows analysed /

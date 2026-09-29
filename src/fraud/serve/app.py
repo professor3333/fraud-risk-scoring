@@ -12,12 +12,13 @@ import math
 import os
 import re
 import time
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import anyio
 import joblib
 import numpy as np
 import pandas as pd
@@ -72,6 +73,8 @@ GUARDED_PREFIXES = ("/predict", "/explain", "/outcomes", "/audit")
 ADMIN_PREFIXES = ("/outcomes", "/audit")
 request_log = logging.getLogger("fraud.serve.requests")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # serving.yaml max_upload_bytes overrides
+MAX_JSON_BYTES = 16 * 1024 * 1024  # serving.yaml max_json_bytes overrides
+MULTIPART_OVERHEAD = 64 * 1024  # boundaries and part headers around the uploaded file
 
 ROOT = Path(__file__).resolve().parents[3]
 STATIC = Path(__file__).resolve().parent / "static"
@@ -93,6 +96,9 @@ class ServingState:
     api_key: str | None = None  # FRAUD_API_KEY; None leaves the scoring endpoints open
     admin_api_key: str | None = None  # FRAUD_ADMIN_API_KEY; None disables the admin endpoints
     request_timeout_s: float = 60.0  # serving.yaml request_timeout_s
+    max_json_bytes: int = MAX_JSON_BYTES  # serving.yaml max_json_bytes: any JSON POST body
+    max_concurrent_bulk: int = 2  # CSV/JSON batches scored at once; as many may queue; then 503
+    bulk_slots: Any = None  # anyio.CapacityLimiter(max_concurrent_bulk), set at startup
     rate_limiter: RateLimiter | None = None
     render_client_ip: bool = False
     label_maturity_days: int = 0  # configs/feedback.yaml; 0 = treat every outcome as final
@@ -284,6 +290,9 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         if feedback_config.exists()
         else 0
     )
+    uploads = int(raw.get("max_concurrent_bulk", 2))
+    if uploads < 1:
+        raise ValueError(f"max_concurrent_bulk must be at least 1, got {uploads}")
     return ServingState(
         model=model,
         bands=bands,
@@ -298,6 +307,9 @@ def load_state(config_path: Path = DEFAULT_CONFIG) -> ServingState:
         api_key=os.environ.get("FRAUD_API_KEY") or None,
         admin_api_key=os.environ.get("FRAUD_ADMIN_API_KEY") or None,
         request_timeout_s=float(raw.get("request_timeout_s", 60.0)),
+        max_json_bytes=int(raw.get("max_json_bytes", MAX_JSON_BYTES)),
+        max_concurrent_bulk=uploads,
+        bulk_slots=anyio.CapacityLimiter(uploads),
         rate_limiter=RateLimiter(RateLimitConfig.model_validate(raw.get("rate_limits", {}))),
         render_client_ip=os.environ.get("RENDER") == "true",
         label_maturity_days=maturity_days,
@@ -474,16 +486,17 @@ def score_batch(
 
 def score_table(
     state: ServingState,
-    table: pd.DataFrame,
+    frame: pd.DataFrame,
+    ignored: list[str],
     policy: Policy = "rank",
     review_budget: int | None = None,
     probabilities: np.ndarray | None = None,
 ) -> CsvPredictionResponse:
-    """Score an uploaded table; apply the policy; rank rows and summarise for the analyst view.
+    """Apply the policy to an uploaded table already converted by `table_to_frame`; rank the
+    rows and summarise them for the analyst view.
 
     Pass ``probabilities`` already computed to keep inference out of `reserving()`.
     """
-    frame, ignored = table_to_frame(table)
     if probabilities is None:
         probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
     actions, applied = assign_actions(state, probabilities, policy, review_budget, frame)
@@ -595,6 +608,99 @@ def block_only_policy_applied(state: ServingState) -> PolicyApplied:
         review_threshold=None,
         review_cutoff=None,
     )
+
+
+def body_limit(state: ServingState, path: str) -> int:
+    """Largest request body a guarded POST route accepts, in bytes."""
+    if path == "/predict/csv":
+        return state.max_upload_bytes + MULTIPART_OVERHEAD
+    return state.max_json_bytes
+
+
+class BodyLimit:
+    """Refuse an oversized body while it streams in, before anything parses it (413).
+
+    `read_upload` alone could not do this: FastAPI parses a multipart body into an
+    `UploadFile` before the endpoint runs, so a check there comes after the whole file
+    has been received and spooled. This sits under the request guard, so the key is
+    checked before any body is read and the refusal is audited like any other call.
+    A declared Content-Length over the cap is refused without reading; otherwise the
+    bytes are counted as they arrive and the request stops at the first chunk past it.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        state: ServingState | None = (
+            getattr(scope["app"].state, "serving", None) if "app" in scope else None
+        )
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or state is None
+            or not scope["path"].startswith(GUARDED_PREFIXES)
+        ):
+            await self.app(scope, receive, send)
+            return
+        limit = body_limit(state, scope["path"])
+        too_large = HTTPException(413, f"request body larger than {limit} bytes")
+        headers = dict(scope.get("headers") or [])
+        declared = headers.get(b"content-length", b"").decode("latin-1")
+        if declared.isdigit() and int(declared) > limit:
+            response = Response(
+                json.dumps({"detail": too_large.detail}), 413, media_type="application/json"
+            )
+            await response(scope, receive, send)
+            return
+        seen = 0
+
+        async def counted() -> Any:
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit:
+                    raise too_large  # FastAPI re-raises HTTPException from body parsing
+            return message
+
+        await self.app(scope, counted, send)
+
+
+async def run_bulk[T](state: ServingState, request: Request, work: Callable[[], T]) -> T:
+    """Run a CSV or JSON batch's scoring in the bounded worker pool, within the time budget.
+
+    Admission first: with every slot busy and as many requests already queued, a new
+    one gets 503 at once rather than waiting out its budget in line. Then the work runs
+    off the event loop, so /health and small calls are served meanwhile. At the deadline
+    this endpoint answers 504 itself and abandons the thread: the middleware's own
+    timeout cannot, because it waits for the endpoint task to finish. `check_deadline`
+    inside the work stops the abandoned thread from recording anything afterwards.
+    """
+    slots = state.bulk_slots
+    if slots.statistics().tasks_waiting >= slots.total_tokens:
+        raise HTTPException(
+            503, "too many batch scorings in progress; retry shortly", headers={"Retry-After": "5"}
+        )
+    deadline = getattr(request.state, "deadline", None)
+    remaining = math.inf if deadline is None else deadline - time.perf_counter()
+    with anyio.move_on_after(max(remaining, 0)):
+        return await anyio.to_thread.run_sync(work, abandon_on_cancel=True, limiter=slots)
+    raise HTTPException(504, "request exceeded its time budget; nothing was recorded")
+
+
+def check_deadline(request: Request) -> None:
+    """Refuse to decide anything once the request's time budget has run out.
+
+    The middleware answers 504 at the deadline, but work already running in a worker
+    thread cannot be interrupted and would otherwise go on to record decisions and
+    spend review budget for a client that was told the call failed. Checked before
+    inference and again inside the reservation, before anything is written, so a 504
+    means nothing was decided.
+    """
+    deadline = getattr(request.state, "deadline", None)
+    if deadline is not None and time.perf_counter() > deadline:
+        raise HTTPException(504, "request exceeded its time budget; nothing was recorded")
 
 
 async def read_upload(request: Request, file: UploadFile, max_bytes: int) -> bytes:
@@ -717,6 +823,49 @@ def model_info(state: ServingState) -> ModelInfoResponse:
     )
 
 
+def _score_upload(
+    state: ServingState,
+    request: Request,
+    raw: bytes,
+    policy: Policy,
+    review_budget: int | None,
+    rid: str,
+    t0: float,
+) -> CsvPredictionResponse:
+    """Everything /predict/csv does after the body is read. Runs in a worker thread."""
+    try:
+        # one row past the limit is enough to know it was exceeded; never parse the rest
+        table = pd.read_csv(
+            io.BytesIO(raw), dtype="str", keep_default_na=False, nrows=MAX_CSV_ROWS + 1
+        )
+    except (ValueError, pd.errors.ParserError) as exc:
+        raise HTTPException(422, f"could not parse CSV: {exc}") from exc
+    if len(table) == 0:
+        raise HTTPException(422, "the CSV has no rows")
+    if len(table) > MAX_CSV_ROWS:
+        raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload")
+    try:
+        frame, ignored = table_to_frame(table)  # once: the scoring below reuses it
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    check_deadline(request)
+    probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
+    with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
+        try:
+            result = score_table(state, frame, ignored, policy, review_budget, probabilities)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        check_deadline(request)
+        latency = (time.perf_counter() - t0) * 1000
+        record_events(
+            state, "/predict/csv", rid, result.summary.policy,
+            [(r.transaction_id, r.fraud_probability, r.risk_level, r.action)
+             for r in result.rows],
+            latency, frame,
+        )  # fmt: skip
+    return result
+
+
 def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -730,6 +879,9 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         request_log.addHandler(handler)
         request_log.setLevel(logging.INFO)
         request_log.propagate = False
+
+    # Added first, so it runs inside the guard below: auth before any body is read.
+    app.add_middleware(BodyLimit)
 
     @app.middleware("http")
     async def guard_and_record(request: Request, call_next: Any) -> Any:
@@ -760,6 +912,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
                     )
                     return _finish(request, response, rid, started, t0, state)
         timeout = state.request_timeout_s if state is not None else 60.0
+        request.state.deadline = t0 + timeout
         try:
             response = await asyncio.wait_for(call_next(request), timeout=timeout)
         except TimeoutError:
@@ -813,6 +966,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         p = float(state.model.predict_proba(frame)[0, 1])
         result = _response(state, int(payload[schema.ID_COL]), p)
         latency = (time.perf_counter() - t0) * 1000
+        check_deadline(request)
         record_events(
             state, "/predict", rid, block_only_policy_applied(state),
             [(
@@ -850,25 +1004,32 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         )
 
     @app.post("/predict/batch", response_model=BatchPredictionResponse)
-    def predict_batch(
+    async def predict_batch(
         body: BatchPredictionRequest, request: Request, response: Response
     ) -> BatchPredictionResponse:
         state: ServingState = request.app.state.serving
         rid = request_id_of(request)
         t0 = time.perf_counter()
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
-        frame = payloads_to_frame(payloads)
-        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
-        with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
-            result = score_batch(
-                state, payloads, body.policy, body.review_budget, frame, probabilities
-            )
-            latency = (time.perf_counter() - t0) * 1000
-            scored = [
-                (r.transaction_id, r.fraud_probability, r.risk_level, r.action)
-                for r in result.ranked
-            ]
-            record_events(state, "/predict/batch", rid, result.policy, scored, latency, frame)
+
+        def work() -> BatchPredictionResponse:
+            frame = payloads_to_frame(payloads)
+            check_deadline(request)
+            probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
+            with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
+                result = score_batch(
+                    state, payloads, body.policy, body.review_budget, frame, probabilities
+                )
+                check_deadline(request)
+                latency = (time.perf_counter() - t0) * 1000
+                scored = [
+                    (r.transaction_id, r.fraud_probability, r.risk_level, r.action)
+                    for r in result.ranked
+                ]
+                record_events(state, "/predict/batch", rid, result.policy, scored, latency, frame)
+            return result
+
+        result = await run_bulk(state, request, work)
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = str(result.n)
         return result
@@ -885,34 +1046,11 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         rid = request_id_of(request)
         t0 = time.perf_counter()
         raw = await read_upload(request, file, state.max_upload_bytes)
-        try:
-            # one row past the limit is enough to know it was exceeded; never parse the rest
-            table = pd.read_csv(
-                io.BytesIO(raw), dtype="str", keep_default_na=False, nrows=MAX_CSV_ROWS + 1
-            )
-        except (ValueError, pd.errors.ParserError) as exc:
-            raise HTTPException(422, f"could not parse CSV: {exc}") from exc
-        if len(table) == 0:
-            raise HTTPException(422, "the CSV has no rows")
-        if len(table) > MAX_CSV_ROWS:
-            raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload")
-        try:
-            frame, _ = table_to_frame(table)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
-        with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
-            try:
-                result = score_table(state, table, policy, review_budget, probabilities)
-            except ValueError as exc:
-                raise HTTPException(422, str(exc)) from exc
-            latency = (time.perf_counter() - t0) * 1000
-            record_events(
-                state, "/predict/csv", rid, result.summary.policy,
-                [(r.transaction_id, r.fraud_probability, r.risk_level, r.action)
-                 for r in result.rows],
-                latency, frame,
-            )  # fmt: skip
+        result = await run_bulk(
+            state,
+            request,
+            lambda: _score_upload(state, request, raw, policy, review_budget, rid, t0),
+        )
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = str(len(result.rows))
         return result

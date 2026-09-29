@@ -36,7 +36,7 @@ Stage checklist. Each stage is a working system before the next begins.
 - [x] FastAPI `/health` + `/predict`; parity test with offline pipeline (fixture + slow real-data test)
 - [x] Dockerfile (non-root, from lock file; 1.5 GB image, runtime deps only)
 - [x] Small UI (analyst dashboard at `/`); public at https://fraud-risk-scoring-m1fp.onrender.com
-- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.8.0 current)
+- [x] README complete and verified from a clean clone (first tagged at v0.1.0; v0.9.0 current)
 
 ## Current stage: **all six complete — operating and hardening**
 Every stage box above is ticked. Work since v0.5.0 is post-stage
@@ -68,6 +68,17 @@ empty workspace. The monthly cron was removed: the dataset has no future, a
 runner has no label-feed clock, and under the 120-day maturity no month is newer
 than the champion, so it could only ever have waited.
 
+**Correctness and safety round** (2026-09-29, v0.9.0, PRs #92–#100): dashboard
+renders uploaded values as text and exports CSV safely; the monitoring report
+builds in the runtime image and a report that cannot be fetched is itself an
+alert; review capacity is reserved atomically and never cancelled by rescoring
+(ADR 0013); bulk scoring runs off the event loop, bodies are capped while they
+stream, and a 504 records nothing; the pinned champion is re-verified on every
+start; JSON and CSV share one input contract and unexpected errors are audited;
+degenerate numbers fail closed; promotion, the monitoring reference and serving
+share one policy implementation (ADR 0014); retraining is declared a simulated
+lifecycle, proven end to end from a clean clone (ADR 0015).
+
 ## Completion evidence
 
 | area | evidence |
@@ -87,7 +98,7 @@ than the champion, so it could only ever have waited.
 | Artifact | one calibrated object + frozen golden, startup parity (`fraud.serve.parity`); promotion gates → `models/champion/` + MLflow registry alias (ADR 0010, `docs/promotion.md`) |
 | API | `/health`, `/predict`, `/predict/batch`, `/predict/csv`, `/explain`, `/model-info`, `/audit/recent`, `/audit/monitor`, `/outcomes`; one `action` per row, per-day review budget shared across requests through the audit trail; `X-API-Key` when `FRAUD_API_KEY` is set |
 | UI | analyst dashboard at `/` |
-| Quality | 200 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
+| Quality | 245 fixture tests + 4 slow (`docs/testing.md`), CI green with container check |
 | Deployment | Docker image; free public target = Render web service built without weights, fetching the champion from its `champion-<sha>` GitHub release at startup (published) (measured under Render's limits locally, CD-wired); Fly.io as the paid alternative; `scripts/deploy_check.py` (`docs/deployment.md`) — **live at https://fraud-risk-scoring-m1fp.onrender.com** |
 | Retraining | trigger → cycle → gates on a moving month → promote → publish → reviewed policy PR → `deploy-champion.yml` (ADR 0012, `docs/retraining.md`) |
 | Monitoring | frozen reference per artifact, report over any window (`scripts/monitor.py`, local or `--from-url`), scheduled daily against the live service with GitHub-issue alerts (ADR 0011, `monitor.yml`, `scripts/alert.py`, `configs/alerting.yaml`, `docs/monitoring.md`) |

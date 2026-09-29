@@ -1,7 +1,7 @@
 # Testing
 
-`uv run pytest` — 200 tests using synthetic fixtures (`tests/fixtures/`),
-no data download, no network, ~20 s. `uv run pytest -m slow` — 4 tests
+`uv run pytest` — 245 tests using synthetic fixtures (`tests/fixtures/`),
+no data download, no network, ~40 s. `uv run pytest -m slow` — 4 tests
 against the real files and the production artifact when present. CI runs
 the default set plus a smoke training through the CLI, a Docker build and a
 container health check (`.github/workflows/ci.yml`).

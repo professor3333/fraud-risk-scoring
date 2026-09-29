@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from fraud.data import schema
 
@@ -21,18 +21,28 @@ RiskLevel = Literal["low", "medium", "high"]
 Action = Literal["approve", "review", "block"]
 
 
+# The input contract, one set of rules for JSON and CSV (frames.table_to_frame applies the
+# same ones to an upload): exact non-negative integer ids and times that fit int64, finite
+# numbers, a positive amount, non-empty required fields, bounded text, and a blank value
+# meaning "missing" in either format.
+MAX_INT = 2**63 - 1  # the int64 the pipeline stores ids and times in
+MAX_TEXT = 256  # longest accepted string (training data: DeviceInfo, 43)
+REQUIRED: tuple[str, ...] = (schema.ID_COL, schema.TIME_COL, "TransactionAmt", "ProductCD", "card1")
+_REQUIRED = set(REQUIRED)
+
+
 def _field_type(col: str, str_cols: frozenset[str], required: bool) -> tuple[Any, Any]:
     if col in str_cols:
-        return (str, ...) if required else (str | None, None)
+        if required:
+            return (str, Field(..., max_length=MAX_TEXT))
+        return (str | None, Field(None, max_length=MAX_TEXT))
     return (float, ...) if required else (float | None, None)
 
-
-_REQUIRED = {schema.ID_COL, schema.TIME_COL, "TransactionAmt", "ProductCD", "card1"}
 
 _fields: dict[str, Any] = {}
 for _col in _TX_INPUT_COLS:
     if _col == schema.ID_COL or _col == schema.TIME_COL:
-        _fields[_col] = (int, Field(..., ge=0))
+        _fields[_col] = (int, Field(..., ge=0, le=MAX_INT))
     elif _col == "TransactionAmt":
         _fields[_col] = (float, Field(..., gt=0))
     else:
@@ -42,7 +52,15 @@ for _col in _ID_INPUT_COLS:
 
 
 class _Base(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_is_missing(cls, data: Any) -> Any:
+        """A blank string is a missing value, as an empty CSV cell is."""
+        if isinstance(data, dict):
+            return {k: None if isinstance(v, str) and not v.strip() else v for k, v in data.items()}
+        return data
 
 
 TransactionRequest = create_model("TransactionRequest", __base__=_Base, **_fields)
@@ -83,6 +101,22 @@ class BatchPredictionRequest(BaseModel):
     # trail keeps the count; docs/review_policy.md). None = the server's default.
     review_budget: int | None = Field(default=None, ge=0)
     policy: Policy = "rank"  # "threshold" = fixed review threshold instead of a budget
+
+    @model_validator(mode="after")
+    def _ids_are_unique(self) -> BatchPredictionRequest:
+        """One decision per transaction per request, as a CSV upload already required."""
+        seen: set[int] = set()
+        repeated: list[int] = []
+        for t in self.transactions:
+            tid = int(t.TransactionID)  # type: ignore[attr-defined]
+            if tid in seen and tid not in repeated:
+                repeated.append(tid)
+            seen.add(tid)
+        if repeated:
+            raise ValueError(
+                f"{schema.ID_COL} must be unique within a batch; repeated: {repeated[:10]}"
+            )
+        return self
 
 
 class RankedPrediction(PredictionResponse):

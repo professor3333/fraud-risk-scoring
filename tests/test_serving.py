@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -237,6 +238,97 @@ def test_csv_upload_rejects_bad_files(client: TestClient, served: dict[str, Any]
     text = bad_number.to_csv(index=False)
     r = client.post("/predict/csv", files={"file": ("q.csv", text, "text/csv")})
     assert r.status_code == 422 and "card2" in r.text
+
+
+def _csv(rows: pd.DataFrame) -> str:
+    return rows.drop(columns=[schema.TARGET_COL, schema.HAS_IDENTITY_COL]).to_csv(index=False)
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        (schema.ID_COL, "1.9", "whole number"),  # was silently truncated to 1
+        (schema.TIME_COL, "-1.2", "whole number"),  # was silently -1
+        (schema.ID_COL, str(2**64), "less than or equal"),
+        ("TransactionAmt", "", "Field required"),  # was HTTP 500
+        ("TransactionAmt", "inf", "finite"),
+        ("card1", "", "Field required"),  # was accepted
+        ("ProductCD", " ", "Field required"),  # was accepted
+        ("card2", "nan", "valid number"),
+        ("DeviceInfo", "x" * 300, "at most 256"),
+    ],
+)
+def test_json_and_csv_refuse_the_same_inputs(
+    client: TestClient, served: dict[str, Any], column: str, value: str, message: str
+) -> None:
+    """One contract, two formats: what a JSON batch refuses, an upload refuses too, and
+    the upload says which row and column."""
+    rows = served["rows"].head(3).astype("object")
+    table = rows.copy()
+    table.loc[table.index[1], column] = value
+    r = client.post("/predict/csv", files={"file": ("q.csv", _csv(table), "text/csv")})
+    assert r.status_code == 422, (column, value, r.text)
+    detail = r.json()["detail"]
+    assert any(e["loc"] == ["file", 2, column] and message in e["msg"] for e in detail), detail
+
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    payloads[1][column] = value if value.strip() else ""
+    if column in (schema.ID_COL, schema.TIME_COL, "TransactionAmt", "card1", "card2"):
+        try:
+            payloads[1][column] = float(value)
+        except ValueError:
+            pass
+    r = client.post("/predict/batch", content=json.dumps({"transactions": payloads}),
+                    headers={"content-type": "application/json"})  # fmt: skip
+    assert r.status_code == 422, (column, value, r.text)
+    assert any(e["loc"][:3] == ["body", "transactions", 1] for e in r.json()["detail"])
+
+
+def test_duplicate_ids_are_refused_in_either_format(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    rows = served["rows"].head(3).astype("object")
+    rows.loc[rows.index[2], schema.ID_COL] = rows.loc[rows.index[0], schema.ID_COL]
+    r = client.post("/predict/csv", files={"file": ("q.csv", _csv(rows), "text/csv")})
+    assert r.status_code == 422
+    assert {e["loc"][1] for e in r.json()["detail"]} == {1, 3}
+    payloads = [_payload(row) for _, row in rows.iterrows()]
+    r = client.post("/predict/batch", json={"transactions": payloads})
+    assert r.status_code == 422 and "unique within a batch" in r.text
+
+
+def test_the_csv_review_budget_is_validated_like_the_json_one(
+    client: TestClient, served: dict[str, Any]
+) -> None:
+    csv = _csv(served["rows"].head(3))
+    r = client.post("/predict/csv?review_budget=-1", files={"file": ("q.csv", csv, "text/csv")})
+    assert r.status_code == 422 and "review_budget" in r.text
+
+
+def test_an_unexpected_failure_is_audited_with_a_request_id(
+    served: dict[str, Any], tmp_path: Path
+) -> None:
+    """Reproduced: an inference exception gave HTTP 500 with no requests row and no
+    X-Request-ID, so the error-rate monitor could not see the failures it exists for."""
+    with _fresh_client(served, tmp_path) as client:
+        payload = _payload(served["rows"].iloc[0])
+        model = client.app.state.serving.model  # type: ignore[attr-defined]
+        real = model.predict_proba
+
+        def broken(frame: pd.DataFrame) -> Any:
+            raise RuntimeError("scorer exploded")
+
+        model.predict_proba = broken
+        try:
+            r = client.post("/predict", json=payload, headers={"X-Request-ID": "trace-me"})
+        finally:
+            model.predict_proba = real
+        assert r.status_code == 500
+        assert r.headers["X-Request-ID"] == "trace-me" and r.json()["request_id"] == "trace-me"
+        assert "scorer exploded" not in r.text  # no internals in the response
+        calls = client.app.state.serving.audit.frame("requests")  # type: ignore[attr-defined]
+        failed = calls[calls["request_id"] == "trace-me"]
+        assert failed["status_code"].tolist() == [500]
 
 
 def test_csv_upload_limits_are_enforced_before_the_body_is_held(
@@ -568,8 +660,8 @@ def test_a_failed_decision_records_nothing(served: dict[str, Any], tmp_path: Pat
 
         serving_app.record_events = failing  # type: ignore[assignment]
         try:
-            with pytest.raises(RuntimeError):
-                client.post("/predict/batch", json={"transactions": [low], "review_budget": 1})
+            r = client.post("/predict/batch", json={"transactions": [low], "review_budget": 1})
+            assert r.status_code == 500
         finally:
             serving_app.record_events = original  # type: ignore[assignment]
         assert client.app.state.serving.audit.count() == before  # type: ignore[attr-defined]

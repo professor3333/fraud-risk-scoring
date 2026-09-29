@@ -23,8 +23,10 @@ import joblib
 import numpy as np
 import pandas as pd
 import yaml
-from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from fraud.data import schema
 from fraud.evaluate.explain import explain
@@ -32,6 +34,7 @@ from fraud.evaluate.policy import apply_daily_rank_policy
 from fraud.pipeline.calibrated import CalibratedModel
 from fraud.serve.audit import AuditLog, PredictionEvent, new_request_id, utc_now
 from fraud.serve.frames import (
+    TableError,
     monitored_fields,
     payloads_to_frame,
     request_to_frame,
@@ -761,6 +764,27 @@ async def run_bulk[T](state: ServingState, request: Request, work: Callable[[], 
     raise HTTPException(504, "request exceeded its time budget; nothing was recorded")
 
 
+def _json_safe(value: Any) -> Any:
+    """Non-finite floats as text: JSON has no inf or NaN, and a 422 echoes the input."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+async def validation_error(request: Request, exc: Exception) -> JSONResponse:
+    """FastAPI's 422, but able to say why `Infinity` was refused.
+
+    The default handler echoes each offending input back, and serializing an echoed
+    inf or NaN failed, so the refusal of a non-finite number came out as a 500.
+    """
+    errors = exc.errors() if isinstance(exc, RequestValidationError) else []
+    return JSONResponse({"detail": _json_safe(jsonable_encoder(errors))}, status_code=422)
+
+
 def check_deadline(request: Request) -> None:
     """Refuse to decide anything once the request's time budget has run out.
 
@@ -918,6 +942,8 @@ def _score_upload(
         raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload")
     try:
         frame, ignored = table_to_frame(table)  # once: the scoring below reuses it
+    except TableError as exc:
+        raise HTTPException(422, exc.errors) from exc  # each bad cell, as JSON 422s do
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     check_deadline(request)
@@ -952,6 +978,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         request_log.setLevel(logging.INFO)
         request_log.propagate = False
 
+    app.add_exception_handler(RequestValidationError, validation_error)
     # Added first, so it runs inside the guard below: auth before any body is read.
     app.add_middleware(BodyLimit)
 
@@ -991,6 +1018,16 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             response = Response(
                 json.dumps({"detail": f"request exceeded {timeout:g} s"}),
                 status_code=504,
+                media_type="application/json",
+            )
+        except Exception:
+            # An unexpected failure is the call the error-rate monitor most needs to
+            # count. It used to escape this middleware to Starlette's generic 500, so it
+            # left no requests row, no log line and no request id to find it by.
+            request_log.exception(json.dumps({"event": "unhandled_error", "request_id": rid}))
+            response = Response(
+                json.dumps({"detail": "internal error", "request_id": rid}),
+                status_code=500,
                 media_type="application/json",
             )
         return _finish(request, response, rid, started, t0, state)
@@ -1111,7 +1148,7 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         request: Request,
         response: Response,
         file: UploadFile,
-        review_budget: int | None = None,
+        review_budget: int | None = Query(default=None, ge=0),  # as the JSON batch's field
         policy: Policy = "rank",
     ) -> CsvPredictionResponse:
         state: ServingState = request.app.state.serving

@@ -12,8 +12,8 @@ import math
 import os
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -356,29 +356,43 @@ def review_capacity(
     budget: int,
     transaction_dt: np.ndarray,
     transaction_ids: np.ndarray,
-) -> dict[int, int]:
-    """Reviews this request may still issue per transaction day.
+) -> tuple[dict[int, int], set[int]]:
+    """Reviews this request may hold per transaction day, and which of its rows already do.
 
     The budget is per day, not per request, and it is released through the day:
     by the time of a day's latest transaction in this request, the day has made
     ``ceil(budget * fraction of the day elapsed)`` reviews available, so a morning
-    batch cannot take the whole day's queue. Transactions of the day already sent
-    to review by earlier requests are charged against it, except the ones in this
-    request, whose new decision replaces the old one. Without an audit trail there
-    is no memory of earlier requests.
+    batch cannot take the whole day's queue. Every transaction of the day sent to
+    review by an earlier request is charged against it (ADR 0013), except the ones
+    in this request: those are returned as held, stay in review, and take this
+    request's capacity first. Without an audit trail there is no memory of earlier
+    requests. Call it inside `reserving()`, with the decisions recorded before it exits.
     """
     ids = {int(t) for t in transaction_ids}
     days = transaction_dt // SECONDS_PER_DAY
     capacity: dict[int, int] = {}
+    held: set[int] = set()
     for day in np.unique(days):
         latest = int(transaction_dt[days == day].max())
         elapsed = (latest - int(day) * SECONDS_PER_DAY + 1) / SECONDS_PER_DAY
         released = int(math.ceil(budget * elapsed))
         spent = 0
         if state.audit is not None:
-            spent = len(state.audit.reviewed_transactions(int(day)) - ids)
+            standing = state.audit.reviewed_transactions(int(day))
+            held |= standing & ids
+            spent = len(standing - ids)
         capacity[int(day)] = max(released - spent, 0)
-    return capacity
+    return capacity, held
+
+
+@contextmanager
+def reserving(state: ServingState) -> Iterator[None]:
+    """The audit trail's atomic decide-and-record section, or nothing when there is none."""
+    if state.audit is None:
+        yield
+        return
+    with state.audit.reserving():
+        yield
 
 
 def assign_actions(
@@ -395,8 +409,11 @@ def assign_actions(
         budget = state.default_review_budget if review_budget is None else review_budget
         dt = frame[schema.TIME_COL].to_numpy().astype(int)
         days = dt // SECONDS_PER_DAY
-        capacity = review_capacity(state, budget, dt, frame[schema.ID_COL].to_numpy())
-        actions, cutoff = apply_daily_rank_policy(probabilities, days, state.bands.block, capacity)
+        ids = frame[schema.ID_COL].to_numpy()
+        capacity, held = review_capacity(state, budget, dt, ids)
+        actions, cutoff = apply_daily_rank_policy(
+            probabilities, days, state.bands.block, capacity, np.isin(ids, list(held))
+        )
         applied = PolicyApplied(
             policy="rank",
             block_threshold=state.bands.block,
@@ -431,11 +448,16 @@ def score_batch(
     policy: Policy = "rank",
     review_budget: int | None = None,
     frame: pd.DataFrame | None = None,
+    probabilities: np.ndarray | None = None,
 ) -> BatchPredictionResponse:
-    """Score many rows in one pass, apply the policy, return them ranked, highest risk first."""
+    """Score many rows in one pass, apply the policy, return them ranked, highest risk first.
+
+    Pass ``probabilities`` already computed to keep inference out of `reserving()`.
+    """
     if frame is None:
         frame = payloads_to_frame(payloads)
-    probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
+    if probabilities is None:
+        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
     actions, applied = assign_actions(state, probabilities, policy, review_budget, frame)
     order = np.argsort(-probabilities, kind="stable")
     ranked = []
@@ -455,10 +477,15 @@ def score_table(
     table: pd.DataFrame,
     policy: Policy = "rank",
     review_budget: int | None = None,
+    probabilities: np.ndarray | None = None,
 ) -> CsvPredictionResponse:
-    """Score an uploaded table; apply the policy; rank rows and summarise for the analyst view."""
+    """Score an uploaded table; apply the policy; rank rows and summarise for the analyst view.
+
+    Pass ``probabilities`` already computed to keep inference out of `reserving()`.
+    """
     frame, ignored = table_to_frame(table)
-    probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
+    if probabilities is None:
+        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
     actions, applied = assign_actions(state, probabilities, policy, review_budget, frame)
     order = np.argsort(-probabilities, kind="stable")
     rows: list[ScoredRow] = []
@@ -831,12 +858,17 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
         t0 = time.perf_counter()
         payloads = [t.model_dump() for t in body.transactions]  # type: ignore[attr-defined]
         frame = payloads_to_frame(payloads)
-        result = score_batch(state, payloads, body.policy, body.review_budget, frame)
-        latency = (time.perf_counter() - t0) * 1000
-        scored = [
-            (r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.ranked
-        ]
-        record_events(state, "/predict/batch", rid, result.policy, scored, latency, frame)
+        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1])
+        with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
+            result = score_batch(
+                state, payloads, body.policy, body.review_budget, frame, probabilities
+            )
+            latency = (time.perf_counter() - t0) * 1000
+            scored = [
+                (r.transaction_id, r.fraud_probability, r.risk_level, r.action)
+                for r in result.ranked
+            ]
+            record_events(state, "/predict/batch", rid, result.policy, scored, latency, frame)
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = str(result.n)
         return result
@@ -866,15 +898,21 @@ def create_app(config_path: Path = DEFAULT_CONFIG) -> FastAPI:
             raise HTTPException(422, f"at most {MAX_CSV_ROWS} rows per upload")
         try:
             frame, _ = table_to_frame(table)
-            result = score_table(state, table, policy, review_budget)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-        latency = (time.perf_counter() - t0) * 1000
-        record_events(
-            state, "/predict/csv", rid, result.summary.policy,
-            [(r.transaction_id, r.fraud_probability, r.risk_level, r.action) for r in result.rows],
-            latency, frame,
-        )  # fmt: skip
+        probabilities = np.asarray(state.model.predict_proba(frame)[:, 1], dtype=float)
+        with reserving(state):  # read the day's spend, decide, record: one step (ADR 0013)
+            try:
+                result = score_table(state, table, policy, review_budget, probabilities)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            latency = (time.perf_counter() - t0) * 1000
+            record_events(
+                state, "/predict/csv", rid, result.summary.policy,
+                [(r.transaction_id, r.fraud_probability, r.risk_level, r.action)
+                 for r in result.rows],
+                latency, frame,
+            )  # fmt: skip
         response.headers["X-Request-ID"] = rid
         response.headers["X-Rows"] = str(len(result.rows))
         return result

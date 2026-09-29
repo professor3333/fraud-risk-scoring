@@ -445,3 +445,23 @@ def test_lifecycle_waits_for_labels_to_mature(df: pd.DataFrame, tmp_path: Path) 
     with pytest.raises(ValueError, match="nothing to train on"):
         run_lifecycle(df, RetrainConfig(**{**cfg.__dict__, "label_maturity_days": 90}),
                       tmp_path / "r2", seed=0)  # fmt: skip
+
+
+def test_held_reviews_keep_their_place_and_take_capacity_first() -> None:
+    """ADR 0013: a transaction already in review stays there, however it now ranks."""
+    from fraud.evaluate.policy import apply_daily_rank_policy
+
+    scores = np.array([0.10, 0.30, 0.95, 0.20, 0.25])
+    days = np.array([0, 0, 0, 1, 1])
+    held = np.array([True, False, True, False, False])
+    actions, cutoff = apply_daily_rank_policy(scores, days, 0.9, {0: 1, 1: 1}, held)
+    # day 0: 0.10 is held and keeps the one slot over the higher 0.30; a held row that
+    # now clears the block threshold is blocked, and does not use a review slot
+    # day 1: nothing held, the higher score takes its slot
+    assert actions.tolist() == ["review", "approve", "block", "approve", "review"]
+    assert cutoff == 0.10
+    # more held than capacity: all stay, nothing new is added
+    actions, _ = apply_daily_rank_policy(scores[:2], days[:2], 0.9, {0: 0}, [True, False])
+    assert actions.tolist() == ["review", "approve"]
+    with pytest.raises(ValueError):
+        apply_daily_rank_policy(scores, days, 0.9, {0: 1}, [True])

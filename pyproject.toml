@@ -15,7 +15,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "pyyaml>=6",
     "xgboost>=3.4.1",
-    "fastapi>=0.141.1",
+    "fastapi>=0.142.2",
     "uvicorn[standard]>=0.53.0",
     "python-multipart>=0.0.32",
 ]
@@ -29,8 +29,8 @@ train = [
 dev = [
     {include-group = "train"},
     "pytest>=8",
-    "ruff>=0.16.8",
-    "mypy>=1.11",
+    "ruff>=0.16.10",
+    "mypy>=2.4.0",
     "jupyter>=1.1",
     "pandas-stubs",
     "types-pyyaml",

@@ -15,7 +15,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "pyyaml>=6",
     "xgboost>=3.4.1",
-    "fastapi>=0.141.1",
+    "fastapi>=0.143.0",
     "uvicorn[standard]>=0.53.0",
     "python-multipart>=0.0.32",
 ]
@@ -24,13 +24,13 @@ dependencies = [
 train = [
     "pyarrow>=17",
     "matplotlib>=3.9",
-    "mlflow>=3.16.1",
+    "mlflow>=3.17.0",
 ]
 dev = [
     {include-group = "train"},
     "pytest>=8",
-    "ruff>=0.16.8",
-    "mypy>=1.11",
+    "ruff>=0.17.0",
+    "mypy>=2.4.0",
     "jupyter>=1.1",
     "pandas-stubs",
     "types-pyyaml",

@@ -24,7 +24,7 @@ dependencies = [
 train = [
     "pyarrow>=17",
     "matplotlib>=3.9",
-    "mlflow>=3.17.0",
+    "mlflow>=3.17.2",
 ]
 dev = [
     {include-group = "train"},
